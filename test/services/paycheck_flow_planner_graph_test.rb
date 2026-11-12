@@ -9,6 +9,8 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
   P2 = "partner-2".freeze
 
   def graph(month:, incomes:, allocations: [], obligations: {}, plan_allocations: [], required_amounts: {}, plan_max_links: {}, plan_roles: {}, auto_transfers: {}, plan_ordered: {}, linked_bank_counts: {}, recommendations: [], partners: [ P1 ], sub_account_links: {}, auto_transfer_targets: {}, account_names: {}, account_last4s: {}, account_bank_logos: {}, bank_logo_keywords: [], bank_logos: {}, categories: {}, draft: nil)
+  def graph(month:, incomes:, allocations: [], obligations: {}, plan_allocations: [], required_amounts: {}, plan_max_links: {}, plan_roles: {}, auto_transfers: {}, plan_ordered: {}, linked_bank_counts: {}, recommendations: [], partners: [ P1 ], draft: nil)
+  def graph(month:, incomes:, allocations: [], obligations: {}, plan_allocations: [], required_amounts: {}, plan_max_links: {}, plan_roles: {}, auto_transfers: {}, plan_ordered: {}, linked_bank_counts: {}, recommendations: [], partners: [ P1 ], sub_account_links: {}, auto_transfer_targets: {}, account_names: {}, draft: nil)
     PaycheckFlowPlanner.new(
       month: month,
       incomes: incomes,

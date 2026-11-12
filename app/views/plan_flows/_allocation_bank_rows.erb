@@ -1,3 +1,4 @@
+<%# locals: (bank_rows: [], checked_account_id: :unspecified, account_last4s: {}) %>
 <%# locals: (bank_rows: [], checked_account_id: :unspecified) %>
 <%# Allocation dialog BANK SOURCE rows (round 21 T8): the "No bank
     (unassigned)" radio + one row per on-plan account, extracted from
@@ -21,7 +22,17 @@
         allocation): that account's row is checked.
     i18n keys are the dialog's explicit keys (a partial's lazy scope is
     its own name, so t(".source_bank_unassigned") would miss here). %>
+<%# Round 22 (N1/N6/N7): each bank row appends the masked ****last4
+    (account_last4s — plain 4 digits from PaycheckFlowPlanner, nil rows
+    render nothing); the avatar is the plan-flow logo (keyword-resolved
+    via plan_flow_avatar_url, N6) OVERLAYED on the always-rendered letter
+    chip (onerror removes a dead <img> so a broken asset degrades to the
+    chip); the root div is the LOCKED scroll window (max-h-64
+    overflow-y-auto — never overflow-auto: #showAllocationForm
+    querySelectors the dialog's .overflow-auto and must not scroll this
+    list). The root stays the single fragment element. %>
 <% assigning = checked_account_id != :unspecified %>
+<div data-flow-chrome="allocation-bank-rows" class="max-h-64 overflow-y-auto space-y-1 overscroll-contain">
 <div data-flow-chrome="allocation-bank-rows">
   <label class="flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer has-[:checked]:bg-surface-inset">
     <input type="radio" name="plan_allocation[account_id]" value="" class="sr-only" <%= "checked" if assigning && checked_account_id.nil? %>>
@@ -33,15 +44,27 @@
       <input type="radio" name="plan_allocation[account_id]" value="<%= account.id %>" class="sr-only"
              <%= "checked" if assigning && checked_account_id.to_s == account.id.to_s %>>
       <%# Same avatar the bank config dialog uses (round 20d): the
-          plan-flow logo when present, else the neutral letter chip. %>
-      <span class="h-8 w-8 flex-shrink-0 rounded-full overflow-hidden bg-subdued flex items-center justify-center">
+          plan-flow logo when present, else the neutral letter chip.
+          Round 22 (N6): the letter chip is ALWAYS rendered behind and
+          the logo overlays it (onerror removes a dead <img> so a broken
+          asset degrades to the chip, never a broken-image glyph). %>
+      <span class="h-8 w-8 flex-shrink-0 rounded-full overflow-hidden bg-subdued flex items-center justify-center relative">
+        <span class="text-sm font-medium text-secondary"><%= (account.name.to_s.strip.first || "?").upcase %></span>
         <% if account.plan_flow_avatar_url.present? %>
-          <img src="<%= account.plan_flow_avatar_url %>" alt="" class="h-full w-full object-cover">
-        <% else %>
-          <span class="text-sm font-medium text-secondary"><%= (account.name.to_s.strip.first || "?").upcase %></span>
+          <img src="<%= account.plan_flow_avatar_url %>" alt="" class="absolute inset-0 h-full w-full object-cover" onerror="this.remove()">
         <% end %>
       </span>
       <span class="text-sm text-primary truncate"><%= account.name %></span>
+      <%# Round 22 (N1): the masked last 4, modal-style ****NNNN (nil for
+          every account without a plaid_accounts.mask — never fabricated). %>
+      <% if (last4 = account_last4s[account.id]) %>
+        <span class="text-xs text-secondary tabular-nums">****<%= last4 %></span>
+      <% end %>
+          plan-flow logo when present, else the neutral letter chip. %>
+      <span class="h-8 w-8 flex-shrink-0 rounded-full overflow-hidden bg-subdued flex items-center justify-center">
+          <img src="<%= account.plan_flow_avatar_url %>" alt="" class="h-full w-full object-cover">
+        <% else %>
+          <span class="text-sm font-medium text-secondary"><%= (account.name.to_s.strip.first || "?").upcase %></span>
     </label>
   <% end %>
   <% if bank_rows.empty? %>

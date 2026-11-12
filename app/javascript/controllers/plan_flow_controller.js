@@ -256,6 +256,14 @@ export default class extends Controller {
     this.#applyAllocationVisibility(form);
     this.#allocationCategorySummary(form);
     dialog.showModal();
+    if (cents > 0) set("value", (cents / 100).toFixed(2));
+    if (row.dataset.knownCadence) set("cadence", row.dataset.knownCadence);
+    if (row.dataset.knownAccount && this.inPlanValue.includes(row.dataset.knownAccount)) {
+      set("account_id", row.dataset.knownAccount);
+    }
+    set("recurring_transaction_id", row.dataset.knownId || "");
+    this.#applyAllocationKind(form, "bill");
+    this.#showAllocationForm(form);
   }
 
   // "Add New Allocation" (header CTA, round 21 T3): the custom input form,
@@ -267,6 +275,7 @@ export default class extends Controller {
     this.#setAllocationMode(form, "required");
     this.#applyAllocationVisibility(form);
     this.#allocationCategorySummary(form);
+    this.#applyAllocationKind(form, form.querySelector('[name="plan_allocation[kind]"]')?.value);
     this.#showAllocationForm(form);
   }
 
@@ -333,6 +342,8 @@ export default class extends Controller {
       this.#applyAllocationVisibility(form);
       form.classList.add("hidden");
       this.#allocationCategorySummary(form);
+      this.#applyAllocationKind(form, form.querySelector('[name="plan_allocation[kind]"]')?.value);
+      form?.classList.add("hidden");
       dialog.showModal();
       return;
     }
@@ -355,6 +366,34 @@ export default class extends Controller {
       set("kind", rec.kind);
       this.#setAllocationMode(form, "required");
       this.#checkAccountRadio(form, rec.account_id);
+      this.#applyAllocationKind(form, form.querySelector('[name="plan_allocation[kind]"]')?.value);
+      form?.classList.add("hidden");
+    if (rec) {
+      if (rec.type === "recurring_transaction") {
+        set("name", rec.name);
+        set("kind", rec.kind);
+        this.#setAllocationMode(form, "required");
+        if (rec.amount_cents != null) set("value", (rec.amount_cents / 100).toFixed(2));
+        if (rec.cadence) set("cadence", rec.cadence);
+        if (rec.source_account_id && this.inPlanValue.includes(rec.source_account_id)) {
+          set("account_id", rec.source_account_id);
+        }
+        set("recurring_transaction_id", rec.recurring_transaction_id);
+      } else {
+        // The "bank as allocation" row: a savings bucket (kind "savings") or
+        // a debt payoff (kind "debt"). A bucket lands with the kind already
+        // applied (hidden bill-only fields, the bucket labels, the monthly
+        // amount input ready) — round 10 issue 4.
+        set("name", rec.name);
+        set("kind", rec.kind);
+        this.#setAllocationMode(form, "required");
+        if (rec.account_id && this.inPlanValue.includes(rec.account_id)) {
+          set("account_id", rec.account_id);
+        }
+      }
+      const kindEl = form?.querySelector('[name="plan_allocation[kind]"]');
+      if (kindEl) this.#applyAllocationKind(form, kindEl.value);
+      this.#showAllocationForm(form);
     }
     this.#applyAllocationVisibility(form);
     this.#allocationCategorySummary(form);
@@ -368,6 +407,282 @@ export default class extends Controller {
     if (!accountId || !this.inPlanValue.includes(accountId)) return;
     const radio = form.querySelector(`[name="plan_allocation[account_id]"][value="${accountId}"]`);
     if (radio) radio.checked = true;
+  }
+
+  // One pass that reshapes the dialog to the current kind + RT-link state.
+  // Every open/prefill path and every kind/mode/RT change funnels through
+  // here because form.reset() does NOT reset the hidden class or the
+  // disabled attribute, so re-applying is mandatory.
+  #applyAllocationVisibility(form) {
+    if (!form) return;
+    const kind = this.#allocationKind(form);
+    const billish = this.#isBillish(kind);
+    const linked = this.#allocationRtLinked(form);
+    form.querySelectorAll("[data-allocation-kinds]").forEach((el) => {
+      const kinds = (el.dataset.allocationKinds || "").split(",").map((s) => s.trim());
+      el.classList.toggle("hidden", !kinds.includes(kind));
+    });
+    this.#setFieldLocked(form, "name", linked);
+    this.#setFieldLocked(form, "value", linked);
+    this.#setFieldLocked(form, "cadence", linked);
+    const modeGroup = form.querySelector("[data-allocation-mode-group]");
+    if (modeGroup) modeGroup.classList.toggle("hidden", !billish || linked);
+    this.#relabelAllocationKind(form, kind);
+  }
+
+  #allocationKind(form) {
+    return form?.querySelector('[name="plan_allocation[kind]"]')?.value || "bill";
+  }
+
+  #isBillish(kind) {
+    return kind === "bill" || kind === "debt";
+  }
+
+  #allocationRtLinked(form) {
+    return Boolean(form?.querySelector('[name="plan_allocation[recurring_transaction_id]"]')?.value);
+  }
+
+  // Lock / unlock one bill-detail field (name / value / cadence). Locked =
+  // read-only context: the editable control is disabled (disabled controls
+  // do not submit) and the hidden input carries the value, so the save
+  // contract is unchanged; the locked box shows the value as a styled row.
+  // Pass value/display on an explicit lock (prefill / RT link); a bare
+  // state toggle (no value) keeps the current hidden value, and unlocking
+  // clears it so stale bill data never saves.
+  #setFieldLocked(form, field, locked, value, display) {
+    const group = form.querySelector(`[data-allocation-field="${field}"]`);
+    const editable = group?.querySelector('[data-allocation-field-state="editable"]');
+    const lockedBox = group?.querySelector('[data-allocation-field-state="locked"]');
+    if (!editable || !lockedBox) return; // the linked form has no state boxes
+    const input = editable.querySelector("input, select");
+    if (input) {
+      // "leftover" mode takes no value: the value input stays disabled even
+      // while editable (the mode select is hidden when linked, so this only
+      // bites a custom Bill / Debt).
+      const leftover = field === "value" && form.querySelector('[name="plan_allocation[mode]"]')?.value === "leftover";
+      input.disabled = locked || leftover;
+    }
+    const hidden = lockedBox.querySelector("input[type='hidden']");
+    if (hidden) {
+      hidden.disabled = !locked;
+      if (value !== undefined) hidden.value = value;
+      else if (!locked) hidden.value = "";
+    }
+    const displayEl = lockedBox.querySelector("[data-allocation-locked-value]");
+    if (displayEl && value !== undefined) displayEl.textContent = display ?? value;
+    editable.classList.toggle("hidden", locked);
+    lockedBox.classList.toggle("hidden", !locked);
+  }
+
+  // The kind relabels (the label strings come from the server-rendered
+  // data attributes, i18n): Bill / Debt share the bill copy, Savings and
+  // Fun Money have their own.
+  #relabelAllocationKind(form, kind) {
+    const key = kind === "savings" ? "savings" : kind === "fun_money" ? "fun" : "bill";
+    form.querySelectorAll("[data-allocation-kind-label]").forEach((el) => {
+      const text = el.dataset[`${key}Label`] || el.dataset.billLabel;
+      if (text) el.textContent = text;
+    });
+    form.querySelectorAll("[data-allocation-kind-hint]").forEach((el) => {
+      const text = el.dataset[`${key}Hint`] || el.dataset.billHint;
+      if (text) el.textContent = text;
+    });
+  }
+
+  // The editable control of a bill-detail field (inside its state box, so
+  // the hidden inputs of the locked box are never matched by name).
+  #editableInput(form, field) {
+    const group = form.querySelector(`[data-allocation-field="${field}"]`);
+    return group?.querySelector('[data-allocation-field-state="editable"] input, [data-allocation-field-state="editable"] select');
+  }
+
+  // Currency text for the read-only rows (the family currency is on the
+  // form; Intl formatting, plain 0.00 fallback).
+  #currencyText(form, cents) {
+    const currency = form?.dataset.familyCurrency;
+    const amount = Number(cents) / 100;
+    if (!currency) return amount.toFixed(2);
+    try {
+      return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(amount);
+    } catch {
+      return amount.toFixed(2);
+    }
+  }
+
+  // The cadence select's option text for the read-only row (the i18n comes
+  // from the server-rendered options).
+  #cadenceText(form, cadence) {
+    const select = this.#editableInput(form, "cadence");
+    const option = select?.options?.namedItem(cadence);
+    return option ? option.text : cadence;
+  }
+
+  // Mode change inside the allocation dialog (custom Bill / Debt only):
+  // required/specific take plan_allocation[value] (required = MONTHLY
+  // figure, deviation 1), percent takes plan_allocation[value_percent]
+  // (0-100), leftover takes no value. The single visible input is renamed
+  // in place.
+  syncAllocationMode(event) {
+    const form = event.target.closest("form");
+    this.#setAllocationMode(form, event.target.value);
+    this.#applyAllocationVisibility(form);
+  }
+
+  // Kind change (round 20 U): the form reshapes to the kind. Leaving
+  // Bill / Debt drops the bill-only state (the stale RT link / cadence
+  // could not be edited while hidden) and forces the required mode,
+  // because a bucket is a typed MONTHLY figure.
+  syncAllocationKind(event) {
+    const form = event.target.closest("form");
+    const kind = event.target.value;
+    if (!this.#isBillish(kind)) {
+      const rt = form.querySelector('[name="plan_allocation[recurring_transaction_id]"]');
+      if (rt) rt.value = "";
+      const cadence = this.#editableInput(form, "cadence");
+      if (cadence) cadence.value = "";
+      this.#setAllocationMode(form, "required");
+      const value = this.#editableInput(form, "value");
+      if (value && value.type !== "hidden") value.value = "";
+    }
+    this.#applyAllocationVisibility(form);
+  }
+
+  // One pass that reshapes the dialog to the current kind + RT-link state.
+  // Every open/prefill path and every kind/mode/RT change funnels through
+  // here because form.reset() does NOT reset the hidden class or the
+  // disabled attribute, so re-applying is mandatory.
+  #applyAllocationVisibility(form) {
+    if (!form) return;
+    const kind = this.#allocationKind(form);
+    const billish = this.#isBillish(kind);
+    const linked = this.#allocationRtLinked(form);
+    form.querySelectorAll("[data-allocation-kinds]").forEach((el) => {
+      const kinds = (el.dataset.allocationKinds || "").split(",").map((s) => s.trim());
+      el.classList.toggle("hidden", !kinds.includes(kind));
+    });
+    this.#setFieldLocked(form, "name", linked);
+    this.#setFieldLocked(form, "value", linked);
+    this.#setFieldLocked(form, "cadence", linked);
+    const modeGroup = form.querySelector("[data-allocation-mode-group]");
+    if (modeGroup) modeGroup.classList.toggle("hidden", !billish || linked);
+    this.#relabelAllocationKind(form, kind);
+  }
+
+  #allocationKind(form) {
+    return form?.querySelector('[name="plan_allocation[kind]"]')?.value || "bill";
+  }
+
+  #isBillish(kind) {
+    return kind === "bill" || kind === "debt";
+  }
+
+  #allocationRtLinked(form) {
+    return Boolean(form?.querySelector('[name="plan_allocation[recurring_transaction_id]"]')?.value);
+  }
+
+  // Lock / unlock one bill-detail field (name / value / cadence). Locked =
+  // read-only context: the editable control is disabled (disabled controls
+  // do not submit) and the hidden input carries the value, so the save
+  // contract is unchanged; the locked box shows the value as a styled row.
+  // Pass value/display on an explicit lock (prefill / RT link); a bare
+  // state toggle (no value) keeps the current hidden value, and unlocking
+  // clears it so stale bill data never saves.
+  #setFieldLocked(form, field, locked, value, display) {
+    const group = form.querySelector(`[data-allocation-field="${field}"]`);
+    const editable = group?.querySelector('[data-allocation-field-state="editable"]');
+    const lockedBox = group?.querySelector('[data-allocation-field-state="locked"]');
+    if (!editable || !lockedBox) return; // the linked form has no state boxes
+    const input = editable.querySelector("input, select");
+    if (input) {
+      // "leftover" mode takes no value: the value input stays disabled even
+      // while editable (the mode select is hidden when linked, so this only
+      // bites a custom Bill / Debt).
+      const leftover = field === "value" && form.querySelector('[name="plan_allocation[mode]"]')?.value === "leftover";
+      input.disabled = locked || leftover;
+    }
+    const hidden = lockedBox.querySelector("input[type='hidden']");
+    if (hidden) {
+      hidden.disabled = !locked;
+      if (value !== undefined) hidden.value = value;
+      else if (!locked) hidden.value = "";
+    }
+    const displayEl = lockedBox.querySelector("[data-allocation-locked-value]");
+    if (displayEl && value !== undefined) displayEl.textContent = display ?? value;
+    editable.classList.toggle("hidden", locked);
+    lockedBox.classList.toggle("hidden", !locked);
+  }
+
+  // The kind relabels (the label strings come from the server-rendered
+  // data attributes, i18n): Bill / Debt share the bill copy, Savings and
+  // Fun Money have their own.
+  #relabelAllocationKind(form, kind) {
+    const key = kind === "savings" ? "savings" : kind === "fun_money" ? "fun" : "bill";
+    form.querySelectorAll("[data-allocation-kind-label]").forEach((el) => {
+      const text = el.dataset[`${key}Label`] || el.dataset.billLabel;
+      if (text) el.textContent = text;
+    });
+    form.querySelectorAll("[data-allocation-kind-hint]").forEach((el) => {
+      const text = el.dataset[`${key}Hint`] || el.dataset.billHint;
+      if (text) el.textContent = text;
+    });
+  }
+
+  // The editable control of a bill-detail field (inside its state box, so
+  // the hidden inputs of the locked box are never matched by name).
+  #editableInput(form, field) {
+    const group = form.querySelector(`[data-allocation-field="${field}"]`);
+    return group?.querySelector('[data-allocation-field-state="editable"] input, [data-allocation-field-state="editable"] select');
+  }
+
+  // Currency text for the read-only rows (the family currency is on the
+  // form; Intl formatting, plain 0.00 fallback).
+  #currencyText(form, cents) {
+    const currency = form?.dataset.familyCurrency;
+    const amount = Number(cents) / 100;
+    if (!currency) return amount.toFixed(2);
+    try {
+      return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(amount);
+    } catch {
+      return amount.toFixed(2);
+    }
+  }
+
+  // The cadence select's option text for the read-only row (the i18n comes
+  // from the server-rendered options).
+  #cadenceText(form, cadence) {
+    const select = this.#editableInput(form, "cadence");
+    const option = select?.options?.namedItem(cadence);
+    return option ? option.text : cadence;
+  }
+
+  // Mode change inside the allocation dialog (custom Bill / Debt only):
+  // required/specific take plan_allocation[value] (required = MONTHLY
+  // figure, deviation 1), percent takes plan_allocation[value_percent]
+  // (0-100), leftover takes no value. The single visible input is renamed
+  // in place.
+  syncAllocationMode(event) {
+    const form = event.target.closest("form");
+    this.#setAllocationMode(form, event.target.value);
+    this.#applyAllocationVisibility(form);
+  }
+
+  // Kind change (round 20 U): the form reshapes to the kind. Leaving
+  // Bill / Debt drops the bill-only state (the stale RT link / cadence
+  // could not be edited while hidden) and forces the required mode,
+  // because a bucket is a typed MONTHLY figure.
+  syncAllocationKind(event) {
+    const form = event.target.closest("form");
+    const kind = event.target.value;
+    if (!this.#isBillish(kind)) {
+      const rt = form.querySelector('[name="plan_allocation[recurring_transaction_id]"]');
+      if (rt) rt.value = "";
+      const cadence = this.#editableInput(form, "cadence");
+      if (cadence) cadence.value = "";
+      this.#setAllocationMode(form, "required");
+      const value = this.#editableInput(form, "value");
+      if (value && value.type !== "hidden") value.value = "";
+    }
+    this.#applyAllocationVisibility(form);
   }
 
   // One pass that reshapes the dialog to the current kind + RT-link state.
@@ -566,6 +881,8 @@ export default class extends Controller {
     }
     this.#checkAccountRadio(form, rec.source_account_id);
     this.#applyAllocationVisibility(form);
+    const kindEl = form?.querySelector('[name="plan_allocation[kind]"]');
+    if (kindEl) this.#applyAllocationKind(form, kindEl.value);
   }
 
   // ---- Bank dialog ------------------------------------------------------

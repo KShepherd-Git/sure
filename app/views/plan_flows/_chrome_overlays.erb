@@ -46,6 +46,10 @@
         allocation node keeps its own label + hit-rect click handlers
         (R1 T6), so the allocation stays editable underneath. %>
     <div class="absolute right-3 top-2">
+    <%# Round 21 T6: the float sits at the BOTTOM-right corner. Allocations
+        stack down from the column top, so top-2 landed 6px above the first
+        allocation node at the owner viewport and stole its clicks. %>
+    <div class="absolute right-3 bottom-3">
       <%= button_tag(type: "button", class: "text-xs bg-container border border-subdued text-secondary rounded-lg px-2.5 py-1 shadow-border-xs hover:text-primary",
            data: { action: "plan-flow#openNewAllocation" }) do %>
         <span class="flex items-center gap-1"><%= icon("plus", class: "h-3 w-3") %><%= t("plan_flows.show.add_allocation") %></span>

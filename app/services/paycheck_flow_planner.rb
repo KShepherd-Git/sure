@@ -420,6 +420,8 @@ class PaycheckFlowPlanner
                  recommendations: [], sub_account_links: {}, auto_transfer_targets: {},
                  account_names: {}, account_last4s: {}, account_bank_logos: {},
                  bank_logo_keywords: [], bank_logos: {}, categories: {}, draft: nil)
+                 plan_roles: {}, auto_transfers: {}, plan_ordered: {}, linked_bank_counts: {}, recommendations: [], draft: nil)
+                 account_names: {}, draft: nil)
     @month = month
     @incomes = incomes
     @allocations = allocations
@@ -1206,6 +1208,7 @@ class PaycheckFlowPlanner
                   @plan_ordered.keys |
                   @sub_account_links.keys |
                   @auto_transfer_targets.values.flatten).uniq
+                  @plan_ordered.keys).uniq
 
       banks = bank_ids.map do |bank_id|
         inflow_rows = graph[:bands].select { |band| band[:account_id] == bank_id }

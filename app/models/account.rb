@@ -811,14 +811,34 @@ class Account < ApplicationRecord
   end
 
   # Round 20: the plan-flow bank config dialog's avatar URL. A custom
+  # uploaded logo (the ActiveStorage attachment) wins; otherwise the
+  # bank_logo_slug resolution (a VENDORED app asset, data-driven — the
+  # built-in set is swapped out from under this path by later rounds);
+  # nil (a neutral circle) when nothing resolves. Deliberately excludes
+  # the cloud brandfetch / provider logo URLs: the plan flow is 100% local.
+  # Round 22 (N6): the slug branch is KEYWORD resolution —
+  # BankLogoSlugs.resolve (explicit slug first, then longest-keyword-first
+  # name match: the SAME order and usable set the plan-flow planner uses
+  # for the sankey logos) — so the allocation dialog bank rows, the sankey
+  # labels and the bank config dialog avatar all agree even when
+  # accounts.bank_logo_slug is NULL. The URL is the PLAIN
+  # /images/bank-logos/<slug>.svg path propshaft serves same-origin
+  # (app/assets/images, with the vendored public/ copy as backstop) —
+  # the SAME plain path the sankey controller builds
+  # (plan_flow_sankey_controller.js). NOT asset_path: that is a
+  # view-only helper and does not exist on routes.url_helpers (the
+  # old slug branch was dead code while every bank_logo_slug was NULL,
+  # which is how the latent NoMethodError survived).
+  def plan_flow_avatar_url
+    return Rails.application.routes.url_helpers.rails_blob_path(logo, only_path: true) if logo.attached?
+
+    if (slug = BankLogoSlugs.resolve(name, explicit: bank_logo_slug)).present?
+      "/images/bank-logos/#{slug}.svg"
   # uploaded logo (the ActiveStorage attachment) wins; then the explicit
   # bank_logo_slug (a VENDORED app asset, data-driven — the built-in set is
   # swapped out from under this path by later rounds); otherwise nil (the
   # dialog renders a neutral circle). Deliberately excludes the cloud
   # brandfetch / provider logo URLs: the plan flow is 100% local.
-  def plan_flow_avatar_url
-    return Rails.application.routes.url_helpers.rails_blob_path(logo, only_path: true) if logo.attached?
-
     if bank_logo_slug.present? && BankLogoSlugs.available.key?(bank_logo_slug)
       ActionController::Base.helpers.asset_path("bank-logos/#{bank_logo_slug}.svg")
     end

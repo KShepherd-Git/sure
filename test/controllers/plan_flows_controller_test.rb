@@ -185,6 +185,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         # Round 20b: the sub-account select is unnamed (the kebab popup
         # syncs it into the form's hidden input, which is what submits).
         assert_select "input[type=hidden][name='account[parent_account_id]']"
+        assert_select "select[name='account[parent_account_id]']"
         assert_select "input[type=hidden][name='account[auto_transfer_target_ids][]'][value='0']"
       end
     end
@@ -518,6 +519,13 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   # the bill-only fields (mode / cadence / detected-bill link) are hidden
   # (auto-transfer is gone, round 20 U) — and hidden fields still submit,
   # so the controller sanitizes a stale submit into the clean monthly shape.
+  # --- Round 10 issue 4: the savings bucket (kind "savings") ----------------
+  # The dialog shows "Which Account is this Savings Bucket Associated to"
+  # (the existing account_id select) and "How much to save Per Month" (the
+  # existing value field, mode forced "required" = monthly); the bill-only
+  # fields (mode / cadence / detected-bill link / auto transfer) are hidden —
+  # and hidden fields still submit, so the controller sanitizes a stale
+  # submit into the clean monthly shape.
 
   test "the savings bucket dialog hides the bill fields and shows the bucket labels" do
     travel_to Date.new(2026, 11, 15) do
@@ -542,6 +550,16 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "input[name='plan_allocation[auto_transfer]']", count: 0
         assert_select "label[for$='allocation_value']", text: I18n.t("plan_flows.allocation_dialog.savings_value_label")
         assert_select "p[data-allocation-kind-hint='account']", text: I18n.t("plan_flows.allocation_dialog.savings_account_hint")
+      # Edit dialog: the four bill-only blocks (mode / cadence / detected
+      # bill link / auto transfer) render hidden, and the account select +
+      # amount input wear the bucket labels.
+        assert_select "div[data-allocation-bill-only].hidden", count: 4
+        assert_select "div[data-allocation-bill-only].hidden select[name='plan_allocation[mode]']"
+        assert_select "div[data-allocation-bill-only].hidden select[name='plan_allocation[cadence]']"
+        assert_select "div[data-allocation-bill-only].hidden select[name='plan_allocation[recurring_transaction_id]']"
+        assert_select "div[data-allocation-bill-only].hidden input[name='plan_allocation[auto_transfer]']"
+        assert_select "label[for$='allocation_value']", text: I18n.t("plan_flows.allocation_dialog.savings_value_label")
+        assert_select "p[data-allocation-kind-hint='account']", text: I18n.t("plan_flows.allocation_dialog.savings_account_hint")
         assert_select "input[name='plan_allocation[value]'][value='250.00']"
       end
       # New dialog (kind defaults to bill): the bill fields stay visible and
@@ -550,6 +568,9 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "div[data-allocation-kinds].hidden", count: 0
         assert_select "label[for$='allocation_value']", text: I18n.t("plan_flows.allocation_dialog.value_label")
         assert_select "p[data-allocation-kind-hint='account']", text: I18n.t("plan_flows.allocation_dialog.source_bank_hint")
+        assert_select "div[data-allocation-bill-only].hidden", count: 0
+        assert_select "label", text: I18n.t("plan_flows.allocation_dialog.value_label")
+        assert_select "label", text: I18n.t("plan_flows.allocation_dialog.source_bank_label")
       end
     end
   end
@@ -1140,6 +1161,9 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   # picker (hidden slug input + the vendored logo list), J's existing
   # fields intact.
   test "dialogs render the category picker and the logo picker" do
+  # allocation dialog's category select and the bank dialog's logo picker
+  # (hidden slug input + the vendored logo list), J's existing fields intact.
+  test "dialogs render the category select and the logo picker" do
     travel_to Date.new(2026, 11, 15) do
       series = create_income_series(account: @account, name: "Bob Payroll", amount: 900)
       IncomeAccountAllocation.create!(family: @family, income_series: series,
@@ -1249,6 +1273,261 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       patch "/plan/flow/accounts/#{@account.id}", headers: { "Accept" => "application/json" }, params: {
         account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
                    parent_account_id: "", auto_transfer_target_ids: [ "0" ] },
+        links: { series.id.to_s => { "enabled" => "1", "mode" => "leftover" } }
+      }
+      assert_response :success
+      edge = IncomeAccountAllocation.find_by(income_series_id: series.id, account_id: @account.id)
+      assert_equal "leftover", edge.mode
+    end
+  end
+
+  test "kebab make-sub-account round trip: set and clear the parent link" do
+    child = create_vault("Baby Vault")
+    # Both accounts carry a plan marker: the child to render its dialog,
+    # the parent to be listed as a sub-account candidate.
+    @account.update!(plan_order: 1)
+    child.update!(plan_order: 2)
+
+    # The dialog markup: the popup lists the in-plan parent candidates +
+    # the "Not a sub-account" clear entry (empty value).
+    travel_to Date.new(2026, 11, 15) do
+      get "/plan/flow"
+      assert_response :success
+      assert_select "dialog[data-node-id='bank:#{child.id}'] [data-bank-config-dialog-target=subAccountPopup] [data-bank-config-dialog-target=subAccountSelect]", 1 do
+        assert_select "option[value='']", 1
+        assert_select "option[value='#{@account.id}']", 1
+      end
+    end
+
+    # Set via the same param the popup's Save submits.
+    patch "/plan/flow/accounts/#{child.id}", headers: { "Accept" => "application/json" }, params: {
+      account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
+                 parent_account_id: @account.id }
+    }
+    assert_response :success
+    assert_equal @account.id, child.reload.parent_account_id
+
+    # "Not a sub-account" posts an empty value -> clears the link.
+    patch "/plan/flow/accounts/#{child.id}", headers: { "Accept" => "application/json" }, params: {
+      account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
+                 parent_account_id: "" }
+    }
+    assert_response :success
+    assert_nil child.reload.parent_account_id
+  end
+
+  test "role change persists the new five-value roles" do
+    patch "/plan/flow/accounts/#{@account.id}", params: {
+      account: { plan_ownership: "shared", plan_role: "investment" }
+    }
+    assert_redirected_to "/plan/flow?view=paycheck"
+    assert_equal "investment", @account.reload.plan_role
+    assert_not Account.plan_role_debt?(@account.plan_role)
+
+    patch "/plan/flow/accounts/#{@account.id}", params: {
+      account: { plan_ownership: "shared", plan_role: "checking" }
+    }
+    assert_equal "checking", @account.reload.plan_role
+
+    # Debt roles still classify as debt (the planner's "Pay off X" kinds).
+    patch "/plan/flow/accounts/#{@account.id}", params: {
+      account: { plan_ownership: "shared", plan_role: "credit_card_payoff" }
+    }
+    account = @account.reload
+    assert_equal "credit_card_payoff", account.plan_role
+    assert Account.plan_role_debt?(account.plan_role)
+  end
+
+  test "auto-transfer via the kebab: the sentinel-only post clears the targets" do
+    child = create_vault("Baby Vault")
+    @account.update!(plan_order: 1) # render the dialog
+    patch "/plan/flow/accounts/#{child.id}", params: {
+      account: { parent_account_id: @account.id }
+    }
+
+    # The popup's checkbox list marks the sub-account row enabled.
+    travel_to Date.new(2026, 11, 15) do
+      get "/plan/flow"
+      assert_response :success
+      assert_select "dialog[data-node-id='bank:#{@account.id}'] [data-bank-config-dialog-target=autoTransferBox] input[type=checkbox][data-other-id='#{child.id}']", 1
+    end
+
+    patch "/plan/flow/accounts/#{@account.id}", params: {
+      account: { auto_transfer_target_ids: [ "0", child.id.to_s ] }
+    }
+    assert_equal [ child.id.to_s ], @account.reload.auto_transfer_target_ids
+
+    # All unchecked posts only the "0" sentinel -> dropped, and the jsonb
+    # column holds an empty array (the ERB's Array() render sees no rows).
+    patch "/plan/flow/accounts/#{@account.id}", params: {
+      account: { auto_transfer_target_ids: [ "0" ] }
+    }
+    assert_equal [], @account.reload.auto_transfer_target_ids
+  end
+
+  # 1x1 transparent PNG (67 bytes) for the upload tests.
+  ROUND20_TEST_PNG = Base64.decode64(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  ).freeze
+
+  def round20_upload(bytes, content_type, name)
+    Rack::Test::UploadedFile.new(StringIO.new(bytes), content_type, original_filename: name)
+  end
+
+  test "bank logo custom upload validates, persists, and removes" do
+    travel_to Date.new(2026, 11, 15) do
+      # Wrong content type (SVG deliberately excluded - XSS vector).
+      post "/plan/flow/accounts/#{@account.id}/bank-logo",
+        headers: { "Accept" => "application/json" },
+        params: { image: round20_upload("<svg/>".b, "image/svg+xml", "logo.svg") }
+      assert_response :unprocessable_entity
+      assert_includes JSON.parse(response.body)["errors"],
+        I18n.t("plan_flows.upload_bank_logo.bank_logo_not_an_image")
+
+      # Oversized (1 MB + 1).
+      post "/plan/flow/accounts/#{@account.id}/bank-logo",
+        headers: { "Accept" => "application/json" },
+        params: { image: round20_upload("x".b * (1_048_577), "image/png", "big.png") }
+      assert_response :unprocessable_entity
+      assert_includes JSON.parse(response.body)["errors"],
+        I18n.t("plan_flows.upload_bank_logo.bank_logo_too_large")
+
+      # Missing file.
+      post "/plan/flow/accounts/#{@account.id}/bank-logo",
+        headers: { "Accept" => "application/json" },
+        params: {}
+      assert_response :unprocessable_entity
+      assert_includes JSON.parse(response.body)["errors"],
+        I18n.t("plan_flows.upload_bank_logo.bank_logo_missing_file")
+
+      # Valid upload -> 200 + the avatar URL (the model's own helper).
+      post "/plan/flow/accounts/#{@account.id}/bank-logo",
+        headers: { "Accept" => "application/json" },
+        params: { image: round20_upload(ROUND20_TEST_PNG, "image/png", "custom.png") }
+      assert_response :success
+      account = @account.reload
+      assert account.logo.attached?
+      assert_equal JSON.parse(response.body)["logo_url"],
+        Rails.application.routes.url_helpers.rails_blob_path(account.logo, only_path: true)
+      assert_equal account.plan_flow_avatar_url,
+        Rails.application.routes.url_helpers.rails_blob_path(account.logo, only_path: true)
+
+      # The dialog avatar renders the custom URL.
+      get "/plan/flow"
+      assert_response :success
+      assert_includes response.body, %(src="#{account.plan_flow_avatar_url}")
+
+      # Re-upload replaces (still exactly one attachment).
+      post "/plan/flow/accounts/#{@account.id}/bank-logo",
+        headers: { "Accept" => "application/json" },
+        params: { image: round20_upload(ROUND20_TEST_PNG, "image/png", "other.png") }
+      assert_response :success
+      assert_equal 1, ActiveStorage::Attachment
+        .where(record_type: "Account", record_id: @account.id, name: "logo").count
+
+      # Remove -> 200 + nil url; the purge is enqueued (async, house
+      # pattern). Block form: the re-upload's purge counts separately.
+      assert_enqueued_jobs(1, only: ActiveStorage::PurgeJob) do
+        delete "/plan/flow/accounts/#{@account.id}/bank-logo",
+          headers: { "Accept" => "application/json" }
+      end
+      assert_response :success
+      assert_nil JSON.parse(response.body)["logo_url"]
+    end
+  end
+      # Bank config dialog: the logo picker (search + hidden slug input +
+      # the vendored list) and J's fan-out fields intact.
+        assert_select "section[data-controller=bank-logo-picker]", 1 do
+          assert_select "input[name='account[bank_logo_slug]'][type=hidden]", 1
+          assert_select "[data-bank-logo-picker-target=search]", 1
+          assert_select "[data-bank-logo-picker-target=choice][data-slug=sofi]", 1
+        end
+        assert_select "select[name='account[parent_account_id]']", 1
+      # Allocation dialog (edit mode): the category select carries the
+      # family's categories.
+        assert_select "select[name='plan_allocation[category_id]']", 1 do
+          assert_select "option[value='#{category.id}']", 1
+        end
+        assert_select "input[type=hidden][name='account[auto_transfer_target_ids][]'][value='0']", 1
+      end
+
+      assert_select "dialog[data-node-id='allocation:#{allocation.id}']", 1 do
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------
+  # Round 20 (T): the save bug + the progressive-disclosure rework.
+  # Controller round-trips for uncheck / sub-account / fan-out pre-date this
+  # round (edge-editor era, above); these pin the NEW dialog markup, the
+  # five-value role enum, and the custom-logo upload/remove endpoints.
+  # ---------------------------------------------------------------------
+
+  test "bank dialog renders the uncheck sentinel, kebab popups, and the five roles" do
+    travel_to Date.new(2026, 11, 15) do
+      series = create_income_series(account: @account, name: "Bob Payroll", amount: 900)
+      IncomeAccountAllocation.create!(family: @family, income_series: series,
+        account: @account, mode: "required")
+
+      get "/plan/flow"
+      assert_response :success
+
+      assert_select "dialog[data-node-id='bank:#{@account.id}']", 1 do
+        # Round 20 save-bug fix: an unchecked browser checkbox sends NO
+        # param, so the hidden empty sentinel (before the checkbox) is what
+        # makes the controller see the row and destroy the edge.
+        assert_select "input[type=hidden][name='links[#{series.id}][enabled]'][value='']", 1
+        # Progressive disclosure: the rule select sits inside the row's
+        # details wrapper (visible because this row is checked).
+        assert_select "[data-bank-row-details] select[name='links[#{series.id}][mode]']", 1
+        # Round 20b: the kebab + the sub-account popup (the select is
+        # unnamed; it syncs into the form's hidden input).
+        assert_select "[data-bank-config-dialog-target=kebabMenu]", 1
+        assert_select "[data-bank-config-dialog-target=subAccountPopup] [data-bank-config-dialog-target=subAccountSelect]", 1
+        assert_select "[data-bank-config-dialog-target=subAccountSelect] option[value='']", 1
+        # Round 20e: the auto-transfer popup with the checkbox box.
+        assert_select "[data-bank-config-dialog-target=autoTransferPopup] [data-bank-config-dialog-target=autoTransferBox]", 1
+        # Round 20c: exactly the five roles (plus the disabled Plain
+        # placeholder while the role is nil).
+        assert_select "select[name='account[plan_role]'] option[value=savings_bucket]", 1
+        assert_select "select[name='account[plan_role]'] option[value=checking]", 1
+        assert_select "select[name='account[plan_role]'] option[value=credit_card_payoff]", 1
+        assert_select "select[name='account[plan_role]'] option[value=loan_payoff]", 1
+        assert_select "select[name='account[plan_role]'] option[value=investment]", 1
+        assert_select "select[name='account[plan_role]'] option[disabled][value='']", 1
+        # Round 20a heading + 20d avatar.
+        assert_select "[data-bank-config-dialog-target=pullFrom]", 1
+        assert_select "[data-bank-config-dialog-target=avatarImg]", 1
+        assert_includes response.body, I18n.t("plan_flows.bank_config_dialog.pull_from_incomes")
+      end
+    end
+  end
+
+  test "unchecking a linked income and saving removes the link (round 20 save bug)" do
+    travel_to Date.new(2026, 11, 15) do
+      series = create_income_series(account: @account, name: "Bob Payroll", amount: 900)
+      IncomeAccountAllocation.create!(family: @family, income_series: series,
+        account: @account, mode: "required")
+      # plan_order keeps the dialog rendered even after the edge is gone
+      # (the depository fixture carries no other plan marker).
+      @account.update!(plan_order: 1)
+
+      # Exactly what the dialog posts when the checkbox is unchecked: only
+      # the hidden sentinel (the disabled rule controls send no values).
+      patch "/plan/flow/accounts/#{@account.id}", headers: { "Accept" => "application/json" }, params: {
+        account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
+                   parent_account_id: "", auto_transfer_target_ids: ["0"] },
+        links: { series.id.to_s => { "enabled" => "" } }
+      }
+      assert_response :success
+      json = JSON.parse(response.body)
+      assert_equal "bank:#{@account.id}", json["chrome"]["bank_dialogs"][0]["node_id"]
+      assert_not IncomeAccountAllocation.exists?(income_series_id: series.id, account_id: @account.id)
+
+      # Re-checking persists a new edge (round trip in the other direction).
+      patch "/plan/flow/accounts/#{@account.id}", headers: { "Accept" => "application/json" }, params: {
+        account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
+                   parent_account_id: "", auto_transfer_target_ids: ["0"] },
         links: { series.id.to_s => { "enabled" => "1", "mode" => "leftover" } }
       }
       assert_response :success

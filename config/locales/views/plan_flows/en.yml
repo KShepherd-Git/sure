@@ -54,6 +54,8 @@ en:
       # shows only checkbox + name until checked (the rule select + value
       # reveal in the same row).
       pull_from_incomes: Pull From Incomes
+      subtitle: Linked incomes, ownership, role, sub-accounts, and auto transfer.
+      linked_incomes: Linked incomes
       no_incomes: No income declared yet.
       rule_aria: "Rule for %{name}"
       mode_required: Pay this bank's bills first
@@ -100,6 +102,41 @@ en:
       logo_upload_error_size: The image is too large. Maximum 1 MB.
       more_aria: More options
       popup_cancel: Cancel
+      role_savings_bucket: Savings bucket
+      role_credit_card_payoff: Credit card payoff
+      role_loan_payoff: Loan payoff
+      # Round 11 issue 8: the legacy single auto-transfer select is replaced
+      # by the sub-account-of select + the multi-target fan-out checkboxes.
+      sub_account_label: Sub-account of
+      sub_account_none: Not a sub-account
+      # Round 20e: the auto-transfer fan-out moved into the kebab.
+      menu_configure_auto_transfer: Configure Auto-Transfer
+      # Round 16 (owner note 3b): the searchable logo picker. The hidden
+      # input always submits the current slug (presence keeps / assign,
+      # blank clears); the server validates against the vendored set.
+      logo_label: Bank logo
+      logo_hint: Optional. Search the list and click one to assign it to this bank.
+      logo_search_placeholder: Search logos
+      logo_search_aria: Search bank logos
+      logo_clear: Clear
+      logo_none: No logo (auto-match or none)
+      logo_no_match: No logo matches that search.
+      auto_transfer_targets: Auto-Transfer to (sub-accounts)
+      auto_transfer_targets_hint: A bucket must first be set as a sub-account of this bank.
+      # Round 20d: the old search + list section is gone; the avatar
+      # (top-left of the dialog) opens the logo popup instead. Picking a
+      # built-in while a custom upload is attached removes the custom.
+      logo_popup_title: Bank logo
+      logo_hint: Click the avatar to upload a logo or pick a built-in one.
+      logo_upload: Upload Custom
+      logo_remove_custom: Remove custom
+      logo_builtin_heading: Built-in logos
+      logo_none: None
+      logo_upload_error_missing: No image file attached.
+      logo_upload_error_type: Only PNG, JPEG, WebP, or GIF images can be used as a bank logo.
+      logo_upload_error_size: The image is too large. Maximum 1 MB.
+      more_aria: More options
+      popup_cancel: Cancel
       save: Save
       # Remove from plan (owner review round 3, R3): the bank leaves the map;
       # its allocations persist unassigned ("No Assignment" marker).
@@ -128,6 +165,7 @@ en:
       new_hint: Start a bill from scratch, or pick one above.
       new_cta: Add New Allocation
       locked_tooltip: "Edit Details Grabbed from Tracked Accounts"
+      new_cta: New Allocation
       name_label: Name
       kind_label: Kind
       kind_bill: Bill
@@ -155,6 +193,7 @@ en:
       # account is on the plan yet.
       empty_bank_rows: "Add accounts first: use Add Account."
       source_bank_hint: Pick the bank this allocation pays from. Unassigned allocations wait outside the resolution.
+      source_bank_hint: Pick a source bank so this allocation pays from it — unassigned allocations wait outside the resolution.
       # Owner round 10 (issue 4): the savings-bucket view of the same two
       # fields. The associated account IS the existing source-bank field
       # (account_id): the planner resolution and the Sankey band both key
@@ -162,6 +201,7 @@ en:
       # existing value field with mode "required" (monthly, prorated over
       # the month's paychecks). The bill-only fields (mode / cadence /
       # detected-bill link) are hidden for kind "savings" and "fun_money".
+      # detected-bill link / auto transfer) are hidden for kind "savings".
       savings_account_label: Which Account is this Savings Bucket Associated to
       savings_account_hint: Pick the account this savings bucket is associated to. The diagram draws the monthly band from it into the bucket.
       savings_value_label: How much to save Per Month

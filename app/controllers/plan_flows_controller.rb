@@ -324,6 +324,7 @@ class PlanFlowsController < ApplicationController
             # Round 16: the picker's searchable logo list (same-origin
             # assets; client-side filtering, no endpoint).
             available_bank_logos: @available_bank_logos
+            edges: Current.family.income_account_allocations.where(account_id: account.id).index_by(&:income_series_id)
           })
         }
       end
@@ -338,6 +339,19 @@ class PlanFlowsController < ApplicationController
           # once at page load, so an in-place account change ships a fresh
           # fragment for #inPlaceSubmit to swap in place (the off-plan
           # row a dialog may append is out of scope here).
+          # Round 22 (N1): the swapped-in rows carry the ****last4 spans too.
+          allocation_bank_rows: (accounts.any? || removed_account) ? render_to_string(partial: "plan_flows/allocation_bank_rows", locals: { bank_rows: @in_plan_accounts, account_last4s: @account_last4s }) : nil,
+          bank_dialogs: bank_dialogs.presence,
+          bank_removed: removed_account ? "bank:#{removed_account.id}" : nil,
+          # Round 7: the Sankey's in-plan / account-name values are
+          # page-load state; refresh them after every in-place write or a
+          # removed bank is re-synthesized as a phantom floor node until the
+          # next reload.
+          sankey: {
+            accounts: @flow_accounts.map { |account| [ account.id, account.name ] }.to_h,
+            in_plan: in_plan_account_ids
+          },
+          known: allocation_changed ? render_to_string(partial: "plan_flows/known_allocations", locals: { known_allocations: @known_allocations }) : nil,
           allocation_bank_rows: (accounts.any? || removed_account) ? render_to_string(partial: "plan_flows/allocation_bank_rows", locals: { bank_rows: @in_plan_accounts }) : nil,
           bank_dialogs: bank_dialogs.presence,
           bank_removed: removed_account ? "bank:#{removed_account.id}" : nil,
@@ -371,6 +385,11 @@ class PlanFlowsController < ApplicationController
       @flow_accounts = flow_accounts
       @in_plan_account_ids = in_plan_account_ids
       @in_plan_accounts = @flow_accounts.select { |account| @in_plan_account_ids.include?(account.id) }
+      # Round 22 (N1): the masked last-4 map the allocation dialog bank rows
+      # render next to each name (****NNNN, the Add Account modal style);
+      # the same helper the plan-graph payload and that modal already use —
+      # plain 4 digits from plaid_accounts.mask, nil when absent.
+      @account_last4s = PaycheckFlowPlanner.account_last4s_for(Current.family)
       @unplanned_count = @flow_accounts.count - @in_plan_accounts.count
       @plan_allocations = Current.family.plan_allocations.includes(:account).order(:name)
       @over_plan_lines = over_plan_lines
@@ -604,6 +623,14 @@ class PlanFlowsController < ApplicationController
     # controls for these kinds, and hidden controls still submit — so those
     # stale values are dropped server-side and the mode is forced
     # "required".
+    # The dialog row, shaped for persistence (owner round 10, issue 4):
+    # kind "savings" is a savings bucket — a MONTHLY figure (mode "required",
+    # value_cents) from an associated account. The associated account IS the
+    # existing account_id field (the planner resolution and the Sankey band
+    # both key off it, so no second column exists), but the dialog hides the
+    # mode / cadence / detected-bill / auto-transfer controls for buckets,
+    # and hidden controls still submit — so those stale values are dropped
+    # server-side and the mode is forced "required".
     def sanitize_plan_allocation_row(a)
       mode = a[:mode].to_s
       row = {
@@ -625,6 +652,7 @@ class PlanFlowsController < ApplicationController
       # typed MONTHLY figure, never a bill shape, so the hidden controls'
       # stale values are dropped and the mode is forced "required".
       if %w[savings fun_money].include?(row[:kind].to_s)
+      if row[:kind].to_s == "savings"
         row[:mode] = "required"
         row[:value_cents] = parse_value_cents(a[:value])
         row[:value_percent] = nil

@@ -18,6 +18,36 @@
         <%= form_with url: flow_add_accounts_plan_path, method: :post,
                       class: "space-y-2",
                       data: { turbo: "false", plan_flow_inplace: "true" } do |form| %>
+          <%# Round 22 (N9): the same LOCKED scroll window as the
+              allocation dialog bank rows (max-h-64 overflow-y-auto —
+              never overflow-auto) and the same BANK SOURCE row style:
+              plan-flow avatar (logo over letter chip) + name +
+              ****last4, the ONLY addition being the checkbox on the
+              right (ml-auto). The "Add to map" submit button stays
+              OUTSIDE the window. The row DOM order is the submission
+              order that add_accounts uses to assign plan_order — the
+              checkbox name/value (account_ids[]) are unchanged. %>
+          <div class="max-h-64 overflow-y-auto space-y-1 overscroll-contain">
+            <% @unassigned_accounts.each do |account| %>
+              <label class="flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer has-[:checked]:bg-surface-inset">
+                <span class="h-8 w-8 flex-shrink-0 rounded-full overflow-hidden bg-subdued flex items-center justify-center relative">
+                  <span class="text-sm font-medium text-secondary"><%= (account.name.to_s.strip.first || "?").upcase %></span>
+                  <% if account.plan_flow_avatar_url.present? %>
+                    <img src="<%= account.plan_flow_avatar_url %>" alt="" class="absolute inset-0 h-full w-full object-cover" onerror="this.remove()">
+                  <% end %>
+                </span>
+                <span class="text-sm text-primary truncate"><%= account.name %></span>
+                <%# Round 16 (owner note 4): the same last-4 the plan-flow
+                    payload carries; nil for every account without a mask. %>
+                <% if (last4 = @account_last4s[account.id]) %>
+                  <span class="text-xs text-secondary tabular-nums">****<%= last4 %></span>
+                <% end %>
+                <input type="checkbox"
+                       name="account_ids[]" value="<%= account.id %>"
+                       class="checkbox checkbox--light h-4 w-4 rounded ml-auto" />
+              </label>
+            <% end %>
+          </div>
           <% @unassigned_accounts.each do |account| %>
             <label class="flex items-center gap-2 text-sm text-primary cursor-pointer">
               <input type="checkbox"
@@ -36,8 +66,12 @@
           <% end %>
           <% unless @unassigned_accounts.empty? %>
             <div class="pt-1">
+              <%# Round 22 (N10): bg-primary resolves to #171717 in the
+                  dark theme — the modal's own background — so the button
+                  was invisible. Dark-but-distinct surface + the exact
+                  Add Manual Account border treatment. %>
               <button type="submit"
-                      class="text-sm bg-primary text-on-primary rounded-lg px-3 py-1.5 hover:opacity-90">
+                      class="text-sm bg-surface-inset text-primary border border-subdued shadow-border-xs rounded-lg px-3 py-1.5 hover:opacity-90">
                 <%= t(".add_selected") %>
               </button>
             </div>

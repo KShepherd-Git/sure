@@ -13,6 +13,7 @@ class PlanAllocationTest < ActiveSupport::TestCase
 
   def build(mode:, value_cents: nil, value_percent: nil, name: "Netflix", kind: "bill",
             recurring_transaction: nil, family: @family, account: @account, category: nil)
+            recurring_transaction: nil, family: @family, account: @account)
     PlanAllocation.new(
       family: family,
       account: account,

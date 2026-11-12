@@ -29,9 +29,55 @@
         list (data-driven from the available_bank_logos local; the built-in
         set is swapped for favicons in a later round, so nothing hard-
         codes names).
+<%# Bank node -> config dialog (M2 PR#2b). Linked incomes: one row per
+    declared income, checked = linked; per-income rule defaults to "pay this
+    bank's debts/bills first" (the required edge behavior), or a fixed /
+    percent / leftover share of that income. Plus ownership (Home/Shared |
+    member — moved here from the old center-column dropdown), the role label
+    (plain / savings bucket / credit card payoff / loan payoff), the
+    sub-account-of select, and the multi-target auto-transfer fan-out
+    (round 11 issue 8: a fan-out target must be a sub-account of this
+    account; the legacy single auto-transfer select is replaced).
     Submits the PATCH flow_account endpoint: checked rows upsert the edge
     per income, unchecked rows (enabled="") remove the link. In-place
     submit: the diagram tweens to the new graph instead of reloading.
+    locals: (account, edges, available_bank_logos: {}) —
+    edges: income_series_id -> IncomeAccountAllocation;
+    available_bank_logos: slug -> label (BankLogoSlugs.available). %>
+<%
+  # Round 11 issue 8: fan-out candidate set = the bank rows the planner
+  # renders (graph[:banks]) = in-plan accounts + accounts that ARE
+  # sub-accounts (parent_account_id set), which the planner includes even
+  # without a plan_order (sub_account_links). The auto-transfer popup rows
+  # below iterate this set, so a target the diagram draws is always
+  # addressable in the dialog. The name-collision guard counts over the
+  # same set: when a name occurs 2+ times in it (the dev data has two
+  # "SoFi Savings" + two "SoFi Checking"), the row labels for that name get
+  # "(<id first 4>)" appended. Label-only.
+  in_plan_ids = @in_plan_accounts.map(&:id)
+  fanout_rows = @in_plan_accounts.to_a + @flow_accounts.select { |other| other.parent_account_id.present? && !in_plan_ids.include?(other.id) }
+  sub_account_name_counts = fanout_rows.group_by(&:name).transform_values(&:size)
+  disambiguated_name = lambda do |candidate|
+    sub_account_name_counts[candidate.name].to_i > 1 ? "#{candidate.name} (#{candidate.id[0, 4]})" : candidate.name
+  end
+  # Round 20b: sub-account popup candidate set = the old inline select's
+  # options (in-plan accounts that are not themselves sub-accounts).
+  sub_account_options = [[ t(".sub_account_none"), "" ]] +
+    @in_plan_accounts.reject { |other| other.id == account.id || other.parent_account_id.present? }
+                       .map { |other| [ disambiguated_name.call(other), other.id ] }
+  # Round 20d: the avatar + logo popup are data-driven off these values.
+  avatar_url = account.plan_flow_avatar_url
+  logo_custom_url = account.logo.attached? ? Rails.application.routes.url_helpers.rails_blob_path(account.logo, only_path: true) : ""
+  logo_list = (available_bank_logos || {}).sort_by { |_slug, label| label.to_s.downcase }.map { |slug, label| { slug: slug, label: label, url: asset_path("bank-logos/#{slug}.svg") } }
+  role_options = %w[savings_bucket checking credit_card_payoff loan_payoff investment].map { |role| [ t(".role_#{role}"), role ] }
+  # A plain account (nil role) gets a DISABLED placeholder as its selected
+  # option: the browser shows it but the user cannot pick it, and the form
+  # submits "" which the controller normalizes back to nil. Without this,
+  # the first selectable option would render as "selected" and silently
+  # promote a plain bank to Savings on the next save.
+  role_options.unshift([ t(".role_plain"), "", { disabled: true } ]) if account.plan_role.blank?
+%>
+    per income, unchecked existing rows are removed. Full reload on save.
     locals: (account, edges, available_bank_logos: {}) —
     edges: income_series_id -> IncomeAccountAllocation;
     available_bank_logos: slug -> label (BankLogoSlugs.available). %>
@@ -370,6 +416,220 @@
           </select>
         </div>
       </div>
+          <%= form.label :plan_role, t(".role_label"), class: "block text-xs text-secondary" %>
+          <%= form.select :plan_role,
+                          options_for_select([[ t(".role_plain"), "" ]] + Account::PLAN_ROLES.map { |role| [ t(".role_#{role}"), role ] },
+                                              account.plan_role),
+                          {}, class: "text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full" %>
+        </div>
+        <%# Round 11 issue 8: fan-out candidate set = the bank rows the
+            planner renders (graph[:banks]) = in-plan accounts + accounts
+            that ARE sub-accounts (parent_account_id set), which the
+            planner includes even without a plan_order (sub_account_links).
+            The fan-out checkbox rows below iterate this set, so a target
+            the diagram draws is always addressable in the dialog. The
+            name-collision guard counts over the same set: when a name
+            occurs 2+ times in it (the dev data has two "SoFi Savings" +
+            two "SoFi Checking"), the option/row labels for that name get
+            "(<id first 4>)" appended. Label-only: the option values stay
+            the raw ids. %>
+        <% in_plan_ids = @in_plan_accounts.map(&:id) %>
+        <% fanout_rows = @in_plan_accounts.to_a + @flow_accounts.select { |other| other.parent_account_id.present? && !in_plan_ids.include?(other.id) } %>
+        <% sub_account_name_counts = fanout_rows.group_by(&:name).transform_values(&:size) %>
+        <% disambiguated_name = lambda do |candidate| %>
+          <%   sub_account_name_counts[candidate.name].to_i > 1 ? "#{candidate.name} (#{candidate.id[0, 4]})" : candidate.name %>
+        <% end %>
+        <div class="space-y-1">
+          <%= form.label :parent_account_id, t(".sub_account_label"), class: "block text-xs text-secondary" %>
+          <%= form.select :parent_account_id,
+                          options_for_select([[ t(".sub_account_none"), "" ]] + @in_plan_accounts.reject { |other| other.id == account.id || other.parent_account_id.present? }.map { |other| [ disambiguated_name.call(other), other.id ] },
+                                              account.parent_account_id),
+                          {}, class: "text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full" %>
+
+      <%# Round 16 (owner note 3b): the logo picker. Search filters the
+          usable logo list CLIENT-SIDE (the list arrives in the payload / as
+          this local — no endpoint); a click writes the slug into the hidden
+          input, which the PATCH flow_account save persists (presence keeps,
+          blank clears). The list is BankLogoSlugs.available = the vendored
+          file + label intersection, so every img is a same-origin asset. %>
+      <section class="space-y-2 border-t border-subdued pt-4"
+               data-controller="bank-logo-picker"
+               data-bank-logo-picker-slug-value="<%= account.bank_logo_slug %>"
+               data-bank-logo-picker-logos-value="<%= (available_bank_logos || {}).sort_by { |_slug, label| label.to_s.downcase }.map { |slug, label| { slug: slug, label: label, url: asset_path("bank-logos/#{slug}.svg") } }.to_json %>">
+        <p class="text-sm font-medium text-primary"><%= t(".logo_label") %></p>
+        <p class="text-xs text-secondary"><%= t(".logo_hint") %></p>
+        <input type="hidden" name="account[bank_logo_slug]" value="<%= account.bank_logo_slug %>">
+        <div class="flex items-center gap-2">
+          <input type="text"
+                 data-bank-logo-picker-target="search"
+                 placeholder="<%= t(".logo_search_placeholder") %>"
+                 aria-label="<%= t(".logo_search_aria") %>"
+                 data-action="bank-logo-picker#filter"
+                 class="text-xs border border-primary rounded-lg px-2 py-1.5 bg-container text-primary flex-1 min-w-0">
+          <button type="button"
+                  data-bank-logo-picker-target="clear"
+                  data-action="bank-logo-picker#clear"
+                  class="text-xs text-secondary hover:text-primary underline shrink-0 <%= "invisible" unless account.bank_logo_slug.present? %>">
+            <%= t(".logo_clear") %>
+          </button>
+        </div>
+        <p data-bank-logo-picker-target="current"
+           class="text-xs text-secondary"><%= t(".logo_none") %></p>
+        <div data-bank-logo-picker-target="list"
+             class="max-h-40 overflow-y-auto border border-subdued rounded-lg divide-y divide-subdued">
+          <% (available_bank_logos || {}).sort_by { |_slug, label| label.to_s.downcase }.each do |slug, label| %>
+            <button type="button"
+                    data-bank-logo-picker-target="choice"
+                    data-slug="<%= slug %>"
+                    data-label="<%= label %>"
+                    data-action="bank-logo-picker#pick"
+                    class="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-subdued/40 <%= "bg-subdued/60" if account.bank_logo_slug == slug %>">
+              <img src="/images/bank-logos/<%= slug %>.svg" alt="<%= label %>"
+                   class="h-5 w-8 object-contain shrink-0">
+              <span class="text-xs text-primary truncate"><%= label %></span>
+            </button>
+          <% end %>
+        </div>
+        <p data-bank-logo-picker-target="empty" class="hidden text-xs text-secondary"><%= t(".logo_no_match") %></p>
+      </section>
+
+      <%# Round 11 issue 8: multi-target auto-transfer fan-out. One
+          checkbox row per in-plan account in in-plan order; rows that
+          are NOT sub-accounts of this account are disabled (they must
+          first be set as a sub-account in their own dialog). The hidden
+          "0" sentinel makes an all-unchecked submit clear the array —
+          the server strips it; checked values keep row order (the
+          server rebuilds the array, never reordered client-side). No
+          client-side sync on sub-account change: all rows render
+          always and the server re-render of this dialog chrome on save
+          keeps the disabled set fresh (zero round-trips). %>
+      <section class="space-y-2 border-t border-subdued pt-4">
+        <p class="text-sm font-medium text-primary"><%= t(".auto_transfer_targets") %></p>
+        <p class="text-xs text-secondary"><%= t(".auto_transfer_targets_hint") %></p>
+        <input type="hidden" name="account[auto_transfer_target_ids][]" value="0" class="sr-only">
+        <%# fanout_rows (defined above the grid): in-plan accounts in plan
+            order, then sub-accounts the planner draws even without a
+            plan_order - the rows match the bank rows in the diagram. %>
+        <% fanout_rows.each do |other| %>
+          <% is_sub_account = other.parent_account_id == account.id %>
+          <div class="flex items-center gap-2 flex-wrap">
+            <input type="checkbox"
+                   name="account[auto_transfer_target_ids][]"
+                   value="<%= other.id %>"
+                   <%= "checked" if Array(account.auto_transfer_target_ids).include?(other.id) %>
+                   <%= "disabled" unless is_sub_account %>
+                   class="checkbox checkbox--light h-4 w-4 rounded shrink-0">
+            <span class="text-sm text-primary truncate min-w-0 flex-1 basis-32" title="<%= disambiguated_name.call(other) %>"><%= disambiguated_name.call(other) %></span>
+          </div>
+        <% end %>
+      </section>
+
+      <%# Round 16 (owner note 3b): the logo picker. Search filters the
+          usable logo list CLIENT-SIDE (the list arrives in the payload / as
+          this local — no endpoint); a click writes the slug into the hidden
+          input, which the PATCH flow_account save persists (presence keeps,
+          blank clears). The list is BankLogoSlugs.available = the vendored
+          file + label intersection, so every img is a same-origin asset. %>
+      <section class="space-y-2 border-t border-subdued pt-4"
+               data-controller="bank-logo-picker"
+               data-bank-logo-picker-slug-value="<%= account.bank_logo_slug %>"
+               data-bank-logo-picker-logos-value="<%= (available_bank_logos || {}).sort_by { |_slug, label| label.to_s.downcase }.map { |slug, label| { slug: slug, label: label, url: asset_path("bank-logos/#{slug}.svg") } }.to_json %>">
+        <p class="text-sm font-medium text-primary"><%= t(".logo_label") %></p>
+        <p class="text-xs text-secondary"><%= t(".logo_hint") %></p>
+        <input type="hidden" name="account[bank_logo_slug]" value="<%= account.bank_logo_slug %>">
+        <div class="flex items-center gap-2">
+          <input type="text"
+                 data-bank-logo-picker-target="search"
+                 placeholder="<%= t(".logo_search_placeholder") %>"
+                 aria-label="<%= t(".logo_search_aria") %>"
+                 data-action="bank-logo-picker#filter"
+                 class="text-xs border border-primary rounded-lg px-2 py-1.5 bg-container text-primary flex-1 min-w-0">
+          <button type="button"
+                  data-bank-logo-picker-target="clear"
+                  data-action="bank-logo-picker#clear"
+                  class="text-xs text-secondary hover:text-primary underline shrink-0 <%= "invisible" unless account.bank_logo_slug.present? %>">
+            <%= t(".logo_clear") %>
+          </button>
+        </div>
+        <p data-bank-logo-picker-target="current"
+           class="text-xs text-secondary"><%= t(".logo_none") %></p>
+        <div data-bank-logo-picker-target="list"
+             class="max-h-40 overflow-y-auto border border-subdued rounded-lg divide-y divide-subdued">
+          <% (available_bank_logos || {}).sort_by { |_slug, label| label.to_s.downcase }.each do |slug, label| %>
+            <button type="button"
+                    data-bank-logo-picker-target="choice"
+                    data-slug="<%= slug %>"
+                    data-label="<%= label %>"
+                    data-action="bank-logo-picker#pick"
+                    class="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-subdued/40 <%= "bg-subdued/60" if account.bank_logo_slug == slug %>">
+              <img src="/images/bank-logos/<%= slug %>.svg" alt="<%= label %>"
+                   class="h-5 w-8 object-contain shrink-0">
+              <span class="text-xs text-primary truncate"><%= label %></span>
+            </button>
+          <% end %>
+        </div>
+        <p data-bank-logo-picker-target="empty" class="hidden text-xs text-secondary"><%= t(".logo_no_match") %></p>
+      </section>
+
+      <%# Round 11 issue 8: multi-target auto-transfer fan-out. One
+          checkbox row per in-plan account in in-plan order; rows that
+          are NOT sub-accounts of this account are disabled (they must
+          first be set as a sub-account in their own dialog). The hidden
+          "0" sentinel makes an all-unchecked submit clear the array —
+          the server strips it; checked values keep row order (the
+          server rebuilds the array, never reordered client-side). No
+          client-side sync on sub-account change: all rows render
+          always and the server re-render of this dialog chrome on save
+          keeps the disabled set fresh (zero round-trips). %>
+      <section class="space-y-2 border-t border-subdued pt-4">
+        <p class="text-sm font-medium text-primary"><%= t(".auto_transfer_targets") %></p>
+        <p class="text-xs text-secondary"><%= t(".auto_transfer_targets_hint") %></p>
+        <input type="hidden" name="account[auto_transfer_target_ids][]" value="0" class="sr-only">
+        <%# fanout_rows (defined above the grid): in-plan accounts in plan
+            order, then sub-accounts the planner draws even without a
+            plan_order - the rows match the bank rows in the diagram. %>
+        <% fanout_rows.each do |other| %>
+          <% is_sub_account = other.parent_account_id == account.id %>
+          <div class="flex items-center gap-2 flex-wrap">
+            <input type="checkbox"
+                   name="account[auto_transfer_target_ids][]"
+                   value="<%= other.id %>"
+                   <%= "checked" if Array(account.auto_transfer_target_ids).include?(other.id) %>
+                   <%= "disabled" unless is_sub_account %>
+                   class="checkbox checkbox--light h-4 w-4 rounded shrink-0">
+            <span class="text-sm text-primary truncate min-w-0 flex-1 basis-32" title="<%= disambiguated_name.call(other) %>"><%= disambiguated_name.call(other) %></span>
+          </div>
+        <% end %>
+      </section>
+
+      <div class="flex items-center justify-between gap-2 pt-1 border-t border-subdued">
+        <%# Remove from plan (owner round 3, R3): the form is the SIBLING
+            below the main form (nested <form> is invalid HTML and the
+            parser would swallow it). Assigned allocations persist
+            unassigned with the "No Assignment" marker (never deleted).
+            The in-place submit handler confirm()s when allocations
+            are attached (data-remove-confirm + data-allocated-count). %>
+        <button type="submit"
+                form="bank_remove_<%= account.id %>"
+                class="text-sm text-destructive hover:underline">
+          <%= t(".remove") %>
+        </button>
+        <button type="submit"
+                class="text-sm bg-primary text-on-primary rounded-lg px-3 py-1.5 hover:opacity-90">
+          <%= t(".save") %>
+        </button>
+    <% end %>
+    <%= form_with url: flow_account_remove_plan_path(account.id),
+                  method: :delete,
+                  id: "bank_remove_#{account.id}",
+                  class: "sr-only",
+                  data: {
+                    turbo: "false",
+                    plan_flow_inplace: "true",
+                    remove_confirm: "true",
+                    allocated_count: Current.family.plan_allocations.where(account_id: account.id).count,
+                    remove_message: t(".remove_confirm", count: Current.family.plan_allocations.where(account_id: account.id).count)
+                  } do %>
     <% end %>
     <div class="flex items-center justify-between gap-2 pt-1 border-t border-subdued">
       <%# Remove from plan (owner round 3, R3): the form is the SIBLING

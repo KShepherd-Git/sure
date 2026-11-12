@@ -262,3 +262,10 @@
     transparent calc(100% - 1rem)
   );
 }
+
+/* plan flow: category popover chevron rotation (R22 N8).
+   Appended to the prebuilt app/assets/builds/tailwind.css in dev too
+   (gitignored build artifact; no tailwind build process runs in-container). */
+[aria-expanded="true"] .planflow-cat-chevron {
+  rotate: 180deg;
+}

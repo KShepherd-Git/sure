@@ -33,6 +33,23 @@
     holder. Round 21 T4: the category picker is a collapsed disclosure;
     the locked bill-detail rows carry a pencil tooltip.
     locals: (allocation, known_allocations = [], known_hidden = false, node_id: nil, show_known: true) %>
+<%# Allocation dialog (M2 PR#2b + owner round 2, F3; round 8). NEW mode:
+    the dialog opens on a "Known Allocations" list — the bills / auto-tracked
+    subscriptions Sure already has that are NOT already in the diagram
+    (known_allocations local, already-planned ones hidden) — and a "New
+    Allocation" entry at the bottom. Clicking a
+    row prefills the custom input form (name, amount, cadence, source bank
+    when it is on the plan, the recurring-transaction link) and reveals it;
+    "New Allocation" reveals the same form blank. EDIT mode: the form
+    directly (with the delete form).
+    Name, kind (bill / debt / savings / fun money), SOURCE BANK (required),
+    mode (required / hard number / percent of leftover / leftover) + value
+    (disabled for required and leftover — required is a MONTHLY figure
+    prorated over the month's paychecks, build 1 deviation 1), cadence
+    (autofilled from the linked recurring transaction, editable), the
+    link-to-detected-bill/debt select (autofills name / amount / cadence /
+    source bank), and the auto-transfer flag (data only). Full reload on
+    save. locals: (allocation, known_allocations = [], known_hidden = false) %>
 <% is_new = allocation.nil? %>
 <%# Round 21 T3/T4: the dialog node id + the known-section visibility are
     OPTIONAL locals (read via local_assigns — ActionView does not apply the
@@ -71,6 +88,18 @@
 <% categories_list = Current.family.categories.alphabetically_by_hierarchy.to_a %>
 <% category_selection = allocation&.category_id ? categories_list.find { |c| allocation.category_id.to_s == c.id.to_s } : nil %>
 <% category_selection_text = category_selection ? category_selection.display_name : t(".category_none") %>
+<%# Owner round 10 (issue 4): a savings-bucket allocation (kind "savings")
+    is a MONTHLY figure from an associated account, so the dialog hides the
+    bill-only fields (mode / cadence / detected-bill link / auto transfer)
+    and relabels the existing source-bank select ("Which Account is this
+    Savings Bucket Associated to" = account_id) and the amount input
+    ("How much to save Per Month" = value, mode required). The bill-only
+    fields keep rendering (hidden) so a stale value cannot submit; the
+    controller sanitizes kind "savings" rows server-side. data-allocation-
+    * attributes give the JS the server-rendered label strings to swap on
+    a client-side kind change (plan-flow#syncAllocationKind). %>
+<% is_savings = allocation&.kind == "savings" %>
+<% bill_only_class = "space-y-1" + (is_savings ? " hidden" : "") %>
 <% rt_recs = @graph[:recommendations].select { |rec| rec[:type] == "recurring_transaction" } %>
 <%# The on-plan accounts the Bank source stack lists; plus the allocation's
     current account when it left the plan (so an edit cannot silently drop
@@ -106,6 +135,16 @@
         renders them here — no full-reload flash for in-place submits. %>
     <div data-in-place-errors class="hidden space-y-1"></div>
     <% if is_new && show_known %>
+      <%# Known Allocations (F3; round 8): Sure's detected bills /
+          subscriptions not already in the diagram — rows open the selected
+          allocation window (round 21 T4). The partial is also re-rendered
+          by the in-place JSON chrome so the list tracks allocation changes
+          without a reload. Round 21 T3: the list sits in a darker, shorter
+          sub-section; the footer CTA row is gone (button in the header). %>
+      <div class="rounded-lg bg-surface-inset p-3 space-y-2">
+        <%= render "plan_flows/known_allocations",
+              known_allocations: known_allocations, known_hidden: known_hidden %>
+    <% if is_new %>
       <%# Known Allocations (F3; round 8): Sure's detected bills /
           subscriptions not already in the diagram — rows open the selected
           allocation window (round 21 T4). The partial is also re-rendered
@@ -323,6 +362,34 @@
               category's lucide icon in its color). A radio list instead of
               a native <select> because a select cannot render the icon +
               color. Editable for every kind (not pulled from the bill).
+              Round 21 T4: collapsed by default; the trigger shows the
+              label + the CURRENT selection (server-side).
+              Round 22 (N8): the picker is now a FLOATING DS::Popover
+              (position:fixed z-50, floating-ui anchored, OUT of document
+              flow) instead of an in-place disclosure — opening it never
+              resizes the dialog. The trigger button (type=button) carries
+              the label + the [data-allocation-category-selection] span
+              (#allocationCategorySummary still finds it: the span stays in
+              the form) + the chevron, which rotates off the button's
+              aria-expanded (the popover sets it — the old
+              [details[open]>summary_&] rule no longer applies). The chevron
+              carries the PLAIN planflow-cat-chevron class, rotated by the
+              rule appended to app/assets/builds/tailwind.css:
+              [aria-expanded=true] .planflow-cat-chevron{rotate:180deg} —
+              NOT an [aria-expanded=true]_& arbitrary variant: that class
+              compiles to a selector whose name contains an escaped
+              [name=value] fragment, which the browser CSS parser drops as
+              invalid (verified: the details[open]>summary_& form parses
+              because it has no =). The radio
+              list div is VERBATIM inside the panel (same
+              change->plan-flow#syncAllocationCategory, same max-h-64
+              scroll window) with the category hint; the radios stay in
+              the form, so the save contract (plan_allocation[category_id])
+              is unchanged. Outside-click + Escape are the DS::popover
+              controller's — no new plan_flow JS. %>
+          <div class="space-y-1">
+            <%= render DS::Popover.new(variant: "button", no_padding: true, placement: "bottom-end", max_width: "24rem") do |popover| %>
+              <% popover.with_button(class: "w-full px-3 py-2 rounded-xl bg-surface min-h-11 flex items-center justify-between gap-2 cursor-pointer") do %>
               Round 21 T4: collapsed by default into the house disclosure —
               the summary shows the label + the CURRENT selection
               (server-side), the body keeps the scrollable radio list
@@ -330,15 +397,48 @@
               markup/name/checked contract is unchanged; each radio carries
               data-allocation-category-name so #syncAllocationCategory can
               refresh the summary text on change. %>
-          <div class="space-y-1">
             <%= render DS::Disclosure.new(open: false, body_class: "mt-2") do |disclosure| %>
               <% disclosure.with_summary_content do %>
                 <span class="flex items-center gap-2 min-w-0">
                   <span class="text-xs text-secondary shrink-0"><%= t(".category_label") %></span>
                   <span class="text-sm text-primary truncate" data-allocation-category-selection><%= category_selection_text %></span>
                 </span>
-                <%= icon "chevron-down", size: "sm", class: "shrink-0 [details[open]>summary_&]:rotate-180 transition-transform" %>
+                <%= icon "chevron-down", size: "sm", class: "shrink-0 planflow-cat-chevron transition-transform" %>
               <% end %>
+              <% popover.with_custom_content do %>
+                <div class="p-1 space-y-1">
+                  <div class="max-h-64 overflow-y-auto rounded-lg border border-subdued bg-container p-1.5"
+                       data-action="change->plan-flow#syncAllocationCategory">
+                  <label class="flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer has-[:checked]:bg-surface-inset">
+                    <input type="radio" name="plan_allocation[category_id]" value="" class="sr-only"
+                           data-allocation-category-name="<%= t(".category_none") %>"
+                           <%= "checked" if allocation.nil? || allocation.category_id.nil? %>>
+                    <span class="text-sm text-secondary"><%= t(".category_none") %></span>
+                  </label>
+                  <% categories_list.each do |category| %>
+                    <label class="flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer has-[:checked]:bg-surface-inset">
+                      <input type="radio" name="plan_allocation[category_id]" value="<%= category.id %>" class="sr-only"
+                             data-allocation-category-name="<%= category.display_name %>"
+                             <%= "checked" if allocation&.category_id.to_s == category.id.to_s %>>
+                      <% if category.lucide_icon.present? %>
+                        <span class="h-7 w-7 flex-shrink-0 rounded-full flex items-center justify-center"
+                              style="background-color: color-mix(in oklab, <%= category.color %> 10%, transparent); color: <%= category.color %>;">
+                          <%= icon(category.lucide_icon, size: "sm", color: "current") %>
+                        </span>
+                      <% else %>
+                        <span class="h-7 w-7 flex-shrink-0 rounded-full flex items-center justify-center text-xs font-medium"
+                              style="background-color: color-mix(in oklab, <%= category.color %> 10%, transparent); color: <%= category.color %>;">
+                          <%= category.display_name.to_s[0].to_s.upcase %>
+                        </span>
+                      <% end %>
+                      <span class="text-sm text-primary truncate <%= "pl-3" if category.subcategory? %>"><%= category.display_name %></span>
+                    </label>
+                  <% end %>
+                  </div>
+                  <p class="text-xs text-secondary px-1"><%= t(".category_hint") %></p>
+                </div>
+              <% end %>
+                <%= icon "chevron-down", size: "sm", class: "shrink-0 [details[open]>summary_&]:rotate-180 transition-transform" %>
               <div class="max-h-64 overflow-y-auto rounded-lg border border-subdued bg-container p-1.5"
                    data-action="change->plan-flow#syncAllocationCategory">
               <label class="flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer has-[:checked]:bg-surface-inset">
@@ -362,10 +462,8 @@
                           style="background-color: color-mix(in oklab, <%= category.color %> 10%, transparent); color: <%= category.color %>;">
                       <%= category.display_name.to_s[0].to_s.upcase %>
                     </span>
-                  <% end %>
                   <span class="text-sm text-primary truncate <%= "pl-3" if category.subcategory? %>"><%= category.display_name %></span>
                 </label>
-              <% end %>
               </div>
               <p class="text-xs text-secondary"><%= t(".category_hint") %></p>
             <% end %>
@@ -387,7 +485,8 @@
               #inPlaceSubmit can swap it in place. Radio names and the
               checked-state contract are unchanged. %>
           <%= render "plan_flows/allocation_bank_rows",
-                bank_rows: bank_rows, checked_account_id: allocation&.account_id %>
+                bank_rows: bank_rows, checked_account_id: allocation&.account_id,
+                account_last4s: @account_last4s %>
           <p class="text-xs text-secondary" data-allocation-kind-hint="account"
              data-bill-hint="<%= t(".source_bank_hint") %>"
              data-savings-hint="<%= t(".savings_account_hint") %>"
@@ -395,6 +494,96 @@
             <%= account_hint %>
           </p>
         </div>
+      <% end %>
+          <%= form.label :kind, t(".kind_label"), class: "block text-xs text-secondary" %>
+          <%= form.select :kind,
+                          options_for_select(PlanAllocation.kinds.values.map { |kind| [ t(".kind_#{kind}"), kind ] },
+                                             allocation&.kind || "bill"),
+                          {}, class: "text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full",
+                          data: { action: "plan-flow#syncAllocationKind" } %>
+        </div>
+        <div class="space-y-1"
+             data-allocation-labels
+             data-bill-label="<%= t(".source_bank_label") %>"
+             data-savings-label="<%= t(".savings_account_label") %>"
+                bank_rows: bank_rows, checked_account_id: allocation&.account_id %>
+             data-bill-hint="<%= t(".source_bank_hint") %>"
+             data-savings-hint="<%= t(".savings_account_hint") %>"
+             data-fun-hint="<%= t(".fun_account_hint") %>">
+            <%= account_hint %>
+          </p>
+        </div>
+        <div class="space-y-1">
+          <%# Round 16 (owner note 2): the Sure category whose color the
+              diagram uses for this allocation's band. Optional for every
+              kind — a blank selection renders the band with no color
+              (nil), never a fabricated one. Same list source the house
+              dialogs use (alphabetically_by_hierarchy). %>
+          <%= form.label :category_id, t(".category_label"), class: "block text-xs text-secondary" %>
+          <%= form.select :category_id,
+                          options_for_select([[ t(".category_none"), "" ]] + Current.family.categories.alphabetically_by_hierarchy.map { |category| [ category.name, category.id ] },
+                                             allocation&.category_id),
+                          {}, class: "text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full" %>
+          <p class="text-xs text-secondary"><%= t(".category_hint") %></p>
+        </div>
+        <div class="<%= bill_only_class %>" data-allocation-bill-only>
+          <%= form.label :mode, t(".mode_label"), class: "block text-xs text-secondary" %>
+          <%= form.select :mode,
+                          options_for_select(PlanAllocation.modes.values.map { |mode| [ t(".mode_#{mode}"), mode ] },
+                                             allocation&.mode || "required"),
+                          {}, class: "text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full",
+                          data: { action: "plan-flow#syncAllocationMode" } %>
+        </div>
+        <div class="space-y-1"
+             data-allocation-labels
+             data-bill-label="<%= t(".value_label") %>"
+             data-savings-label="<%= t(".savings_value_label") %>"
+             data-bill-hint="<%= t(".required_hint") %>"
+             data-savings-hint="<%= t(".savings_value_hint") %>">
+          <%# One visible value input; the plan-flow controller renames it
+              plan_allocation[value] (required/specific) vs
+              plan_allocation[value_percent] (percent) on mode change.
+              required = MONTHLY (prorated over occurrences, deviation 1).
+              For kind "savings" (round 10 issue 4) this IS the monthly
+              savings figure: the mode is forced "required" server-side, so
+              the value_cents persists the "How much to save Per Month". %>
+          <%= form.label :value, is_savings ? t(".savings_value_label") : t(".value_label"), class: "block text-xs text-secondary" %>
+          <%= form.text_field :value,
+                              value: allocation && %w[required specific].include?(allocation.mode) ? format("%.2f", allocation.value_cents.to_d / 100) : (allocation&.mode == "percent" ? format("%.2f", allocation.value_percent.to_d * 100) : nil),
+                              placeholder: "0.00",
+                              disabled: allocation.present? && allocation.mode == "leftover",
+                              class: "text-sm border border-primary rounded-lg px-3 py-1.5 bg-container text-primary w-full tabular-nums",
+                              name: allocation&.mode == "percent" ? "plan_allocation[value_percent]" : "plan_allocation[value]",
+                              data: { action: nil } %>
+          <p class="text-xs text-secondary" data-allocation-required-hint data-allocation-hint><%= is_savings ? t(".savings_value_hint") : t(".required_hint") %></p>
+        </div>
+        <div class="<%= bill_only_class %>" data-allocation-bill-only>
+          <%= form.label :cadence, t(".cadence_label"), class: "block text-xs text-secondary" %>
+          <%= form.select :cadence,
+                          options_for_select(PlanAllocation::CADENCES.map { |cadence| [ t(".cadence_#{cadence}"), cadence ] },
+                                             allocation&.cadence),
+                          {}, class: "text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full" %>
+        </div>
+        <div class="<%= bill_only_class %>" data-allocation-bill-only>
+          <%# Link to a detected bill/debt: picking one autofills name,
+              amount (monthly), cadence, and the source bank (when it is on
+              the plan). The controller keeps the rec payload on the page.
+              Hidden for kind "savings" (round 10 issue 4): a bucket is a
+              manual monthly figure, not a detected bill. %>
+          <%= form.label :recurring_transaction_id, t(".link_rt_label"), class: "block text-xs text-secondary" %>
+          <%= form.select :recurring_transaction_id,
+                          options_for_select([[ t(".rt_none"), "" ]] + rt_recs.map { |rec| [ "#{rec[:name]} — #{number_to_currency(rec[:amount_cents] / 100.0, currency: Current.family.currency)}", rec[:recurring_transaction_id] ] } +
+                                             (allocation&.recurring_transaction_id && !rt_recs.any? { |rec| rec[:recurring_transaction_id] == allocation.recurring_transaction_id } ? [[ t(".rt_linked"), allocation.recurring_transaction_id ]] : []),
+                                              allocation&.recurring_transaction_id),
+                          {}, class: "text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full",
+                          data: { action: "plan-flow#syncAllocationRt" } %>
+        </div>
+        <div class="flex items-center gap-2 sm:col-span-2<%= is_savings ? " hidden" : "" %>" data-allocation-bill-only>
+          <%= form.check_box :auto_transfer,
+                             checked: allocation&.auto_transfer,
+                             class: "checkbox checkbox--light h-4 w-4 rounded" %>
+          <%= form.label :auto_transfer, t(".auto_transfer_label"), class: "text-sm text-primary" %>
+      </div>
       <% end %>
 
       <div class="flex items-center justify-between gap-2 pt-1 border-t border-subdued">
