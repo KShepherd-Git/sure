@@ -1,13 +1,13 @@
-# Round 31B (Direct Deposit): one member's paycheck config for the Paycheck
+# (Direct Deposit): one member's paycheck config for the Paycheck
 # Flow Planner. The config overrides the member's labeled income series with
 # a gross-per-paycheck amount + cadence; the planner derives the pay dates
 # from the house Schedule engine (PaycheckFlowPlanner::PaycheckDates) and the
 # overlay swaps the series' occurrences in inputs_for. Zero config rows =
-# byte-identical planner output (the S0 no-op invariant).
+# byte-identical planner output (the no-op invariant).
 class FamilyPaycheckConfig < ApplicationRecord
   FREQUENCIES = [ "semi_monthly", "biweekly" ].freeze
 
-  # B5 (owner flag): semi_monthly is the paycheck-config default, even
+  # semi_monthly is the paycheck-config default, even
   # though house income-series creation defaults to biweekly (the signed
   # flag applies to paycheck configs only).
   FREQUENCY_SEMI_MONTHLY = "semi_monthly"
@@ -55,7 +55,7 @@ class FamilyPaycheckConfig < ApplicationRecord
 
     # When a series is linked it must be the member's own labeled income
     # series (same family, bill_type income) so the overlay can swap its
-    # occurrences without crossing the B6 invariant (allocations' wanted
+    # occurrences without crossing the invariant (allocations' wanted
     # amounts are immutable to the overlay).
     def series_is_member_income
       return if recurring_transaction.nil? || family_id.blank?

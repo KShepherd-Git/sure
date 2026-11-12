@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Paycheck Flow Planner (M2): resolves a family's money map for one calendar
+# Paycheck Flow Planner: resolves a family's money map for one calendar
 # month — which declared income series funds which account at which mode, how
 # monthly obligations prorate over that month's ACTUAL paycheck occurrences
 # (biweekly months with 2 vs 3 paychecks come out right), where the leftover
@@ -26,8 +26,8 @@ class PaycheckFlowPlanner
   # actually paid). Obligations are the family's active recurring bills
   # (bill / subscription / installment) paid from the account — the same
   # payable shape PaycheckPlanner funds — monthly-equivalent in family
-  # currency. A series' owner is the owner of the account its income lands
-  # in (the income table has no owner column of its own).
+  # currency. A series is attributed to the holder of the account its income lands
+  # in (the income table itself carries no attribution column).
   def self.for_family(family:, month:)
     new(**inputs_for(family: family, month: month)).plan
   end
@@ -44,7 +44,7 @@ class PaycheckFlowPlanner
                         .joins(:recurring_transaction)
                         .where(recurring_transactions: { status: :active, bill_type: :income, manual: true })
                         .includes(recurring_transaction: { account: :owner })
-                        # R6 (Round 27 T4 fix): deterministic tie-break. Two
+                        # ( fix): deterministic tie-break. Two
                         # income series sharing a due_on date previously
                         # ordered by physical (heap) position, leaking into
                         # the incomes array order. :created_at keeps the
@@ -59,7 +59,7 @@ class PaycheckFlowPlanner
       series = occurrence.recurring_transaction
       entry = map[series.id] ||= {
         id: series.id,
-        # Explicit flow label when set, else the landing account's owner.
+        # Explicit flow label when set, else the landing account's holder.
         owner_id: series.plan_owner_id,
         occurrences: []
       }
@@ -69,9 +69,9 @@ class PaycheckFlowPlanner
       }
     end.values
 
-    # Round 31B (Direct Deposit): the paycheck-config overlay — derived pay
+    # (Direct Deposit): the paycheck-config overlay — derived pay
     # dates + gross replace/appended per configured member series. ZERO
-    # config rows returns the SAME array untouched (the S0 no-op invariant:
+    # config rows returns the SAME array untouched (the no-op invariant:
     # byte-identical planner output with no configs).
     incomes = overlay_paycheck_configs(family: family, month: month, incomes: incomes)
 
@@ -100,24 +100,24 @@ class PaycheckFlowPlanner
     }
   end
 
-  # Round 31B (Direct Deposit): the paycheck-config overlay. For each
+  # (Direct Deposit): the paycheck-config overlay. For each
   # configured member it replaces (or appends) that member's labeled income
   # series' occurrences with the pay dates + gross derived from the config,
   # via PaycheckDates (the house Schedule engine — no new math).
   #
   # Idempotent, and a byte-identical NO-OP with ZERO config rows: it returns
-  # the SAME `incomes` array untouched (the S0 gate asserts exactly this).
+  # the SAME `incomes` array untouched (the gate asserts exactly this).
   #
-  # B6 invariant (design doc proof): this touches ONLY `incomes`. The
+  # invariant (design doc proof): this touches ONLY `incomes`. The
   # allocation "wanted" amounts come from plan_allocations/obligations
   # (edge_rows), which are IMMUTABLE to this overlay — income amount/dates
-  # flow only via @incomes -> resolve_edges -> bank_inflow. T3 asserts the
+  # flow only via @incomes -> resolve_edges -> bank_inflow. asserts the
   # wanted-immutable + inflow-delta behavior.
   # configs: nil (default) reads the family's saved configs — the live
-  # path, byte-identical to the pre-R35 body. A prebuilt array of
+  # path, byte-identical to the legacy body. A prebuilt array of
   # (possibly unsaved) FamilyPaycheckConfig instances lets a Flow Scenario
   # re-derive pay dates from its snapshot copy without touching the live
-  # table (design §2.2, R35).
+  # table (the design).
   def self.overlay_paycheck_configs(family:, month:, incomes:, configs: nil)
     configs = family.family_paycheck_configs.to_a if configs.nil?
     return incomes if configs.empty?
@@ -148,14 +148,14 @@ class PaycheckFlowPlanner
 
     return incomes if appends.empty?
 
-    # Append in series :id order (R6 byte-stable) — the stored-occurrence
+    # Append in series :id order ( byte-stable) — the stored-occurrence
     # entries keep their (due_on, created_at, id) order ahead of them.
     appends.sort_by! { |entry| entry[:id] }
     incomes + appends
   end
 
-  # R35 (Flow Scenarios, design §2.2): the scenario's :incomes base.
-  # Composes the LIVE inputs_for incomes (zero-config S0 path untouched)
+  # the scenario's :incomes base.
+  # Composes the LIVE inputs_for incomes (zero-config path untouched)
   # re-overlaid with the scenario's paycheck-config snapshot copy as
   # UNSAVED instances (nothing is persisted), then the per-series income
   # policy. The policy is an override map, not a whitelist — a series
@@ -163,29 +163,36 @@ class PaycheckFlowPlanner
   # user adds after the snapshot still appear in the scenario.
   #
   # Policy rows ({ series_id, enabled, zeroed, gross_per_paycheck_cents }):
-  #   enabled == false            -> the series is dropped from the base
-  #   zeroed                      -> its occurrence amounts become 0
-  #   gross_per_paycheck_cents    -> its occurrence amounts become that value
-  #   (any other row)             -> untouched
+  # enabled == false -> the series is dropped from the base
+  # zeroed -> its occurrence amounts become 0
+  # gross_per_paycheck_cents -> its occurrence amounts become that value
+  # (any other row) -> untouched
   #
-  # Names are display-only and stay LIVE (design §1.3: "readouts/logos/
+  # Names are display-only and stay LIVE (the design: "readouts/logos/
   # names" are non-snapshotted, nil-safe): the inputs_for base carries no
-  # :name, but the sankey labels income nodes by series display_name, so a
+  # name, but the sankey labels income nodes by series display_name, so a
   # re-used scenario must render identical to the Default view. Deleted
   # series stay nil (nil-safe).
   def self.scenario_incomes(family:, month:, snapshot:)
     incomes = inputs_for(family: family, month: month)[:incomes]
 
     config_rows = Array(snapshot["paycheck_configs"])
-    configs = config_rows.reject { |row| row["anchor_date"].blank? }.map do |row|
+    configs = config_rows.map do |row|
+      # A corrupted anchor_date must not 500 the scenario readout: an
+      # unparseable row is skipped as if the member had no config (the
+      # biweekly schedule math needs a real anchor, so a nil-anchor copy
+      # is unusable).
+      anchor_date = parse_snapshot_date(row["anchor_date"])
+      next if anchor_date.nil?
+
       FamilyPaycheckConfig.new(
         user_id: row["user_id"],
         recurring_transaction_id: row["recurring_transaction_id"],
         gross_per_paycheck_cents: row["gross_per_paycheck_cents"],
         frequency: row["frequency"],
-        anchor_date: Date.parse(row["anchor_date"])
+        anchor_date: anchor_date
       )
-    end
+    end.compact
     incomes = overlay_paycheck_configs(family: family, month: month, incomes: incomes, configs: configs)
 
     series_names = family.recurring_transactions
@@ -206,7 +213,27 @@ class PaycheckFlowPlanner
     end.compact
   end
 
-  # R35: the snapshot's numeric fields, normalized for the planner's
+  # A snapshot anchor_date string, parsed; blank or unparseable -> nil.
+  # (Same rescue/nil guard idiom as PlanFlowsController#parse_snapshot_date,
+  # which carries the CashFlowsController#parse_date guard.)
+  def self.parse_snapshot_date(value)
+    return nil if value.blank?
+
+    Date.parse(value)
+  rescue Date::Error
+    # A snapshot that cannot be anchored by date is a support-relevant
+    # scenario failure (the scenario then plans from a nil anchor).
+    DebugLogEntry.capture(
+      category: "paycheck_planner",
+      level: "warn",
+      message: "Unparseable snapshot date in PaycheckFlowPlanner#parse_snapshot_date",
+      source: "PaycheckFlowPlanner",
+      metadata: { value: value.to_s }
+    )
+    nil
+  end
+
+  # the snapshot's numeric fields, normalized for the planner's
   # BigDecimal arithmetic. The jsonb round-trip stringifies BigDecimals
   # (ActiveSupport's BigDecimal#as_json -> to_s), and required-mode edge
   # percents are stored as the form's major-unit string — so a scenario row
@@ -223,7 +250,7 @@ class PaycheckFlowPlanner
     normalized
   end
 
-  # R35 (Flow Scenarios, design §2.2): the full draft payload for a
+  # the full draft payload for a
   # scenario — the snapshot's stored rows (string-keyed in the jsonb
   # column) symbolized + numerically normalized to the planner's key shape,
   # plus the live scenario_incomes base. linked_bank_counts is derived from
@@ -244,12 +271,12 @@ class PaycheckFlowPlanner
   # The family's income -> bank edge rows in the planner's key shape (the
   # draft-able `allocations` set). Shared by inputs_for and the controller's
   # draft merge so the two can never drift.
-  # R6 (Round 27 T4 fix, R25 item h): this read had NO ORDER BY, so the
-  # physical (heap) order of the table leaked into the graph — the R5 SHA
+  # this read had NO ORDER BY, so the
+  # physical (heap) order of the table leaked into the graph — the SHA
   # drift (the upserted po5 edge row re-serialized at banks[5] instead of
   # banks[3]). Ordered by the natural key (income series, account): an
   # upserted edge (destroy + recreate) keeps its position, so the
-  # serialization is byte-stable across upserts. R25 h proposed
+  # serialization is byte-stable across upserts. h proposed
   # .order(:created_at, :id), but creation order cannot satisfy that
   # property (a recreate gets the newest created_at and moves to the end),
   # so the natural key supersedes it.
@@ -261,9 +288,9 @@ class PaycheckFlowPlanner
         mode: allocation.mode,
         value_cents: allocation.mode == "specific" ? allocation.value * CENTS : nil,
         value_percent: allocation.mode == "percent" ? allocation.value : nil,
-        # Round 30: a required-mode edge carries the stored percent of the
+        # a required-mode edge carries the stored percent of the
         # bank's required amount this income funds (2 dp major units; nil =
-        # the equal split, today's behavior). The legacy plan() path ignores
+        # the equal split, today's behavior). The legacy plan path ignores
         # the key (its resolve_edges call passes no split map).
         required_percent: allocation.mode == "required" ? allocation.value : nil
       }
@@ -288,15 +315,15 @@ class PaycheckFlowPlanner
     BigDecimal(0)
   end
 
-  # M2 PR#2b (redesign): the planning-diagram entry point. Same pure core +
+  # the planning-diagram entry point. Same pure core +
   # AR-seam shape as for_family, but the inputs also carry the bank -> item
   # allocations, the income link limits, the account roles, and the
   # recommendations the page's "Recommended" list reads.
   #
   # `draft` merges unsaved UI state over the saved inputs (the PR#2 preview
   # pattern): each key present — :allocations (income -> bank edges),
-  # :plan_allocations (bank -> item allocations), :plan_max_links,
-  # :plan_roles, :incomes — replaces the saved set WHOLESALE. The controller
+  # plan_allocations (bank -> item allocations), :plan_max_links,
+  # plan_roles, :incomes — replaces the saved set WHOLESALE. The controller
   # composes the shadow set; the planner never reads the database.
   def self.plan_graph(family:, month:, draft: nil)
     new(**graph_inputs_for(family: family, month: month), draft: draft).plan_graph
@@ -312,7 +339,7 @@ class PaycheckFlowPlanner
     # income nodes show a configured-but-silent paycheck.
     series_by_id = family.recurring_transactions
                          .where(status: :active, bill_type: "income", manual: true)
-                         # R6 (Round 27 T4 fix): `missing` series are
+                         # ( fix): `missing` series are
                          # appended to the incomes array in read order; the
                          # unordered read leaked the heap order.
                          .order(:id)
@@ -357,7 +384,7 @@ class PaycheckFlowPlanner
                        .where.not(auto_transfer_to_account_id: nil)
                        .pluck(:id, :auto_transfer_to_account_id)
                        .to_h,
-      # Round 11 issue 8: the sub-account links (child => parent) and the
+      # the sub-account links (child => parent) and the
       # ordered auto-transfer fan-out targets (parent => [child_ids]). The
       # array order is the diagram's band order, so the raw column flows
       # through untouched; empty arrays are dropped (no fan-out declared).
@@ -369,17 +396,17 @@ class PaycheckFlowPlanner
                               .pluck(:id, :auto_transfer_target_ids)
                               .reject { |_id, targets| Array(targets).empty? }
                               .to_h,
-      # Round 11 issue 8: bank display names (the over-plan line names the
+      # bank display names (the over-plan line names the
       # unsatisfied bucket; the sankey labels themselves come from page
       # state, so this is payload-side only).
       account_names: family.accounts.pluck(:id, :name).to_h,
-      # Round 16 (owner note 4): the plaintext last-4 of each bank from
+      # the plaintext last-4 of each bank from
       # plaid_accounts.mask via account_providers (accounts.plaid_account_id
       # is NULL everywhere in dev; the live link is account_providers with
       # provider_type "PlaidAccount"). Blank masks emit nil — the payload
       # NEVER carries fabricated digits.
       account_last4s: account_last4s_for(family),
-      # Round 16 (owner note 3b): the explicit per-account logo slugs
+      # the explicit per-account logo slugs
       # (accounts.bank_logo_slug, set from the bank config dialog's picker)
       # plus the pure input maps for keyword auto-match + the vendored set.
       # Resolution happens in build_graph_report (explicit -> keyword -> nil)
@@ -390,7 +417,7 @@ class PaycheckFlowPlanner
                             .to_h,
       bank_logo_keywords: BankLogoSlugs.keywords,
       bank_logos: BankLogoSlugs.available,
-      # Round 16 (owner note 2): category id => { name, color } so the
+      # category id => { name, color } so the
       # allocation rows can carry the Sure category's color.
       categories: family.categories.pluck(:id, :name, :color)
                              .to_h { |id, name, color| [ id, { name: name, color: color } ] },
@@ -416,10 +443,10 @@ class PaycheckFlowPlanner
         cadence: allocation.cadence,
         recurring_transaction_id: allocation.recurring_transaction_id,
         auto_transfer: allocation.auto_transfer,
-        # Round 16: the Sure category the diagram colors the band with.
+        # the Sure category the diagram colors the band with.
         # nil = no category (the row carries category_name/color nil too).
         category_id: allocation.category_id,
-        # Round 25 (Item 2): the account the row dresses ("Make Allocated
+        # the account the row dresses ("Make Allocated
         # Sub-Account"). The diagram draws the node with the account's
         # identity (name + logo, the bank's resolution order: explicit
         # slug first, then keyword match); nil = a plain allocation row.
@@ -427,11 +454,11 @@ class PaycheckFlowPlanner
         target_account_name: allocation.target_account&.name,
         target_account_logo: allocation.target_account ?
           BankLogoSlugs.resolve(allocation.target_account.name, explicit: allocation.target_account.bank_logo_slug) : nil,
-        # Round 31A (Fun Money v2): the fun_money row's configuration —
+        # (Fun Money v2): the fun_money row's configuration —
         # ownership ("household" or a family user id; nil = legacy
         # Household), distribution (equal | rational | percent |
         # individual_leftover), matching (equalize | per_income) and the
-        # jsonb params (per-member percents + the C14 input snapshot).
+        # jsonb params (per-member percents + the input snapshot).
         # nil for every non-fun_money row (additive keys only).
         ownership: allocation.ownership,
         distribution: allocation.distribution,
@@ -441,7 +468,7 @@ class PaycheckFlowPlanner
     end
   end
 
-  # Round 16 (owner note 4): { account_id => mask-or-nil } from the
+  # { account_id => mask-or-nil } from the
   # plaintext plaid_accounts.mask column, joined through account_providers
   # (the legacy accounts.plaid_account_id FK is NULL everywhere in dev).
   # Two small queries; blank masks become nil — never a fabricated digit.
@@ -505,19 +532,19 @@ class PaycheckFlowPlanner
     end
 
     # (b) Accounts labeled with a plan role that have no allocation yet —
-    # the "bank as allocation" case (round 20: any of the five roles). Debt
+    # the "bank as allocation" case ( : any of the five roles). Debt
     # roles (CC / loan payoff) autofill a "Pay off <name>" debt row; the
     # rest (savings bucket / checking / investment) are money destinations
     # and autofill a plain savings-style row. "Already planned" = an
     # allocation sourced from the account, named after it (the autofill
-    # name, below), OR DRESSING it (round 25 Item 2: a target allocation
+    # name, below), OR DRESSING it ( Item 2: a target allocation
     # draws the account as its own node in the allocation pillar — never
     # recommend a second row for a dressed account). Source bank stays a
     # user choice.
     alloc_names = family.plan_allocations.pluck(:name).map { |name| name.to_s.strip.downcase }.to_set
     family.accounts.visible.where.not(plan_role: nil).order(:name, :id).each do |account|
       next if family.plan_allocations.exists?(account_id: account.id)
-      # Round 25 (Item 2): the account's row is dressed — skip it.
+      # the account's row is dressed — skip it.
       next if family.plan_allocations.exists?(target_account_id: account.id)
       next if alloc_names.include?(account.name.to_s.strip.downcase)
 
@@ -543,7 +570,7 @@ class PaycheckFlowPlanner
              .joins(:category)
              .where(categories: { parent_id: nil })
              .where("budgeted_spending > 0")
-             # R6 (Round 27 T4 fix): :id tie-break — a same-name category
+             # ( fix): :id tie-break — a same-name category
              # pair previously ordered by physical position.
              .order("categories.name", "budget_categories.id")
              .each do |budget_category|
@@ -566,7 +593,7 @@ class PaycheckFlowPlanner
     rows
   end
 
-  # The allocation the (b) autofill proposes for a role account. Round 20:
+  # The allocation the (b) autofill proposes for a role account.:
   # debt roles keep the "Pay off <name>" label; the other roles
   # (savings bucket / checking / investment) are destinations, not payoffs.
   def self.role_allocation_name(account)
@@ -624,17 +651,17 @@ class PaycheckFlowPlanner
     @plan_ordered = plan_ordered
     @linked_bank_counts = linked_bank_counts
     @recommendations = recommendations
-    # Round 11 issue 8: sub-account links {child_id => parent_id} and the
+    # sub-account links {child_id => parent_id} and the
     # ordered auto-transfer fan-out targets {parent_id => [child_ids]} (the
     # array order IS the diagram's band order). plan_graph only — the PR#1
-    # plan() path never reads them (inputs_for carries no such keys).
+    # plan path never reads them (inputs_for carries no such keys).
     @sub_account_links = sub_account_links
     @auto_transfer_targets = auto_transfer_targets
     # Bank display names {id => name}: the bank rows are id-keyed like every
     # other row, and the over-plan line names the unsatisfied bucket by its
     # ACCOUNT name (the sankey itself pulls labels from page-load state).
     @account_names = account_names
-    # Round 16: last-4 {id => mask-or-nil}, explicit logo slugs {id => slug},
+    # last-4 {id => mask-or-nil}, explicit logo slugs {id => slug},
     # keyword pairs [normalized_keyword, slug] (longest first), the vendored
     # {slug => label} set, and category id => { name, color }. All optional;
     # plan_graph emits nil where a row has no value (no fabricated data).
@@ -649,10 +676,10 @@ class PaycheckFlowPlanner
   # Draft merge (PR#2 preview pattern): each key present replaces the saved
   # input set WHOLESALE. The controller composes the shadow set (saved rows
   # overlaid with the unsaved dialog rows); the planner just applies it.
-  # R35 (Flow Scenarios): :linked_bank_counts is the one display-only
+  # (Flow Scenarios): :linked_bank_counts is the one display-only
   # shadow input that the scenario's edge rows must drive (per-income limit
   # warnings). Absent key = untouched @linked_bank_counts = byte-identical
-  # planner output (the S0 no-op invariant, same shape as the overlay's).
+  # planner output (the no-op invariant, same shape as the overlay's).
   def apply_draft(draft)
     @incomes = draft[:incomes] if draft.key?(:incomes)
     @allocations = draft[:allocations] if draft.key?(:allocations)
@@ -716,7 +743,7 @@ class PaycheckFlowPlanner
     )
   end
 
-  # M2 PR#2b (redesign): the planning diagram. Incomes -> banks -> items,
+  # the planning diagram. Incomes -> banks -> items,
   # with the fixed bank-level resolution order:
   #   1. REQUIRED items (bills/debts, mode required) — always first, and
   #      NEVER the over-plan flag target;
@@ -734,7 +761,7 @@ class PaycheckFlowPlanner
   #
   # Money: integer cents internally; every *_cents field in the JSON is a
   # 2-dp major-unit display string (house convention, same as the PR#1
-  # report's money() fields).
+  # report's money fields).
   def plan_graph
     total_occurrences = @incomes.sum { |income| income[:occurrences].size }
     divisor = [ total_occurrences, 1 ].max
@@ -745,7 +772,7 @@ class PaycheckFlowPlanner
     # count. The global divisor (the pre-fix behavior) split a bank's base
     # across payees whose paychecks never reach the bank, so a bank fed by
     # one partner's two paychecks received a quarter of its bills' base and
-    # its allocations ran structurally short (owner round 10, issue 1: the
+    # its allocations ran structurally short (issue 1: the
     # /8 artifact). No required edge into a bank means no reservation: the
     # base never flows, and the bank-level fallback shows the full
     # shortfall (see resolve_graph).
@@ -756,7 +783,7 @@ class PaycheckFlowPlanner
       per_paycheck[account_id] = funding.positive? ? monthly / funding : BigDecimal(0)
     end
 
-    # Round 30 (D-RECON): the stored per-income required split (required
+    # (D-RECON): the stored per-income required split (required
     # edges carrying a percent). The task formula (percent of the displayed
     # per-paycheck figure) governs the UI readouts only — the
     # monthly-preserving charge computed here is the settlement: charging
@@ -764,9 +791,11 @@ class PaycheckFlowPlanner
     # per month. An empty map (no stored percents) leaves the legacy line
     # byte-identical (the stop-rule property).
     required_splits = required_split_charges(required_monthly: required_monthly)
-    resolve_edges(required_per_paycheck:, required_splits: required_splits)
+    # the funding-priority cascade tiers (nil when no account
+    # classifies — the legacy settlement, byte-identical).
+    resolve_edges(required_per_paycheck:, required_splits: required_splits, tiers: funding_tiers)
     attribution = compute_attribution
-    # Unassigned allocations (owner review round 3, R3: a bank was removed
+    # Unassigned allocations (: a bank was removed
     # from the plan, the allocation persisted without a source bank) take no
     # part in resolution -- they are reported in the graph with status
     # "unassigned" (see build_graph_report) and never become a bank key.
@@ -774,7 +803,7 @@ class PaycheckFlowPlanner
                                            .group_by { |allocation| allocation[:account_id] }
     graph = resolve_graph(allocations_by_bank: allocations_by_bank, divisor: divisor)
 
-    # Round 31A (Fun Money v2): the per-income reconciliation (B_k / S_k /
+    # (Fun Money v2): the per-income reconciliation (B_k / S_k /
     # L_k / FM_k + the Un-Allocated discrepancies). Runs AFTER resolve_graph
     # (it reads @resolved, the bank inflows and the per-date allocation
     # results) and adds ADDITIVE payload keys only (income reconciliation,
@@ -794,7 +823,7 @@ class PaycheckFlowPlanner
     )
   end
 
-  # Round 31A (C14): the reconciliation's current input totals
+  # the reconciliation's current input totals
   # (per-income I_k / B_k / S_k, integer cents) — the controller persists
   # them into the fun_money row's distribution_params as the drift snapshot
   # at save time (nil until plan_graph ran; no fun_money row -> nil).
@@ -812,56 +841,174 @@ class PaycheckFlowPlanner
     # over the paychecks that fund the account (see
     # required_edge_funding_counts), so summing the figure over the account's
     # funding paychecks lands on its monthly required base.
-    # `required_splits` (Round 30, plan_graph only): per-occurrence required
+    # `required_splits` (plan_graph only): per-occurrence required
     # charges for stored per-income percent splits, keyed
-    # [income_id, account_id, date]; the default {} keeps the legacy plan()
+    # [income_id, account_id, date]; the default {} keeps the legacy plan
     # path on today's line exactly. Sets @resolved, keyed [income_id, date].
-    def resolve_edges(required_per_paycheck:, required_splits: {})
+    #
+    # `tiers` (plan_graph only — the legacy plan path passes
+    # none and stays byte-identical): the account -> funding-tier map
+    # (" " = funding-first, " " = short-carrying). Per occurrence the
+    # committed edge charges (the legacy amounts) are classified: when
+    # EVERY charged account (charge > 0) is classified, the residual
+    # settles by the funding-priority cascade —
+    # = Σ charges in band (edge) order; = Σ charges
+    # E = max( + − P, 0); T2_short = min(E)
+    #   T1_short = E − T2_short
+    # so the SAVINGS tier carries the shortfall first and checking goes
+    # short only when savings are 100% short. Within a tier the rows fund
+    # in band order out of the tier's funded total, so the LAST row in band
+    # order absorbs its tier's shortfall first (last-committed-first; NOT
+    # pro-rata). The leftover is then P − Σ funded — structurally ≥ 0 and
+    # exactly 0 whenever E > 0. When E = 0 the settlement is the legacy
+    # one cent-for-cent (the identity property that keeps the Default
+    # graph byte-identical), and when any charged account is unclassified
+    # the occurrence keeps the legacy full reservation byte-for-byte
+    # .
+    def resolve_edges(required_per_paycheck:, required_splits: {}, tiers: nil)
       resolved = {}
       @incomes.each do |income|
         edges = @allocations.select { |edge| edge[:income_id] == income[:id] }
         income[:occurrences].each do |occurrence|
           key = [ income[:id], occurrence[:date] ]
           amounts = {}
+          charges = {}
           spent = BigDecimal(0)
           edges.each do |edge|
             case edge[:mode]
             when "required"
-              # Round 30: a stored per-income percent split of the bank's
+              # a stored per-income percent split of the bank's
               # required base takes the edge (one charge per occurrence, the
               # last absorbing so the income's monthly share is preserved
               # exactly — see required_split_charges). No entry (empty map,
-              # the legacy plan() path, or an unfunded account) falls
+              # the legacy plan path, or an unfunded account) falls
               # through to today's line exactly.
               split_charge = required_splits[[ income[:id], edge[:account_id], occurrence[:date] ]]
-              amounts[edge[:account_id]] = split_charge || required_per_paycheck.fetch(edge[:account_id], BigDecimal(0))
-              spent += amounts[edge[:account_id]]
+              charge = split_charge || required_per_paycheck.fetch(edge[:account_id], BigDecimal(0))
+              amounts[edge[:account_id]] = charge
+              charges[edge[:account_id]] = charge
+              spent += charge
             when "specific"
               amounts[edge[:account_id]] = edge[:value_cents]
+              charges[edge[:account_id]] = edge[:value_cents]
               spent += edge[:value_cents]
             when "percent"
               # Round to the cent; the remainder deliberately lands in leftover.
               amount = (occurrence[:amount_cents] * edge[:value_percent]).round(0, half: :up)
               amounts[edge[:account_id]] = amount
+              charges[edge[:account_id]] = amount
               spent += amount
               # leftover is computed below
             end
           end
           leftover = occurrence[:amount_cents] - spent
 
+          # the funding-priority cascade. `charges` preserves the
+          # edge (band) order; the leftover edge carries no committed
+          # charge. See the method comment for the formula.
+          cascade = false
+          if tiers
+            charged_rows = charges.reject { |_, charge| charge.zero? }
+            if charged_rows.any? && charged_rows.all? { |account_id, _| tiers[account_id] }
+              t1_rows = charged_rows.select { |account_id, _| tiers[account_id] == "T1" }
+              t2_rows = charged_rows.select { |account_id, _| tiers[account_id] == "T2" }
+              t1_total = t1_rows.sum { |_, charge| charge }
+              t2_total = t2_rows.sum { |_, charge| charge }
+              excess = [ t1_total + t2_total - occurrence[:amount_cents], BigDecimal(0) ].max
+              t2_short = [ excess, t2_total ].min
+              t1_short = [ excess - t2_short, BigDecimal(0) ].max
+              # `charges` stays the PRE-cap committed record (the share
+              # formulas read it); fund the funded map from a copy.
+              amounts = fund_tier(t1_rows, t1_total - t1_short, charges.dup)
+              amounts = fund_tier(t2_rows, t2_total - t2_short, amounts)
+              leftover = occurrence[:amount_cents] - amounts.values.sum
+              cascade = excess.positive?
+            end
+          end
+
           resolved[key] = {
             amounts: amounts,
             leftover: leftover,
             edges: edges,
             amount: occurrence[:amount_cents],
-            owner_id: income[:owner_id]
+            owner_id: income[:owner_id],
+            # (ADDITIVE): the pre-cap committed charges (every
+            # committed edge, charged or not) and whether the cascade
+            # SETTLED this occurrence (excess > 0). The over-plan and
+            # fun-money share formulas attribute a bank's demand by
+            # COMMITMENT — not by the funded band — so a defunded row's
+            # paycheck still names the demand it committed (the root
+            # over-plan invariant; see committed_bank_totals).
+            committed: charges,
+            cascade: cascade
           }
         end
       end
       @resolved = resolved
     end
 
-    # Round 30 (D-RECON / D-UNDER): the stored per-income required split,
+    # fund the tier's rows (band order) out of the tier's funded
+    # total, capping each row at its committed charge — the last row in
+    # band order absorbs the tier's shortfall first (last-committed-first).
+    # `base` is the full charge map (every committed edge keeps an amounts
+    # entry, charged or not).
+    def fund_tier(rows, funded_total, base)
+      remaining = funded_total
+      rows.each do |account_id, charge|
+        got = [ charge, remaining ].min
+        base[account_id] = got
+        remaining -= got
+      end
+      base
+    end
+
+    # the account -> funding-tier map for the cascade
+    # classification. The account's plan_role is the classifier ( =
+    # checking, = savings_bucket); an account WITHOUT a plan_role falls
+    # back to its plan allocations' kinds (any savings-kind row -> ,
+    # else — the flagged fallback path); an account with NEITHER stays
+    # unclassified — its charged occurrences keep the legacy full
+    # reservation (stop-rule). nil when no edge account classifies (the
+    # legacy settlement, byte-identical).
+    def funding_tiers
+      tiers = {}
+      @allocations.each do |edge|
+        account_id = edge[:account_id]
+        next if tiers.key?(account_id)
+
+        role = @plan_roles[account_id]
+        if role == "checking"
+          tiers[account_id] = "T1"
+        elsif role == "savings_bucket"
+          tiers[account_id] = "T2"
+        else
+          allocs = @plan_allocations.select { |a| a[:account_id] == account_id }
+          tiers[account_id] = (allocs.any? { |a| a[:kind] == "savings" } ? "T2" : "T1") if allocs.any?
+        end
+      end
+      tiers.empty? ? nil : tiers
+    end
+
+    # the per-date, per-bank committed-charge totals (pre-cap
+    # edge charges summed over ALL incomes). The over-plan and fun-money
+    # share formulas attribute a bank's demand by COMMITMENT, not by the
+    # funded band: after the funding-priority cascade a defunded row's
+    # funded band is 0 but its paycheck still committed the demand, so the
+    # root over-plan must keep naming it (the 2,021.33 invariant). Legacy
+    # (non-cascade) occurrences keep the band/inflow share formula.
+    def committed_bank_totals
+      @committed_bank_totals ||= begin
+        totals = Hash.new { |h, date| h[date] = Hash.new { |h2, bank_id| h2[bank_id] = BigDecimal(0) } }
+        @resolved.each do |(_income_id, date), entry|
+          entry[:committed].each do |bank_id, charge|
+            totals[date][bank_id] += charge
+          end
+        end
+        totals
+      end
+    end
+
+    # (D-RECON / D-UNDER): the stored per-income required split,
     # resolved to per-occurrence charges keyed [income_id, account_id,
     # date]. Only accounts with at least one required edge carrying a
     # stored percent participate — an empty result makes resolve_edges fall
@@ -990,21 +1137,21 @@ class PaycheckFlowPlanner
     end
 
     # ======================================================================
-    # plan_graph (M2 PR#2b) helpers
+    # plan_graph helpers
     # ======================================================================
 
     # The bank -> item resolution for every paycheck date. Returns:
-    #   :dates                - sorted paycheck dates with any inflow
-    #   :bands                - [{ income_id:, account_id:, date:, amount:, mode: }]
+    # dates - sorted paycheck dates with any inflow
+    # bands - [{ income_id:, account_id:, date:, amount:, mode: }]
     #                            (income -> bank Sankey bands; signed)
-    #   :unallocated          - [{ income_id:, date:, amount: }] (the hatched
+    # unallocated - [{ income_id:, date:, amount: }] (the hatched
     #                            "Un-Allocated" bands; 0 when a leftover edge
     #                            routes the remainder)
-    #   :bank_inflow          - { date => { account_id => signed inflow } }
-    #   :bank_surplus         - { date => { account_id => signed residual } }
-    #   :allocation_results   - { date => { account_id => { allocation_id =>
+    # bank_inflow - { date => { account_id => signed inflow } }
+    # bank_surplus - { date => { account_id => signed residual } }
+    # allocation_results - { date => { account_id => { allocation_id =>
     #                            { wanted:, got:, shortfall: } } } }
-    #   :over_plans           - { income_id => { target:, target_id:, shortfall: } }
+    # over_plans - { income_id => { target:, target_id:, shortfall: } }
     #
     # Statuses: ok (fully funded), partly (0 < got < wanted; bills/debts cap
     # here — they are never the over-plan flag target), over (got == 0 <
@@ -1016,8 +1163,8 @@ class PaycheckFlowPlanner
       # on which any resolved income -> bank edge (any mode) fires for the
       # bank. An allocation's MONTHLY figure prorates over its source
       # bank's paychecks -- not the month's total paycheck count, which
-      # spans payees whose paychecks never reach the bank (owner round 10,
-      # issue 1: the /N artifact). Banks with no funding dates (no edges
+      # spans payees whose paychecks never reach the bank (
+      # the /N artifact). Banks with no funding dates (no edges
       # into them) keep the legacy global shape: entries on every paycheck
       # date, got 0, so the UI still shows the full monthly shortfall.
       bank_funding_dates = {}
@@ -1203,16 +1350,28 @@ class PaycheckFlowPlanner
           leftover_edge = entry[:edges].find { |e| e[:mode] == "leftover" }
           bank_ids = entry[:amounts].keys
           bank_ids << leftover_edge[:account_id] if leftover_edge
+          # a CASCADE-settled occurrence attributes each bank's
+          # demand by its COMMITTED (pre-cap) charge share — a defunded row
+          # (funded band 0) still names the demand its paycheck committed.
+          # The legacy band/inflow share would drop it to 0 and understate
+          # the gap (the 2,021.33 invariant). Non-cascade occurrences keep
+          # today's formula byte-for-byte.
+          committed = entry[:cascade] ? committed_bank_totals[date] : nil
           bank_ids.uniq.each do |bank_id|
-            band = entry[:amounts].fetch(bank_id, BigDecimal(0))
-            band += entry[:leftover] if leftover_edge && leftover_edge[:account_id] == bank_id
-            inflow = (bank_inflow[date] || {})[bank_id] || BigDecimal(0)
-            share = if inflow.positive? && band.positive?
-              band / inflow
-            elsif band.positive?
-              BigDecimal(1)
+            if committed
+              total = committed[bank_id] || BigDecimal(0)
+              share = total.positive? ? (entry[:committed].fetch(bank_id, BigDecimal(0)) / total) : BigDecimal(0)
             else
-              BigDecimal(0)
+              band = entry[:amounts].fetch(bank_id, BigDecimal(0))
+              band += entry[:leftover] if leftover_edge && leftover_edge[:account_id] == bank_id
+              inflow = (bank_inflow[date] || {})[bank_id] || BigDecimal(0)
+              share = if inflow.positive? && band.positive?
+                band / inflow
+              elsif band.positive?
+                BigDecimal(1)
+              else
+                BigDecimal(0)
+              end
             end
             next if share.zero?
 
@@ -1233,11 +1392,11 @@ class PaycheckFlowPlanner
         }
       end
 
-      # Round 11 issue 8 (fan-out pool): the auto-transfer fan-out delivers
+      # (fan-out pool): the auto-transfer fan-out delivers
       # the parent's buckets from the parent's POST-ALLOCATION surplus — the
       # parent's own allocations resolved first above (bills pay first), so
       # when the parent is underfunded the bills take their share and the
-      # buckets come up short, never the other way round (owner Q3: report
+      # buckets come up short, never the other way round (report
       # it, hide nothing). Per parent funding date each target — in
       # target-array order, which is the diagram's band order — draws
       # min(its prorated wanted, its share of the pool), share = the child's
@@ -1245,7 +1404,7 @@ class PaycheckFlowPlanner
       # edges already resolved its own inflow in the main loop above (the
       # own-edge pool); the fan-out pool is independent and adds on top,
       # and its demand was counted exactly once — in the parent's required
-      # base (graph_required_monthly) — so no double counting (owner Q2).
+      # base (graph_required_monthly) — so no double counting.
       @auto_transfer_targets.each do |parent_id, targets|
         parent_funding = bank_funding_dates.fetch(parent_id, [])
         next if parent_funding.empty? || targets.empty?
@@ -1270,7 +1429,7 @@ class PaycheckFlowPlanner
             # hidden). The own-edge pool (main loop) may have recorded the
             # same allocation on this date already: it keeps its own
             # proration; the fan-out wanted is added only when the row did
-            # not exist (no double count — owner Q2).
+            # not exist (no double count).
             child_results = per[target_id] ||= {}
             child_allocs.each do |allocation|
               wanted = allocation_monthly(allocation) / parent_funding.size
@@ -1321,7 +1480,7 @@ class PaycheckFlowPlanner
           end
         end
 
-        # Q3: the per-bucket shortfall lands on an over-plan line naming the
+        # The per-bucket shortfall lands on an over-plan line naming the
         # income that funds the parent and the FIRST unsatisfied bucket
         # (target-array order). Unsatisfied = the bucket's required
         # allocation is still short AFTER both pools (own-edge + fan-out) —
@@ -1389,13 +1548,13 @@ class PaycheckFlowPlanner
         # BigDecimal), so `||=` would never assign — key? instead.
         required_monthly[account_id] = monthly unless required_monthly.key?(account_id)
       end
-      # Round 11 issue 8 (fan-out): a parent's required base includes the
+      # (fan-out): a parent's required base includes the
       # required base of every auto-transfer target — the reservation its
       # funding paychecks must cover for the buckets. required_edge_
       # funding_counts is UNCHANGED: the fan-out adds demand, not funding,
       # so required_per_paycheck[parent] prorates (own base + child bases)
       # over the parent's funding paychecks — the sum over them still lands
-      # on the parent's total monthly base (the round 10 issue 1 invariant).
+      # on the parent's total monthly base (the issue 1 invariant).
       @auto_transfer_targets.each do |parent_id, targets|
         required_monthly[parent_id] += targets.sum { |target_id| fan_out_child_base(target_id) }
       end
@@ -1446,30 +1605,30 @@ class PaycheckFlowPlanner
       amount || BigDecimal(0)
     end
 
-    # Round 31A (Fun Money v2, design section 3): the owner's per-income
+    # the per-income
     # reconciliation for the plan's fun_money row (the FIRST one in
-    # sort order, C15 — same precedent as fun_targets_by_bank).
+    # sort order, — same precedent as fun_targets_by_bank).
     #
-    #   I_k  the income's monthly total;
-    #   B_k  the income's share of the required-mode bill demand = the sum
+    # I_k the income's monthly total;
+    # B_k the income's share of the required-mode bill demand = the sum
     #        of its resolved required EDGE charges over the month
-    #        (@resolved; the Round 30 stored percents participate via the
+    # (@resolved; the stored percents participate via the
     #        same machinery — required_split_charges feeds @resolved);
-    #   S_k  for each savings-kind allocation on bank b: share_k(b) x the
+    # S_k for each savings-kind allocation on bank b: share_k(b) x the
     #        per-date wanted, share = the over-plan formula (band/inflow
     #        when both positive, 1 when band > 0, 0 otherwise);
-    #   L_k  I_k - B_k - S_k (may be negative).
+    # L_k I_k - B_k - S_k (may be negative).
     #
     # Matching + Mode turn L into FM (member ownership): Per Income applies
     # the mode function per income (leftover -> max(0, L), percent ->
     # round(p * L) with 0 when L <= 0, Hard Number / required -> the stored
-    # value PER MEMBER, C5); Equalize (the member-ownership default) sets
+    # value PER MEMBER); Equalize (the member-ownership default) sets
     # T = max(0, min L_k) over members with an income occurrence this month
-    # (C4/M1 — a negative residual clamps the target to 0, never negative)
-    # and FM_k = T. Household ownership (including legacy NULL rows, C11):
+    # (a negative residual clamps the target to 0, never negative)
+    # and FM_k = T. Household ownership (including legacy NULL rows):
     # FM_total = the row's resolved got_month from the UNCHANGED bank-level
     # resolution; Distribution governs the per-member DISPLAY split only;
-    # reconciliation runs at the aggregate level only (C6).
+    # reconciliation runs at the aggregate level only.
     #
     # RED LABEL: Un-Allocated_k = I_k - (B_k + S_k + FM_k) STRICTLY above
     # the 100-cent tolerance -> a discrepancy row naming the income (an
@@ -1481,7 +1640,7 @@ class PaycheckFlowPlanner
     # the plan has no fun_money row (the payload keys stay nil — additive).
     # Returns { per_member:, reconciliation_by_income:, discrepancies:,
     #           inputs_stale:, inputs: } — inputs (per-income I/B/S cents)
-    # feeds the C14 drift snapshot the controller persists at save time.
+    # feeds the drift snapshot the controller persists at save time.
     FUN_MONEY_LABEL_TOLERANCE_CENTS = 100
 
     def fun_money_reconciliation(graph)
@@ -1533,16 +1692,25 @@ class PaycheckFlowPlanner
           leftover_edge = entry[:edges].find { |e| e[:mode] == "leftover" }
           bank_ids = entry[:amounts].keys
           bank_ids << leftover_edge[:account_id] if leftover_edge
+          # the SAME commitment-based share as the over-plan path
+          # for cascade-settled occurrences (a defunded row's savings
+          # demand is still committed by its paycheck).
+          committed = entry[:cascade] ? committed_bank_totals[date] : nil
           bank_ids.uniq.each do |bank_id|
-            band = entry[:amounts].fetch(bank_id, BigDecimal(0))
-            band += entry[:leftover] if leftover_edge && leftover_edge[:account_id] == bank_id
-            inflow = (bank_inflow[date] || {})[bank_id] || BigDecimal(0)
-            share = if inflow.positive? && band.positive?
-              band / inflow
-            elsif band.positive?
-              BigDecimal(1)
+            if committed
+              total = committed[bank_id] || BigDecimal(0)
+              share = total.positive? ? (entry[:committed].fetch(bank_id, BigDecimal(0)) / total) : BigDecimal(0)
             else
-              BigDecimal(0)
+              band = entry[:amounts].fetch(bank_id, BigDecimal(0))
+              band += entry[:leftover] if leftover_edge && leftover_edge[:account_id] == bank_id
+              inflow = (bank_inflow[date] || {})[bank_id] || BigDecimal(0)
+              share = if inflow.positive? && band.positive?
+                band / inflow
+              elsif band.positive?
+                BigDecimal(1)
+              else
+                BigDecimal(0)
+              end
             end
             next if share.zero?
 
@@ -1566,7 +1734,7 @@ class PaycheckFlowPlanner
 
       # Member attribution: a member's L = the sum of their labeled
       # incomes' residuals; members with no income occurrence this month
-      # drop out of the per-member matching set (C8) but their display
+      # drop out of the per-member matching set but their display
       # rows still appear where the design says (Equalize / Household).
       member_leftover = Hash.new { |h, k| h[k] = BigDecimal(0) }
       @incomes.each do |income|
@@ -1588,7 +1756,7 @@ class PaycheckFlowPlanner
 
       household = ownership == "household"
 
-      # C10: Distribution "Individual Leftover by Allocations" — each
+      # Distribution "Individual Leftover by Allocations" — each
       # member's FM is funded from own leftover only, which IS the per
       # income matching semantics. The dialog locks the Matching select to
       # Per Income for that option; the planner coerces the same way for
@@ -1596,11 +1764,11 @@ class PaycheckFlowPlanner
       matching = "per_income" if distribution == "individual_leftover"
 
       # Per-member Fun Money (member ownership): the mode function on the
-      # member's L. Per Income (C5): leftover -> max(0, L), percent ->
+      # member's L. Per Income: leftover -> max(0, L), percent ->
       # round(p * L) with 0 when L <= 0, Hard Number / required -> the
       # stored value H, PER MEMBER. Equalize (the member-ownership default,
-      # C11): T = max(0, min member L) over members with an income
-      # occurrence this month (C4/M1 — a negative residual clamps to 0,
+      # ): T = max(0, min member L) over members with an income
+      # occurrence this month (a negative residual clamps to 0,
       # never negative), FM_k = T.
       fun_money_by_member = {}
       equalize_target = BigDecimal(0)
@@ -1642,7 +1810,7 @@ class PaycheckFlowPlanner
       end
 
       # Household: FM_total = the row's resolved got_month (unchanged
-      # bank-level resolution) + the Distribution display split (M2: the
+      # bank-level resolution) + the Distribution display split (: the
       # pool is shared; the split is a display, not a settlement).
       fun_money_total = BigDecimal(0)
       allocation_results.each_value do |by_bank|
@@ -1680,7 +1848,7 @@ class PaycheckFlowPlanner
         end
       else
         # Member ownership: Equalize lists every member (a member with no
-        # income occurrence shows the target display only, C8); Per Income
+        # income occurrence shows the target display only); Per Income
         # lists the members with an income.
         listed = matching == "per_income" ? members : @partners
         listed.map do |partner|
@@ -1697,7 +1865,7 @@ class PaycheckFlowPlanner
         end
       end
 
-      # Reconciliation by income (member ownership only; C6: household
+      # Reconciliation by income (member ownership only; : household
       # reconciles at the aggregate level).
       reconciliation_by_income = {}
       unless household
@@ -1736,7 +1904,7 @@ class PaycheckFlowPlanner
         end
       end
 
-      # C14: the input snapshot the controller persisted at save time.
+      # the input snapshot the controller persisted at save time.
       # Divergence (per income, any of I/B/S) => the config is stale — an
       # amber prompt, never a red mismatch (no auto-rewrite).
       snapshot = (params["inputs_snapshot"] || params[:inputs_snapshot] || {})
@@ -1789,10 +1957,10 @@ class PaycheckFlowPlanner
           unallocated: unallocated_rows.map { |row| { date: row[:date].to_s, amount: money(row[:amount]) } },
           over_plan: over && { target: over[:target], target_id: over[:target_id], shortfall_month: money(over[:shortfall]) },
           limit_warning: (limit && linked > limit) ? { linked_count: linked, limit: limit } : nil,
-          # Round 31A (Fun Money v2): the per-income reconciliation
+          # (Fun Money v2): the per-income reconciliation
           # (bills / savings / fun_money / allocated / un_allocated, 2-dp
           # strings) — nil when the plan has no fun_money row or the mode
-          # reconciles at the aggregate level only (Household, C6).
+          # reconciles at the aggregate level only (Household).
           reconciliation:
             if fun_money && (row = fun_money[:reconciliation_by_income][income[:id]])
               row.transform_keys(&:to_sym).transform_values { |value| money(value) }
@@ -1804,16 +1972,16 @@ class PaycheckFlowPlanner
 
       # Banks: the accounts the edges and the allocations touch (plus the
       # labeled role accounts and the plan-ordered accounts added via the
-      # Add Account modal — owner review round 4: a plan-ordered bank with
+      # Add Account modal — : a plan-ordered bank with
       # no flow yet must still render, or it is a ghost: gone from the
       # add-accounts modal, invisible on the map, unreachable from the UI).
-      # Unassigned allocations (account_id nil, owner review round 3, R3)
+      # Unassigned allocations (account_id nil)
       # name no bank.
-      # Round 11 issue 8: sub-accounts and fan-out targets get rows even
+      # sub-accounts and fan-out targets get rows even
       # with no edge or allocation of their own — the sankey's child column
       # needs both endpoints of every fan-out band.
-      # Round 26 (item 4): an account with a target allocation is drawn ONLY
-      # as the dressed allocation-pillar node (round 25 Item 2's "never a
+      # an account with a target allocation is drawn ONLY
+      # as the dressed allocation-pillar node ( Item 2's "never a
       # second row for a dressed account", applied to the bank rows): it
       # drops out of the banks array. It would otherwise be double-drawn —
       # a small bank-column row (via the fan-out, below) AND the dressed
@@ -1821,10 +1989,10 @@ class PaycheckFlowPlanner
       # (bank:source -> allocation node) already carries the source ->
       # dressed connection.
       dressed_target_ids = @plan_allocations.filter_map { |allocation| allocation[:target_account_id] }.to_set
-      # R6 (Round 27 T4 fix): every union source was an unordered read
+      # ( fix): every union source was an unordered read
       # (allocation rows / pluck / hash keys), so the first-seen order of
       # the union leaked physical table order into the banks array — the
-      # R5 SHA drift. Sorted once at the end by account id (the stable,
+      # SHA drift. Sorted once at the end by account id (the stable,
       # meaningful key), the banks array order no longer depends on any
       # read's row order.
       bank_ids = (@allocations.map { |edge| edge[:account_id] } |
@@ -1851,23 +2019,23 @@ class PaycheckFlowPlanner
         {
           id: bank_id,
           name: @account_names[bank_id],
-          # Round 16 (owner note 4): the plaintext last-4 from the vendored
+          # the plaintext last-4 from the vendored
           # map; nil when the bank has no mask (never fabricated).
           last4: @account_last4s[bank_id],
-          # Round 16 (owner note 3b): the logo slug — explicit per-account
+          # the logo slug — explicit per-account
           # override -> keyword match on the account name -> nil. The value
           # is always a slug from the vendored set (bank_logos), never a URL.
           logo: bank_logo_for(bank_id),
           plan_order: @plan_ordered[bank_id],
           plan_role: @plan_roles[bank_id],
           auto_transfer_to_account_id: @auto_transfers[bank_id],
-          # Round 11 issue 8: the sub-account link + the ordered fan-out
+          # the sub-account link + the ordered fan-out
           # targets (the legacy single-target key stays one more round).
           parent_account_id: @sub_account_links[bank_id],
           sub_account: @sub_account_links.key?(bank_id),
           auto_transfer_target_ids: @auto_transfer_targets[bank_id],
           inflow_month: money(inflow_month),
-          # Round 34 (spec 4): ADDITIVE field — the edge's mode (required /
+          # ADDITIVE field — the edge's mode (required /
           # specific / percent / leftover). The bands already carry it
           # (resolve_graph, lines 981/987); exposing it lets the client mark
           # the leftover bank node (the sankey icon) and the per-member
@@ -1888,7 +2056,7 @@ class PaycheckFlowPlanner
       allocations = @plan_allocations.map do |allocation|
         account_id = allocation[:account_id]
 
-        # Unassigned (owner review round 3, R3): the source bank was removed
+        # Unassigned: the source bank was removed
         # from the plan. The allocation persists, is excluded from resolution,
         # and is reported with a zero footprint + status "unassigned" so the
         # diagram can draw it with a "No Assignment" marker (no flow band).
@@ -1903,7 +2071,7 @@ class PaycheckFlowPlanner
             cadence: allocation[:cadence],
             recurring_transaction_id: allocation[:recurring_transaction_id],
             auto_transfer: allocation[:auto_transfer],
-            # Round 16 (owner note 2): the Sure category's name + color so
+            # the Sure category's name + color so
             # the diagram band matches the category. nil / nil when the
             # allocation has no category (never a fabricated color).
             category_name: category_for(allocation[:category_id])[:name],
@@ -1915,7 +2083,7 @@ class PaycheckFlowPlanner
             shortfall_month: "0.00",
             status: "unassigned",
             over_planned: false,
-            # Round 25 (Item 2): the dressed account's identity (nil = a
+            # the dressed account's identity (nil = a
             # plain row; additive keys — zero-target payloads unchanged).
             target_account_id: allocation[:target_account_id],
             target_account_name: allocation[:target_account_name],
@@ -1953,7 +2121,7 @@ class PaycheckFlowPlanner
           cadence: allocation[:cadence],
           recurring_transaction_id: allocation[:recurring_transaction_id],
           auto_transfer: allocation[:auto_transfer],
-          # Round 16 (owner note 2): the Sure category's name + color so
+          # the Sure category's name + color so
           # the diagram band matches the category. nil / nil when the
           # allocation has no category (never a fabricated color).
           category_name: category_for(allocation[:category_id])[:name],
@@ -1967,12 +2135,12 @@ class PaycheckFlowPlanner
           # The RED node: the fun money the over-plan flag names, when it is
           # actually short.
           over_planned: over_plan_target_ids.include?(allocation[:id]) && shortfall_month.positive?,
-          # Round 25 (Item 2): the dressed account's identity (nil = a
+          # the dressed account's identity (nil = a
           # plain row; additive keys — zero-target payloads unchanged).
           target_account_id: allocation[:target_account_id],
           target_account_name: allocation[:target_account_name],
           target_account_logo: allocation[:target_account_logo],
-          # Round 31A (Fun Money v2): the per-member reconciliation rows
+          # (Fun Money v2): the per-member reconciliation rows
           # ({ member_id, leftover_month, fun_money_month,
           # un_allocated_month }, 2-dp strings) — nil for every
           # non-fun_money row and when no fun_money row exists.
@@ -1986,7 +2154,7 @@ class PaycheckFlowPlanner
               }
             end : nil,
           # The fun_money row's config echo (additive; nil for non-fun_money
-          # rows): ownership / distribution / matching / inputs_stale (C14
+          # rows): ownership / distribution / matching / inputs_stale (
           # drift snapshot divergence — the amber prompt).
           ownership: allocation[:kind] == "fun_money" ? allocation[:ownership] : nil,
           distribution: allocation[:kind] == "fun_money" ? allocation[:distribution] : nil,
@@ -2003,7 +2171,7 @@ class PaycheckFlowPlanner
         incomes: incomes,
         banks: banks,
         allocations: allocations,
-        # Round 16 (owner note 3b): the full usable logo set at the payload
+        # the full usable logo set at the payload
         # root, so the bank config dialog's searchable picker needs no new
         # endpoint (client-side filtering over this list).
         available_bank_logos: available_bank_logos_rows,
@@ -2014,7 +2182,7 @@ class PaycheckFlowPlanner
                               .map { |income| { income_id: income[:id], **income[:limit_warning] } },
         recommendations: @recommendations,
         suggested_fix: format_fix(fix),
-        # Round 31A (Fun Money v2): the RED Un-Allocated lines ({ income_id,
+        # (Fun Money v2): the RED Un-Allocated lines ({ income_id,
         # income_name, un_allocated_month } — income_id nil = the aggregate
         # Household line) strictly above the 100-cent tolerance. Empty
         # (never nil) when nothing exceeds it.
@@ -2024,7 +2192,7 @@ class PaycheckFlowPlanner
       }
     end
 
-    # Round 16 (owner note 3b): the usable logo set as picker rows
+    # the usable logo set as picker rows
     # ({ slug, label }), sorted by label for a readable dialog. bank_logos
     # is already the file+label intersection (BankLogoSlugs.available), so
     # every row here is a file the asset pipeline serves same-origin.
@@ -2033,7 +2201,7 @@ class PaycheckFlowPlanner
                  .map { |slug, label| { slug: slug, label: label } }
     end
 
-    # Round 16 (owner note 3b): the owner's resolution order — the explicit
+    # the resolution order — the explicit
     # per-account slug wins when usable; then the first keyword hit on the
     # account name (longest keyword first); otherwise nil. Only slugs from
     # the vendored set are ever emitted (never a broken <img>).
@@ -2061,7 +2229,7 @@ class PaycheckFlowPlanner
         @bank_logo_keywords.sort_by { |keyword, _| -keyword.length }
     end
 
-    # Round 16 (owner note 2): category id => { name, color } row; a missing
+    # category id => { name, color } row; a missing
     # category reads as an empty hash so both lookups return nil (no
     # fabricated color).
     def category_for(category_id)

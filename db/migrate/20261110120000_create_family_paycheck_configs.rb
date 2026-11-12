@@ -1,4 +1,4 @@
-# Round 31B (Direct Deposit): per-member paycheck configs for the Paycheck
+# (Direct Deposit): per-member paycheck configs for the Paycheck
 # Flow Planner. A config overrides one member's labeled income series with a
 # gross-per-paycheck amount + pay cadence (semi_monthly = 15th & last,
 # biweekly = every 14 days from the anchor weekday). Pay dates are DERIVED
@@ -6,10 +6,10 @@
 # here (v1 gap: the bills/paycheck page still reads the stored series
 # occurrences until the follow-up "sync to series").
 #
-# B5 (owner flag): the default frequency is semi_monthly for paycheck
+# the default frequency is semi_monthly for paycheck
 # configs even though house income-series creation defaults to biweekly
 # (recurring_transactions_controller.rb) — the signed flag applies to
-# paycheck configs only. Existing members only (B3): the UI offers one tab
+# paycheck configs only. Existing members only: the UI offers one tab
 # per existing family member; no member creation here.
 #
 # Existing members only + one config per member: unique (family_id,

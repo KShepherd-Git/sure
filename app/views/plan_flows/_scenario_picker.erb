@@ -1,11 +1,11 @@
-<%# R35 (Flow Scenarios, design §4.2): the Flow Scenario picker — the house
+<%# the Flow Scenario picker — the house
     DS::Popover pattern (DS::Popover is the mixed-content panel; DS::Menu
     is strictly flat action lists). The Default row is immutable (the live
     plan — no rename / delete / reset affordance); each scenario row
     carries its name + the RESET / rename / delete affordances (icon
     buttons — the plan-flow controller's window.confirm / window.prompt
     handlers: browser dialogs on a user gesture, not document-level
-    listeners; round 28: element-scoped queries).
+    listeners; element-scoped queries).
     Selecting a row is a PLAIN LINK -> a full page load (the house
     navigation for a mode switch, not in-place): Default goes to the bare
     flow path (byte-identical URL — no trailing empty ?scenario= param),
@@ -13,8 +13,8 @@
     dialog (_scenario_new_dialog.erb).
     locals: scenarios (PlanScenarios order created_at), active (@scenario, nil = Default)
     data-scenario-picker + data-scenario-flow-path scope the picker for the
-    controller handlers (the round 28 element-scoped query contract). %>
-<%# R35b: the picker is the FIRST item of the show toggle row — the trigger
+    controller handlers (the element-scoped query contract). %>
+<%# The picker is the FIRST item of the show toggle row — the trigger
     sits inside the house segmented-control track (the same container the
     Per Paycheck / Per Month + Manage / View pills use: .segmented-control
     bg-surface-inset = inline-flex, p-1, rounded-lg, inset background), so
@@ -28,7 +28,7 @@
 <%= render DS::Popover.new(variant: "button", no_padding: true, placement: "bottom-end") do |popover| %>
   <%# The trigger — the house segmented-control segment inside the track.
       Default state: "Flow Scenario: Default" (the live plan); an active
-      scenario: its name + the --active segment styling (design §4.2).
+      scenario: its name + the --active segment styling (the design).
       The chevron-down marks the dropdown. %>
   <% scenario_trigger_class = "segmented-control__segment focus-ring" + (active ? " segmented-control__segment--active" : "") %>
   <% popover.with_button(class: scenario_trigger_class, data: { scenario_trigger: "true" }) do %>
@@ -95,13 +95,13 @@
     </div>
   <% end %>
 <% end %>
-<%# R35 (design §4.3): the create dialog — name + source (Start Fresh? /
+<%# the create dialog — name + source (Start Fresh? /
     Re-Use Current). POST flow_scenario_create; success is a 303 -> full
     page load into the NEW scenario (the house navigation for a mode
     switch); a 422 comes back as a house flash alert (the model's field
     messages). MUST render inside the picker container: the
     openScenarioNew handler is element-scoped to [data-scenario-picker]
-    (round 28 — no document-level queries), so a dialog outside this div
+    (no document-level queries), so a dialog outside this div
     would never open. %>
 <%= render "plan_flows/scenario_new_dialog" %>
 </div>

@@ -57,7 +57,7 @@ class PlanAllocationTest < ActiveSupport::TestCase
     assert_not build(mode: "leftover", value_percent: 0.5).valid?
   end
 
-  # Round 10 issue 4: a savings bucket is a MONTHLY figure (mode forced
+  # a savings bucket is a MONTHLY figure (mode forced
   # "required" by the controller; the dialog hides the detected-bill link,
   # so the bucket always needs its typed value).
   test "required savings bucket: the monthly value is required" do
@@ -134,7 +134,7 @@ class PlanAllocationTest < ActiveSupport::TestCase
     assert fun.valid?
   end
 
-  # Round 16 (owner note 2): the optional Sure category link (the diagram's
+  # the optional Sure category link (the diagram's
   # band color). Nil is the default (no color); a category from another
   # family is rejected like the other cross-family references.
   test "category is optional and must belong to the allocation's family" do
@@ -149,13 +149,13 @@ class PlanAllocationTest < ActiveSupport::TestCase
     assert foreign_alloc.errors[:category].any?
   end
 
-  # Round 31A (Fun Money v2): the fun_money row's configuration —
+  # (Fun Money v2): the fun_money row's configuration —
   # ownership / distribution / matching are fun_money-only (a config value
   # on any other kind is a 422, same as the dialog's sanitizer), the
   # ownership must name the household or THIS family's member, the
   # distribution/matching must be the fixed sets, and distribution
   # "percent" needs per-member percents keyed by family members, 0-100,
-  # summing to 100.00 +/- 0.01 (C9).
+  # summing to 100.00 +/- 0.01.
   def fm_build(**attrs)
     PlanAllocation.new(
       family: @family, account: @account, name: "Fun money",
@@ -206,7 +206,7 @@ class PlanAllocationTest < ActiveSupport::TestCase
   end
 
   test "Round 31A: distribution and matching are the fixed sets" do
-    # (percent is exercised with its percents in the C9 test — the bare
+    # (percent is exercised with its percents in the test — the bare
     # value is accepted as a set member, the percents are the model's
     # concern.)
     %w[equal rational individual_leftover].each do |distribution|

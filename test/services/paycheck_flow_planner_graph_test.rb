@@ -1,6 +1,6 @@
 require "test_helper"
 
-# Pure-Ruby tests for plan_graph (M2 PR#2b): the planning diagram's fixed
+# Pure-Ruby tests for plan_graph: the planning diagram's fixed
 # bank-level resolution order, over-plan flags, unallocated remainders,
 # limit warnings, and the draft merge. No ActiveRecord — same style as the
 # PR#1 solver tests.
@@ -45,7 +45,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
       end }
   end
 
-  # required_percent (Round 30): the stored 2-dp percent of the bank's
+  # required_percent: the stored 2-dp percent of the bank's
   # required amount a required edge carries (nil = the equal split).
   def edge(income_id:, account_id:, mode:, value_cents: nil, value_percent: nil, required_percent: nil)
     { income_id: income_id, account_id: account_id, mode: mode,
@@ -58,13 +58,21 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
       value_cents: value_cents, value_percent: value_percent,
       cadence: "monthly", recurring_transaction_id: recurring_transaction_id,
       auto_transfer: auto_transfer, category_id: category_id,
-      # Round 31A (Fun Money v2): the fun_money row's config (nil for every
+      # (Fun Money v2): the fun_money row's config (nil for every
       # non-fun_money row — additive keys).
       ownership: ownership, distribution: distribution, matching: matching,
       distribution_params: distribution_params }
   end
 
-  # 1. The owner's example: income 1000, bills 800 (required), fun 300 hard
+  # Numeric-identity normalization: the `plan_role` field on a bank row is an
+  # INPUT echo (it differs between a run that passes plan_roles and one that
+  # does not), not a resolution result. Strip it before a deep-equal so the
+  # comparison isolates the resolver output (the cascade-vs-legacy question).
+  def strip_roles(g)
+    g.merge(banks: g[:banks].map { |b| b.reject { |k, _| k == :plan_role } })
+  end
+
+  # 1. the example: income 1000, bills 800 (required), fun 300 hard
   # -> bills paid first, fun gets 200 and the 100 gap is the over-plan flag,
   # RED on the fun money allocation.
   test "bills first: fun money short becomes the over-plan flag" do
@@ -425,7 +433,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal "0.4250", g[:suggested_fix][:suggested_percent]
   end
 
-  # Round 4 (ghost banks): a plan-ordered account with no flow must be a
+  # (ghost banks): a plan-ordered account with no flow must be a
   # bank in the graph — the Add Account modal sets plan_order only, and a
   # bank the diagram does not draw is a ghost: gone from the add-accounts
   # modal yet invisible (and unreachable) on the map.
@@ -444,7 +452,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert bank[:inflow].empty?
   end
 
-  # Round 11 issue 8 (fan-out, plan_graph only): (a) the parent's
+  # (fan-out, plan_graph only): (a) the parent's
   # per-paycheck reservation includes the child bases, (b) a child with no
   # own required edge draws its share of the parent's post-allocation pool
   # on the parent's funding dates.
@@ -493,7 +501,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal "Bucket", child_row[:name]
   end
 
-  # Round 11 issue 8 (fan-out): over-fan-out — the parent's own required
+  # (fan-out): over-fan-out — the parent's own required
   # allocations resolve first, the buckets draw their base shares of what
   # is left, each short bucket reports its shortfall, and the over-plan
   # line names the income and the FIRST unsatisfied bucket (target order).
@@ -538,7 +546,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal "200.00", flag[:shortfall_month]
   end
 
-  # Round 11 issue 8 (fan-out, owner Q2): a child WITH its own required
+  # a child WITH its own required
   # edges resolves the own-edge pool independently; the fan-out pool adds
   # on top. The child's base is counted ONCE in the parent's reservation
   # (no double counting), and the fan-out transfer beyond the already-met
@@ -583,7 +591,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_empty g[:over_plans]
   end
 
-  # Round 11 issue 8 (fan-out, draft parity): the fan-out inputs are
+  # (fan-out, draft parity): the fan-out inputs are
   # SAVED state, not draftable — a wholesale draft edge swap must leave
   # the sub-account/fan-out inputs intact and resolve against the drafted
   # inflow.
@@ -625,7 +633,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal "0.00", parent[:surplus_month]
   end
 
-  # Round 16 (owner note 4): the plaintext last-4 rides on every bank row,
+  # the plaintext last-4 rides on every bank row,
   # nil when the account has no mask — never a fabricated digit.
   test "bank rows carry the last-4 map value, nil when the bank has no mask" do
     g = graph(
@@ -636,16 +644,16 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
         edge(income_id: "A", account_id: "sav", mode: "leftover")
       ],
       account_names: { "chk" => "SoFi Savings", "sav" => "Navy Savings" },
-      account_last4s: { "chk" => "8979" }
+      account_last4s: { "chk" => "1234" }
     )
 
     chk = g[:banks].find { |b| b[:id] == "chk" }
     sav = g[:banks].find { |b| b[:id] == "sav" }
-    assert_equal "8979", chk[:last4]
+    assert_equal "1234", chk[:last4]
     assert_nil sav[:last4]
   end
 
-  # Round 16 (owner note 3b): the logo slug resolution order — explicit
+  # the logo slug resolution order — explicit
   # per-account override wins when usable; otherwise the first (longest-first)
   # keyword hit on the account name; otherwise nil. Only slugs from the
   # vendored set are ever emitted.
@@ -684,7 +692,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
                  g[:available_bank_logos]
   end
 
-  # Round 16 (owner note 3b): longest keyword wins when several match.
+  # longest keyword wins when several match.
   test "longest keyword wins when several match the account name" do
     g = graph(
       month: Date.new(2026, 11, 1),
@@ -700,7 +708,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal "navy-federal", g[:banks].find { |b| b[:id] == "navyfed" }[:logo]
   end
 
-  # Round 16 (owner note 2): the allocation rows carry the Sure category's
+  # the allocation rows carry the Sure category's
   # name + color so the diagram band matches the category; nil / nil when the
   # allocation has no category (never a fabricated color).
   test "allocation rows carry the category name and color, nil when unset" do
@@ -726,7 +734,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_nil b2[:category_color]
   end
 
-  # Round 16 (owner note 2): a category id that is NOT in the categories map
+  # a category id that is NOT in the categories map
   # (deleted / foreign) still reads nil — no fabricated color.
   test "allocation rows read nil when the category id is absent from the map" do
     g = graph(
@@ -746,7 +754,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_nil b1[:category_color]
   end
 
-  # Round 30: the required split (P1). A stored percent split of the bank's
+  # the required split (P1). A stored percent split of the bank's
   # required base charges each income its monthly share spread over its
   # occurrences; the monthly inflow still sums EXACTLY to the base
   # (monthly-preserving settlement — the UI readout formula is a separate
@@ -781,7 +789,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal "ok", g[:allocations].find { |a| a[:id] == "b1" }[:status]
   end
 
-  # Round 30 (P2): a 33.33/33.33/33.34 split (the equal-split derivation's
+  # a 33.33/33.33/33.34 split (the equal-split derivation's
   # 3-income shape, summing to exactly 100.00) — the last income absorbs
   # the rounding residue, so the monthly shares sum to the base EXACTLY.
   test "required percents 33.33/33.33/33.34: last income absorbs to the base (P2)" do
@@ -813,7 +821,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal "100.00", bank[:inflow_month]
   end
 
-  # Round 30 (P3): a 33/33/34 split on an odd base (10_001) — the non-last
+  # a 33/33/34 split on an odd base (10_001) — the non-last
   # shares round half-up individually; the last income absorbs so the
   # monthly total is the base to the cent.
   test "required percents 33/33/34 on an odd base: last absorbs the cent (P3)" do
@@ -845,7 +853,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal "100.01", bank[:inflow_month]
   end
 
-  # Round 30 (P4): nil percents (every required edge stores nothing) are
+  # nil percents (every required edge stores nothing) are
   # TODAY'S behavior — each paycheck occurrence charges the full
   # required-per-paycheck figure; the stop-rule byte-identity rests on
   # this path.
@@ -872,7 +880,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal "100.00", bank[:inflow_month]
   end
 
-  # Round 30 (P5, D-UNDER): a split summing to less than 100 (30/40) is
+  # a split summing to less than 100 (30/40) is
   # allowed — NO absorb: the charges are the raw shares, the month funds
   # only the split total, and the shortfall surfaces on the required
   # allocation via the existing report fields.
@@ -906,15 +914,15 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal "partly", bill[:status]
   end
 
-  # Round 31A (Fun Money v2) — the per-income reconciliation (B_k / S_k /
-  # L_k / FM_k) + the Un-Allocated discrepancies. The owner's worked
-  # example (design spec §3.5) is a MANDATORY test case with exact
+  # (Fun Money v2) — the per-income reconciliation (B_k / S_k /
+  # L_k / FM_k) + the Un-Allocated discrepancies. the worked
+  # example is a MANDATORY test case with exact
   # payload values.
   #
   # Setup (monthly, single occurrence each on 2026-11-01):
   #   Income A $1000.00 (member A) | Income B $500.00 (member B)
-  #   Bills   $900.00/mo required  on bank X (funded 100% by A)
-  #   Savings $250.00/mo specific  on bank Y (funded 100% by B)
+  # Bills $900.00/mo required on bank X (funded 100% by A)
+  # Savings $250.00/mo specific on bank Y (funded 100% by B)
   #   Fun Money row: ownership = member A, matching = Equalize,
   #                  mode = Leftover.
   #   L_A = 1000 - 900 - 0 = 100.00 | L_B = 500 - 0 - 250 = 250.00
@@ -982,7 +990,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_not_nil a[:reconciliation]
   end
 
-  # Round 31A: Per Income matching (C5) — each member's FM is the mode
+  # Per Income matching — each member's FM is the mode
   # function on their OWN leftover; the worked example's B keeps 250.00
   # (no Un-Allocated line: both incomes are fully allocated).
   test "Round 31A: per income matching — leftover mode, no discrepancies" do
@@ -1019,7 +1027,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal [], g[:discrepancies]
   end
 
-  # Round 31A: C10 — Distribution "Individual Leftover by Allocations"
+  # Distribution "Individual Leftover by Allocations"
   # forces the Per Income matching semantics even when the row stores
   # matching "equalize" (rows saved before the dialog lock existed).
   test "Round 31A: individual_leftover distribution coerces per_income" do
@@ -1053,7 +1061,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     )
   end
 
-  # Round 31A: Household ownership (C6/M2) — the shared pool reconciles at
+  # Household ownership ( /) — the shared pool reconciles at
   # the AGGREGATE level only (no per-income reconciliation; the per-member
   # rows are the distribution's DISPLAY split). FM_total is the row's
   # resolved got; the aggregate gap labels "Household".
@@ -1106,7 +1114,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     )
   end
 
-  # Round 31A: the 100-cent tolerance is STRICT — a 98-cent un-allocated
+  # the 100-cent tolerance is STRICT — a 98-cent un-allocated
   # residual shows no line; 101 cents does.
   test "Round 31A: tolerance boundary (98c silent, 101c labeled)" do
     build = lambda do |bill_cents|
@@ -1131,7 +1139,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     )
   end
 
-  # Round 31A (C14): the input snapshot — an exact match reads fresh, a
+  # the input snapshot — an exact match reads fresh, a
   # divergent I_k reads stale (the amber prompt; never a red mismatch).
   test "Round 31A: inputs_stale vs the C14 snapshot" do
     base = lambda do |snapshot|
@@ -1168,7 +1176,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     assert_equal false, base.call(nil)[:allocations].find { |x| x[:id] == "fm1" }[:inputs_stale]
   end
 
-  # Round 31A: an UNLABELED income (owner_id nil) still reconciles — its
+  # an UNLABELED income (owner_id nil) still reconciles — its
   # residual enters the rows (income_name nil -> the "an income" chrome
   # fallback) but it never joins the Equalize min.
   test "Round 31A: unlabeled income excluded from Equalize min, still labeled" do
@@ -1177,7 +1185,7 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
       incomes: [
         income(id: "A", owner_id: P1, amounts: [ 100_000 ], name: "Income A"),
         income(id: "B", owner_id: P2, amounts: [ 50_000 ], name: "Income B"),
-        # name nil: the chrome falls back to "an income" (S10).
+        # name nil: the chrome falls back to "an income".
         income(id: "C", owner_id: nil, amounts: [ 20_000 ], name: nil)
       ],
       allocations: [
@@ -1209,9 +1217,9 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     )
   end
 
-  # Round 31A (stop-rule): plan() — the paycheck-plans payload — is
+  # (stop-rule): plan — the paycheck-plans payload — is
   # byte-identical with the fun_money config fields present on the
-  # plan_allocations rows (plan() derives required only from the
+  # plan_allocations rows (plan derives required only from the
   # obligations; the new fields never reach it).
   test "Round 31A: plan() byte-identical with fun_money fields (stop-rule)" do
     common = {
@@ -1239,5 +1247,243 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     with_fm = PaycheckFlowPlanner.new(**common, plan_allocations: [ bill, fm ]).plan
     assert_equal JSON.pretty_generate(plain), JSON.pretty_generate(with_fm)
     assert_equal plain, with_fm
+  end
+
+  # ---------------------------------------------------------------------
+  # the funding-priority CASCADE.
+  # Tiers come from the account's plan_role (checking -> funding-first,
+  # savings_bucket -> short-carrying); within a tier the LAST committed
+  # row (last in band order) goes short first. A charged edge whose account
+  # has no usable plan_role AND no plan allocations keeps the legacy
+  # behavior for that occurrence (byte-identical, negative leftover
+  # allowed) — the stop rule.
+  # ---------------------------------------------------------------------
+
+  # The demo-shaped leg: P 2700.00/paycheck (2 occurrences), = 2450.00
+  # (fully funded), = 1200.00 in band order sav1 -> sav2; the 950.00/
+  # paycheck excess hits LAST-COMMITTED-FIRST: sav1 funded 250.00 short
+  # 825.00, sav2 (last) funded 0.00 short 125.00. The leftover edge takes
+  # exactly 0 (structurally non-negative) — no negative inflow row.
+  test "Round 36: cascade funds T1 fully, T2 goes short last-committed-first" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [ income(id: "A", amounts: [ 270_000, 270_000 ], name: "Bob Payroll") ],
+      allocations: [
+        edge(income_id: "A", account_id: "c1", mode: "required"),
+        edge(income_id: "A", account_id: "c2", mode: "required"),
+        edge(income_id: "A", account_id: "c3", mode: "required"),
+        edge(income_id: "A", account_id: "s1", mode: "required"),
+        edge(income_id: "A", account_id: "s2", mode: "required"),
+        edge(income_id: "A", account_id: "lo", mode: "leftover")
+      ],
+      plan_allocations: [
+        alloc(id: "a1", account_id: "c1", name: "Auto Bills", kind: "bill", mode: "required", value_cents: BigDecimal(360_000)),
+        alloc(id: "a2", account_id: "c2", name: "Vari Bills", kind: "bill", mode: "required", value_cents: BigDecimal(80_000)),
+        alloc(id: "a3", account_id: "c3", name: "Groceries", kind: "bill", mode: "required", value_cents: BigDecimal(50_000)),
+        alloc(id: "a4", account_id: "s1", name: "Savings A", kind: "savings", mode: "required", value_cents: BigDecimal(215_000)),
+        alloc(id: "a5", account_id: "s2", name: "Savings B", kind: "savings", mode: "required", value_cents: BigDecimal(25_000))
+      ],
+      plan_roles: {
+        "c1" => "checking", "c2" => "checking", "c3" => "checking",
+        "s1" => "savings_bucket", "s2" => "savings_bucket"
+      }
+    )
+
+    a1 = g[:allocations].find { |a| a[:id] == "a1" }
+    a2 = g[:allocations].find { |a| a[:id] == "a2" }
+    a3 = g[:allocations].find { |a| a[:id] == "a3" }
+    a4 = g[:allocations].find { |a| a[:id] == "a4" }
+    a5 = g[:allocations].find { |a| a[:id] == "a5" }
+    # (checking) is fully funded at the full MONTHLY figure (value_cents
+    # is monthly; 2 paychecks => x2 the per-paycheck charge).
+    [ [ "3600.00", "0.00" ], [ "800.00", "0.00" ], [ "500.00", "0.00" ] ].zip([ a1, a2, a3 ]).each do |(got, short), a|
+      assert_equal got, a[:got_month]
+      assert_equal short, a[:shortfall_month]
+      assert_equal "ok", a[:status]
+    end
+    # (savings_bucket): the 250.00/paycheck remainder funds sav1 in band
+    # order; sav1 short 825.00/paycheck (1650.00/mo), sav2 — the LAST
+    # committed row — takes the whole 125.00/paycheck gap (250.00/mo).
+    # House status: a fully defunded row is "over" (over_planned), a
+    # partially funded one "partly".
+    assert_equal "500.00", a4[:got_month]
+    assert_equal "1650.00", a4[:shortfall_month]
+    assert_equal "partly", a4[:status]
+    assert_equal "0.00", a5[:got_month]
+    assert_equal "250.00", a5[:shortfall_month]
+    assert_equal "over", a5[:status]
+
+    # ROOT over-plan: per-paycheck excess 950.00 x 2 occurrences = 1900.00
+    # monthly, on the surplus line (no fun money planned).
+    flag = g[:over_plans].find { |f| f[:income_id] == "A" }
+    assert_equal "surplus", flag[:target]
+    assert_nil flag[:target_id]
+    assert_equal "1900.00", flag[:shortfall_month]
+    assert_equal "1900.00", g[:incomes].find { |i| i[:id] == "A" }[:over_plan][:shortfall_month]
+
+    # No negative inflow anywhere: the leftover edge takes exactly 0.00
+    # (the legacy client-clamped wavy row is gone at the source).
+    g[:banks].each do |bank|
+      bank[:inflow].each { |band| assert_operator band[:amount].to_f, :>=, 0.0 }
+    end
+    lo = g[:banks].find { |b| b[:id] == "lo" }
+    assert_equal "0.00", lo[:inflow].find { |band| band[:income_id] == "A" }[:amount]
+  end
+
+  # The scratch leg: the same plan with P cut to 2000.00/paycheck. is
+  # 100% short (both rows funded 0.00); the excess (450.00/paycheck)
+  # splits LAST-COMMITTED-FIRST in band order: c1 covered, c2 funded
+  # 200.00 short 200.00, c3 (last) funded 0.00 short 250.00.
+  test "Round 36: cascade scratch leg shorts T2 fully, then T1 last-committed-first" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [ income(id: "A", amounts: [ 200_000, 200_000 ], name: "Bob Payroll") ],
+      allocations: [
+        edge(income_id: "A", account_id: "c1", mode: "required"),
+        edge(income_id: "A", account_id: "c2", mode: "required"),
+        edge(income_id: "A", account_id: "c3", mode: "required"),
+        edge(income_id: "A", account_id: "s1", mode: "required"),
+        edge(income_id: "A", account_id: "s2", mode: "required")
+      ],
+      plan_allocations: [
+        alloc(id: "a1", account_id: "c1", name: "Auto Bills", kind: "bill", mode: "required", value_cents: BigDecimal(360_000)),
+        alloc(id: "a2", account_id: "c2", name: "Vari Bills", kind: "bill", mode: "required", value_cents: BigDecimal(80_000)),
+        alloc(id: "a3", account_id: "c3", name: "Groceries", kind: "bill", mode: "required", value_cents: BigDecimal(50_000)),
+        alloc(id: "a4", account_id: "s1", name: "Savings A", kind: "savings", mode: "required", value_cents: BigDecimal(215_000)),
+        alloc(id: "a5", account_id: "s2", name: "Savings B", kind: "savings", mode: "required", value_cents: BigDecimal(25_000))
+      ],
+      plan_roles: {
+        "c1" => "checking", "c2" => "checking", "c3" => "checking",
+        "s1" => "savings_bucket", "s2" => "savings_bucket"
+      }
+    )
+
+    a1 = g[:allocations].find { |a| a[:id] == "a1" }
+    a2 = g[:allocations].find { |a| a[:id] == "a2" }
+    a3 = g[:allocations].find { |a| a[:id] == "a3" }
+    a4 = g[:allocations].find { |a| a[:id] == "a4" }
+    a5 = g[:allocations].find { |a| a[:id] == "a5" }
+    # (1200.00/paycheck of the 1650.00 excess) is 100% short ("over").
+    [ a4, a5 ].each do |a|
+      assert_equal "0.00", a[:got_month]
+      assert_equal "over", a[:status]
+    end
+    assert_equal "2150.00", a4[:shortfall_month]
+    assert_equal "250.00", a5[:shortfall_month]
+    # excess 450.00/paycheck LAST-COMMITTED-FIRST: c1 covered 1800.00;
+    # c2 funded 200.00 short 200.00 (per-paycheck; monthly doubles); c3 —
+    # the last committed row — funded 0.00 short 250.00.
+    assert_equal "3600.00", a1[:got_month]
+    assert_equal "0.00", a1[:shortfall_month]
+    assert_equal "400.00", a2[:got_month]
+    assert_equal "400.00", a2[:shortfall_month]
+    assert_equal "0.00", a3[:got_month]
+    assert_equal "500.00", a3[:shortfall_month]
+    # ROOT over-plan: 1650.00/paycheck x 2 = 3300.00 monthly.
+    flag = g[:over_plans].find { |f| f[:income_id] == "A" }
+    assert_equal "3300.00", flag[:shortfall_month]
+  end
+
+  # The identity gate: with no shortfall (P >= + ) the cascade is the
+  # identity — the report is deep-equal to the legacy (no plan_roles)
+  # resolution. This is the unit-level guard behind the Default payload
+  # byte pin.
+  test "Round 36: cascade is the identity when nothing is short (deep-equal to legacy)" do
+    build = lambda do |roles|
+      graph(
+        month: Date.new(2026, 11, 1),
+        incomes: [ income(id: "A", amounts: [ 400_000, 400_000 ], name: "Bob Payroll") ],
+        allocations: [
+          edge(income_id: "A", account_id: "c1", mode: "required"),
+          edge(income_id: "A", account_id: "s1", mode: "required"),
+          edge(income_id: "A", account_id: "lo", mode: "leftover")
+        ],
+        plan_allocations: [
+          alloc(id: "a1", account_id: "c1", name: "Auto Bills", kind: "bill", mode: "required", value_cents: BigDecimal(360_000)),
+          alloc(id: "a2", account_id: "s1", name: "Savings A", kind: "savings", mode: "required", value_cents: BigDecimal(215_000))
+        ],
+        plan_roles: roles
+      )
+    end
+    cascade = build.call({ "c1" => "checking", "s1" => "savings_bucket" })
+    legacy = build.call({})
+    # plan_role is an input echo on the bank rows — normalized out above;
+    # every resolution field (inflow, got, shortfall, over_plans, ...) is
+    # deep-equal: with no shortfall the cascade is the identity.
+    assert_equal strip_roles(legacy), strip_roles(cascade)
+  end
+
+  # The stop rule: a CHARGED edge on an account with no usable plan_role
+  # AND no plan allocations keeps the LEGACY resolution for that
+  # occurrence (negative leftover allowed, byte-identical to the
+  # no-roles run) — the legacy behavior that the PR#1 compatibility test
+  # pins.
+  test "Round 36: unclassified charged edge keeps the legacy occurrence" do
+    build = lambda do |roles|
+      graph(
+        month: Date.new(2026, 11, 1),
+        incomes: [ income(id: "A", amounts: [ 50_000, 50_000 ], name: "Bob Payroll") ],
+        allocations: [
+          edge(income_id: "A", account_id: "chk", mode: "specific", value_cents: BigDecimal(70_000)),
+          edge(income_id: "A", account_id: "lo", mode: "leftover")
+        ],
+        plan_roles: roles
+      )
+    end
+    legacy = build.call({})
+    flagged = build.call({ "lo" => "checking" })
+    # The presence of a plan_role on an UNCHARGED account (the leftover
+    # bank) must not pull the charged, unclassified occurrence into the
+    # cascade — byte-identical to the no-roles (legacy) resolution
+    # (plan_role normalized out: input echo, not a resolution result).
+    assert_equal strip_roles(legacy), strip_roles(flagged)
+    # Legacy semantics survive: the specific edge reserves 700.00 against a
+    # 500.00 paycheck — the leftover bank carries the NEGATIVE monthly
+    # inflow (2 x -200.00), NOT clamped to 0.00 (the legacy behavior the
+    # PR#1 compatibility test pins as "-70.00").
+    lo = legacy[:banks].find { |b| b[:id] == "lo" }
+    assert_equal "-400.00", lo[:inflow_month]
+  end
+
+  # The proration documentation (design doc: documented, not fixed): the
+  # ROOT figure is the exact monthly sum of the per-paycheck gaps. With a
+  # half-cent per-paycheck shortfall (1010.665) the money display
+  # truncates to "1010.66" — so 2 x the DISPLAYED per-paycheck figure
+  # (2021.32) differs from the exact monthly figure (2021.33) by the
+  # display truncation only. The monthly figure is the source of truth.
+  test "Round 36: half-cent per-paycheck gap displays 1010.66 but the monthly figure is 2021.33" do
+    # The demo-shaped plan with the EXACT demo half-cent: = 2510.665/
+    # paycheck (5021.33/mo, a1's required split is the half-cent carrier),
+    # = 1075.00 + 125.00/paycheck, P = 2700.00/paycheck.
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [ income(id: "A", amounts: [ 270_000, 270_000 ], name: "Bob Payroll") ],
+      allocations: [
+        edge(income_id: "A", account_id: "c1", mode: "required"),
+        edge(income_id: "A", account_id: "s1", mode: "required"),
+        edge(income_id: "A", account_id: "s2", mode: "required")
+      ],
+      plan_allocations: [
+        # 2510.665/paycheck (the exact demo figure incl. its half-cent).
+        alloc(id: "a1", account_id: "c1", name: "Checking", kind: "bill", mode: "required", value_cents: BigDecimal(502_133)),
+        # 1075.00 + 125.00/paycheck.
+        alloc(id: "a2", account_id: "s1", name: "Savings A", kind: "savings", mode: "required", value_cents: BigDecimal(215_000)),
+        alloc(id: "a3", account_id: "s2", name: "Savings B", kind: "savings", mode: "required", value_cents: BigDecimal(25_000))
+      ],
+      plan_roles: { "c1" => "checking", "s1" => "savings_bucket", "s2" => "savings_bucket" }
+    )
+    flag = g[:over_plans].find { |f| f[:income_id] == "A" }
+    # Per-paycheck short = 2510.665 + 1200.00 - 2700.00 = 1010.665 (a
+    # half-cent). The MONTHLY figure is the exact 2021.33 = 2 x 1010.665;
+    # the per-paycheck figure DISPLAYS as 1010.66 (money truncates the
+    # half-cent), so 2 x the displayed per-paycheck figure (2021.32) differs
+    # from the exact monthly figure (2021.33) by the display truncation
+    # only — documented, not fixed (design doc).
+    assert_equal "2021.33", flag[:shortfall_month]
+    per_paycheck_display = format("%.2f", 101_066.5 / 100)
+    assert_equal "1010.66", per_paycheck_display
+    # The 1-cent proration, pinned: 2 x the DISPLAYED per-paycheck figure
+    # is 2021.32, one cent off the exact monthly figure.
+    assert_equal "2021.32", format("%.2f", per_paycheck_display.to_f * 2)
   end
 end

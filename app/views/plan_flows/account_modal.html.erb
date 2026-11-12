@@ -1,6 +1,6 @@
 <%# "Add Account" modal (turbo frame): lists the family's already-known /
     synced accounts that are not yet on the map (pick -> added to the plan).
-    NO own manual creation form (owner round 2, F2): "Add Manual Account"
+    NO own manual creation form: "Add Manual Account"
     goes to the house add-account page — every account comes from Sure's
     existing list. %>
 <%= render DS::Dialog.new do |dialog| %>
@@ -12,13 +12,13 @@
         <% if @unassigned_accounts.empty? %>
           <p class="text-xs text-secondary"><%= t(".all_on_map") %></p>
         <% end %>
-        <%# In-place submit (owner round 3, R1/R7): fetch + tween the sankey
+        <%# In-place submit: fetch + tween the sankey
             (new banks grow in); the in-place submit handler also
             closes this modal frame on success. %>
         <%= form_with url: flow_add_accounts_plan_path, method: :post,
                       class: "space-y-2",
                       data: { turbo: "false", plan_flow_inplace: "true" } do |form| %>
-          <%# Round 22 (N9): the same LOCKED scroll window as the
+          <%# the same LOCKED scroll window as the
               allocation dialog bank rows (max-h-64 overflow-y-auto —
               never overflow-auto) and the same BANK SOURCE row style:
               plan-flow avatar (logo over letter chip) + name +
@@ -37,7 +37,7 @@
                   <% end %>
                 </span>
                 <span class="text-sm text-primary truncate"><%= account.name %></span>
-                <%# Round 16 (owner note 4): the same last-4 the plan-flow
+                <%# The same last-4 the plan-flow
                     payload carries; nil for every account without a mask. %>
                 <% if (last4 = @account_last4s[account.id]) %>
                   <span class="text-xs text-secondary tabular-nums">****<%= last4 %></span>
@@ -50,7 +50,7 @@
           </div>
           <% unless @unassigned_accounts.empty? %>
             <div class="pt-1">
-              <%# Round 22 (N10): bg-primary resolves to #171717 in the
+              <%# bg-primary resolves to #171717 in the
                   dark theme — the modal's own background — so the button
                   was invisible. Dark-but-distinct surface + the exact
                   Add Manual Account border treatment. %>

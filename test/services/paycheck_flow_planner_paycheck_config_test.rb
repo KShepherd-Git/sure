@@ -1,10 +1,10 @@
 require "test_helper"
 
-# Round 31B (Direct Deposit): the planner's paycheck-config overlay.
-# Covers the S0 no-op invariant (zero config rows = the SAME incomes array
+# (Direct Deposit): the planner's paycheck-config overlay.
+# Covers the no-op invariant (zero config rows = the SAME incomes array
 # untouched), the date math vs the house Schedule engine (semi-monthly =
 # 15th + last day, 24x/yr; biweekly = 14-day stride from the anchor, 26x/yr),
-# the replace/append paths, and the B6 invariant (allocation "wanted" is
+# the replace/append paths, and the invariant (allocation "wanted" is
 # IMMUTABLE to the overlay; the inflow changes when the gross changes).
 class PaycheckFlowPlannerPaycheckConfigTest < ActiveSupport::TestCase
   def setup
@@ -40,7 +40,7 @@ class PaycheckFlowPlannerPaycheckConfigTest < ActiveSupport::TestCase
       income_series: @series, account: @account, mode: "percent", value: 1.0
     )
     # A per-paycheck "wanted" that must NOT move when the overlay changes
-    # the paycheck amounts (B6).
+    # the paycheck amounts.
     @family.plan_allocations.create!(
       account: @account, name: "Rent", cadence: "monthly",
       kind: "bill", mode: "specific", value_cents: 50_000

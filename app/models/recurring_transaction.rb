@@ -9,9 +9,9 @@ class RecurringTransaction < ApplicationRecord
   MAX_END_AFTER_COUNT = 600
 
   belongs_to :family
-  # Paycheck Flow Planner (M2): explicit income-stream owner label (the flow
+  # Paycheck Flow Planner: explicit income-stream attribution label (the flow
   # page "label income to member"). NULL = fall back to the landing
-  # account's owner (PR#1 decision).
+  # account's holder (the attribution decision).
   belongs_to :plan_owner, optional: true, class_name: "User", foreign_key: :plan_owner_user_id
   belongs_to :account, optional: true
   belongs_to :destination_account, optional: true, class_name: "Account"
@@ -24,12 +24,12 @@ class RecurringTransaction < ApplicationRecord
   has_many :recurring_occurrences, dependent: :destroy
   has_many :recurring_match_rejections, dependent: :destroy
   has_many :recurring_price_changes, dependent: :destroy
-  # Paycheck Flow Planner (M2): flow edges this income series funds.
+  # Paycheck Flow Planner: flow edges this income series funds.
   has_many :income_account_allocations,
            class_name: "IncomeAccountAllocation",
            foreign_key: :income_series_id,
            dependent: :destroy
-  # Paycheck Flow Planner (M2 PR#2b): allocations representing this
+  # Paycheck Flow Planner: allocations representing this
   # detected bill/debt. Destroying the series detaches the allocations
   # (nullify) rather than deleting the owner's planning data. The before_destroy
   # hook is registered before this association so it persists the explicit
@@ -68,7 +68,7 @@ class RecurringTransaction < ApplicationRecord
   validates :end_after_count,
             numericality: { only_integer: true, greater_than: 0, less_than_or_equal_to: MAX_END_AFTER_COUNT },
             allow_nil: true
-  # Paycheck Flow Planner (M2 PR#2b): hard limit on how many bank accounts
+  # Paycheck Flow Planner: hard limit on how many bank accounts
   # this income series may be linked to (the income config dialog). NULL =
   # unlimited; at plan time the planner raises a warning, never an error.
   validates :plan_max_account_links,
@@ -226,9 +226,9 @@ class RecurringTransaction < ApplicationRecord
     errors.add(:plan_owner, :wrong_family) unless plan_owner.family_id == family_id
   end
 
-  # Paycheck Flow Planner (M2): the partner this income stream is attributed
-  # to — the explicit label when set, otherwise the landing account's owner
-  # (PR#1 attribution rule). nil = unattributed.
+  # Paycheck Flow Planner: the partner this income stream is attributed
+  # to — the explicit label when set, otherwise the landing account's holder
+  # (the attribution rule). nil = unattributed.
   def plan_owner_id
     plan_owner_user_id.presence || account&.owner_id
   end
@@ -511,9 +511,9 @@ class RecurringTransaction < ApplicationRecord
   scope :accessible_by, ->(user) {
     accessible_account_ids = Account.accessible_by(user).select(:id)
     # A recurring row is accessible when:
-    #   * its account_id is in the user's accessible set or null (legacy rows
+    # * its account_id is in the user's accessible set or null (legacy rows
     #     with no account scoping survive), AND
-    #   * its destination_account_id is also accessible OR null (so a recurring
+    # * its destination_account_id is also accessible OR null (so a recurring
     #     transfer never leaks into the list of a user without access to BOTH
     #     endpoints).
     where(account_id: accessible_account_ids)
@@ -749,7 +749,7 @@ class RecurringTransaction < ApplicationRecord
       # Only entries whose amount is within the variance band of the target
       # amount count as "the same fluctuating payment" — otherwise unrelated
       # charges that happen to share a merchant/day get averaged together
-      # (see issue #2936 follow-up).
+      # .
       .where("entries.amount BETWEEN ? AND ?", amount_low, amount_high)
       .order(date: :desc)
 

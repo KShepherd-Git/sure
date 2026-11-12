@@ -1,4 +1,4 @@
-// Round 33 (spec 1): the Per-Paycheck unit scaling — PURE helpers the
+// the Per-Paycheck unit scaling — PURE helpers the
 // plan-flow Sankey controller composes. The /plan/flow/graph payload is
 // untouched (the per-income occurrence counts are derivable client-side
 // from graph.incomes[].occurrences), so the graph sha pin stays green.
@@ -44,13 +44,13 @@ export function bankInflowInfo(banks, counts) {
 
 // The scale closures for the active unit/view. When the income unit is NOT
 // active (family unit, or the monthly view) every closure is the EXACT
-// legacy house scale — the pre-Round-33 behavior, byte for byte.
+// legacy house scale — the original behavior, byte for byte.
 export function paycheckUnitScales(graph, view, unit) {
   const counts = incomeOccurrenceCounts(graph);
   const info = bankInflowInfo(graph.banks, counts);
   const familyCount = (graph.paycheck_dates && graph.paycheck_dates.length) || 1;
   const active = view === "paycheck" && unit === "income";
-  // The legacy house scale (the pre-R33 #scale): monthly -> per-paycheck
+  // The legacy house scale (the legacy #scale): monthly -> per-paycheck
   // over the month's total paycheck count; identity in the monthly view.
   const legacy = (value) => (view === "paycheck" ? Number(value || 0) / familyCount : Number(value || 0));
   // The source bank's per-paycheck inflow ratio (perPaycheck / total) —

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Paycheck Flow Planner (M2): the family's resolved money map for one month —
+# Paycheck Flow Planner: the family's resolved money map for one month —
 # which income series funds which account at which mode, the per-paycheck
 # amounts, per-partner leftover attribution, the fun-money delta with its
 # suggested percent shift, and the shortfall flags. Read-only; powers the flow
@@ -31,10 +31,6 @@ class Api::V1::PaycheckPlansController < Api::V1::BaseController
   end
 
   private
-
-    def ensure_read_scope
-      authorize_scope!(:read)
-    end
 
     # 404 on a malformed id, 403 when the caller is not a member of this family.
     # Note: ensure_current_family_access is for sub-resources carrying a

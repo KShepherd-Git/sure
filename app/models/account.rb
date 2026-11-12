@@ -16,7 +16,7 @@ class Account < ApplicationRecord
   belongs_to :family
   belongs_to :owner, class_name: "User", optional: true
   belongs_to :import, optional: true
-  # Paycheck Flow Planner (M2): the family member the account is labeled to
+  # Paycheck Flow Planner: the family member the account is labeled to
   # when plan_ownership is :user.
   belongs_to :plan_owner, class_name: "User", optional: true, foreign_key: :plan_owner_user_id
 
@@ -30,9 +30,9 @@ class Account < ApplicationRecord
   has_many :holdings, dependent: :destroy
   has_many :balances, dependent: :destroy
   has_many :recurring_transactions, dependent: :destroy
-  # Paycheck Flow Planner (M2): income edges landing on this account.
+  # Paycheck Flow Planner: income edges landing on this account.
   has_many :income_account_allocations, foreign_key: :account_id, dependent: :destroy
-  # Paycheck Flow Planner (M2 PR#2b): allocations pulled out of this bank.
+  # Paycheck Flow Planner: allocations pulled out of this bank.
   has_many :plan_allocations, foreign_key: :account_id, dependent: :destroy
   has_many :goal_accounts, dependent: :destroy
   has_many :goals, through: :goal_accounts
@@ -87,14 +87,14 @@ class Account < ApplicationRecord
 
   enum :classification, { asset: "asset", liability: "liability" }, validate: { allow_nil: true }
 
-  # Paycheck Flow Planner (M2): center-column labeling. :shared is Home/Shared;
-  # :user belongs to the family member in plan_owner_user_id.
+  # Paycheck Flow Planner: center-column labeling. :shared is Home/Shared;
+  # user belongs to the family member in plan_owner_user_id.
   enum :plan_ownership, { shared: "shared", user: "user" }
 
-  # Paycheck Flow Planner (M2 PR#2b): the "bank as allocation" role. A
+  # Paycheck Flow Planner: the "bank as allocation" role. A
   # nullable plain string (deliberately NOT an enum) so adding a new role is
-  # a data change, not a schema migration. nil = ordinary bank. Round 20:
-  # the bank config dialog offers exactly the owner's five account kinds
+  # a data change, not a schema migration. nil = ordinary bank.:
+  # the bank config dialog offers exactly the five account kinds
   # (Savings / Checking / Credit Card / Loan / Investment); the two debt
   # roles are the ones the planner's role autofill renders as a
   # "Pay off <name>" debt row (everything else is a savings-style
@@ -108,24 +108,24 @@ class Account < ApplicationRecord
 
   validates :plan_role, inclusion: { in: PLAN_ROLES }, allow_nil: true
 
-  # Round 16: explicit per-account logo slug (the bank config dialog's
+  # explicit per-account logo slug (the bank config dialog's
   # searchable picker). nil = no explicit choice (the diagram falls back to
   # the account-name keyword match or no logo). Validated against the
   # VENDORED set only (app/assets/images/bank-logos/): no runtime fetching.
   validate :validate_bank_logo_slug
 
-  # Paycheck Flow Planner (M2 PR#2b): this account auto-transfers to another
+  # Paycheck Flow Planner: this account auto-transfers to another
   # family account. Set = auto-transfer enabled (data only this round).
   belongs_to :auto_transfer_to, class_name: "Account", optional: true,
                                 foreign_key: :auto_transfer_to_account_id
   validate :auto_transfer_target_consistent,
            if: -> { auto_transfer_to_account_id.present? && family_id.present? }
 
-  # Round 11 issue 8: sub-accounts (a bucket under a plan bank). Depth 1
+  # sub-accounts (a bucket under a plan bank). Depth 1
   # only -- the sankey renders one child column and
   # sub_account_consistent rejects chains. auto_transfer_target_ids is the
   # ordered fan-out target list (array order = the diagram's band order);
-  # the round-11 strict rule: every target must be one of THIS account's
+  # the strict rule: every target must be one of THIS account's
   # sub-accounts.
   belongs_to :parent_account, class_name: "Account", optional: true,
                               foreign_key: :parent_account_id, inverse_of: :sub_accounts
@@ -810,13 +810,13 @@ class Account < ApplicationRecord
     balance.to_d - goal_earmarked_total
   end
 
-  # Round 20: the plan-flow bank config dialog's avatar URL. A custom
+  # the plan-flow bank config dialog's avatar URL. A custom
   # uploaded logo (the ActiveStorage attachment) wins; otherwise the
   # bank_logo_slug resolution (a VENDORED app asset, data-driven — the
   # built-in set is swapped out from under this path by later rounds);
   # nil (a neutral circle) when nothing resolves. Deliberately excludes
   # the cloud brandfetch / provider logo URLs: the plan flow is 100% local.
-  # Round 22 (N6): the slug branch is KEYWORD resolution —
+  # the slug branch is KEYWORD resolution —
   # BankLogoSlugs.resolve (explicit slug first, then longest-keyword-first
   # name match: the SAME order and usable set the plan-flow planner uses
   # for the sankey logos) — so the allocation dialog bank rows, the sankey
@@ -1118,7 +1118,7 @@ class Account < ApplicationRecord
         # `id` breaks ties on `created_at`. Two users of the same role can share
         # a timestamp (they are created in one transaction, or the column is
         # backfilled), and ordering on `created_at` alone leaves the winner to
-        # the query plan — so the same family can get a different default owner
+        # the query plan — so the same family can get a different default holder
         # from one call to the next.
         self.owner =
           family&.users&.where(role: "admin")&.order(:created_at, :id)&.first ||
@@ -1134,7 +1134,7 @@ class Account < ApplicationRecord
       errors.add(:owner, :invalid, message: "must belong to the same family as the account")
     end
 
-    # Plan ownership must agree with the owner it names: a :user label needs
+    # Plan ownership must agree with the labeled user: a :user label needs
     # the member set, a :shared label must not carry one (mirrored by
     # chk_accounts_plan_owner_consistency). Note `shared?` is NOT the enum
     # predicate here — it is the pre-existing "has account_shares" method — so
@@ -1155,7 +1155,7 @@ class Account < ApplicationRecord
       errors.add(:plan_owner, :invalid, message: "must belong to the same family as the account") if plan_owner.family_id != family_id
     end
 
-    # M2 PR#2b: the auto-transfer target must be a real account of the same
+    # the auto-transfer target must be a real account of the same
     # family and not the account itself (a bank cannot auto-transfer to
     # itself).
     def auto_transfer_target_consistent
@@ -1168,7 +1168,7 @@ class Account < ApplicationRecord
         auto_transfer_to.present? && auto_transfer_to.family_id != family_id
     end
 
-    # Round 11 issue 8: a sub-account link must point at a real account of
+    # a sub-account link must point at a real account of
     # the same family, never at the account itself, and DEPTH 1 only — the
     # parent's own parent must be nil (no chains; the sankey renders one
     # child column).
@@ -1196,7 +1196,7 @@ class Account < ApplicationRecord
       end
     end
 
-    # Round 11 issue 8 (strict rule): every auto-transfer fan-out target must
+    # (strict rule): every auto-transfer fan-out target must
     # be a real account of the same family, not the account itself, and a
     # sub-account of THIS account — the source only fans out to its own
     # sub-accounts.
@@ -1217,19 +1217,19 @@ class Account < ApplicationRecord
       end
     end
 
-    # Round 26 R2 (owner item 3, MOVE): the fan-out array doubles as the
-    # source -> dressed pillar band list (Round 25 "Make Allocated Sub-
+    # the fan-out array doubles as the
+    # source -> dressed pillar band list ( "Make Allocated Sub-
     # Account": plan_allocations.target_account_id). Dressed targets carry
     # no parent link, so the strict rule above would 422 EVERY save of a
     # source that funds one — adding a sub-account to such a source saves
     # the source via sync_parent_fan_out and re-validates its whole
     # fan-out. Accept a target that THIS account funds as a dressed
-    # allocation; everything else keeps the round-11 strict rule.
+    # allocation; everything else keeps the strict rule.
     def dressed_target_funded_by_self?(target_id)
       PlanAllocation.exists?(family_id: family_id, account_id: id, target_account_id: target_id)
     end
 
-    # Round 16: the logo slug must name a vendored file (app/assets/images/
+    # the logo slug must name a vendored file (app/assets/images/
     # bank-logos/<slug>.svg). Unknown slugs 422 inline through the house
     # update contract; nil is always allowed (no explicit logo).
     def validate_bank_logo_slug

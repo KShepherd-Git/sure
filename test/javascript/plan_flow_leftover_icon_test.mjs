@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
-// Round 34b (T1/T2): the leftover-icon slot geometry + the 4-variant glyph
+// the leftover-icon slot geometry + the 4-variant glyph
 // set are STATIC + DOM-free on the sankey controller, so the test runs the
 // shipped code (not a copy): the controller source is read, its importmap
 // bare specifiers are rewritten to stubs (stimulus/d3/d3-sankey) and file
@@ -175,7 +175,7 @@ describe("leftover icon variant set (round 34b T2)", () => {
   })
 })
 
-// Round 34c (owner): the default variant is now "wave", and the FALLBACK
+// the default variant is now "wave", and the FALLBACK
 // slot clearance is a per-node measured value (the name<->dollar-amount gap
 // of the single-line label run) instead of the fixed 4px default.
 describe("leftoverIconPlacement (round 34c)", () => {
@@ -228,7 +228,7 @@ describe("leftoverIconPlacement (round 34c)", () => {
   })
 
   it("anchor=end: a MEASURED clearance bypasses the centered slot — icon hugs the text end at exactly that gap (round-34c owner: 'same gap as name->amount')", () => {
-    // Live bank-label geometry: wide text->band gap (30px). Round 34b would
+    // Live bank-label geometry: wide text->band gap (30px). would
     // have centered the icon (x = 908); the measured clearance wins instead.
     const slot = leftoverIconPlacement({
       anchor: "end",
@@ -259,7 +259,7 @@ describe("leftoverIconPlacement (round 34c)", () => {
 
   it("a measured clearance never overflows the gap: icon that would touch the band falls back to the round-34 slot", () => {
     // gap 30px but the clearance (20px) + icon (14px) exceed it -> the
-    // centered slot (round-34b behavior) applies instead.
+    // centered slot ( behavior) applies instead.
     const slot = leftoverIconPlacement({
       anchor: "end",
       labelBox: { x: 700, width: 200 }, // textRight = 900

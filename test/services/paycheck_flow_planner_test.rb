@@ -26,10 +26,10 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
       end }
   end
 
-  # required_percent (Round 30): the stored 2-dp percent of the bank's
+  # required_percent: the stored 2-dp percent of the bank's
   # required amount a required edge carries (nil = the equal split). The
   # LEGACY plan path ignores it (the graph path is the only consumer —
-  # P6 pins the byte-identity).
+  # a dedicated test pins the byte-identity).
   def edge(income_id:, account_id:, mode:, value_cents: nil, value_percent: nil, required_percent: nil)
     { income_id: income_id, account_id: account_id, mode: mode,
       value_cents: value_cents, value_percent: value_percent,
@@ -289,7 +289,7 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
     assert_equal [], plan[:shortfalls]
   end
 
-  # Round 11 issue 8 (regression guard): the PR#1 plan() path is
+  # (regression guard): the PR#1 plan path is
   # BYTE-IDENTICAL for a family with sub-accounts + fan-out configured —
   # inputs_for carries no sub-account keys and the PR#1 resolver ignores
   # them (they exist for plan_graph only).
@@ -349,14 +349,14 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
     assert_equal "USD", entry.metadata["target_currency"]
   end
 
-  # R6 (Round 27 T4 fix): AR-seam regression for deterministic graph
-  # serialization (the R5 SHA drift). The app's own upsert destroys and
+  # ( fix): AR-seam regression for deterministic graph
+  # serialization (the SHA drift). The app's own upsert destroys and
   # recreates an income_account_allocations row (fresh id + created_at, a
   # new physical table position), and the planner's unordered edge read let
   # that reposition the bank in the serialized banks array. The edge read
   # is now ordered by the natural key (income series, account) and the
   # banks union is sorted by account id, so the serialized graph must be
-  # byte-identical across the upsert. (R25 h's proposed
+  # byte-identical across the upsert. ( h's proposed
   # .order(:created_at, :id) cannot satisfy this property — a recreate
   # gets the newest created_at and moves to the end — so the natural key
   # supersedes it.)
@@ -372,7 +372,7 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
       accountable_type: "Depository", accountable: Depository.new)
 
     # Two income series sharing BOTH due_on dates — also exercises the
-    # :id tie-break on the occurrences read.
+    # id tie-break on the occurrences read.
     series_a = family.recurring_transactions.create!(
       name: "R6 Payroll A", account: bank_a, amount: 2700, currency: "USD",
       expected_day_of_month: 6, last_occurrence_date: Date.new(2026, 9, 6),
@@ -396,7 +396,7 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
     end
 
     # Five edges — one leftover per income (no multi-leftover ambiguity).
-    # The middle edge is the upsert target (mirrors the R5 po5 drift).
+    # The middle edge is the upsert target (mirrors the po5 drift).
     upserted = family.income_account_allocations.create!(
       income_series: series_a, account: bank_b, mode: "percent", value: 0.25)
     family.income_account_allocations.create!(
@@ -428,10 +428,10 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
       "the banks array must be in stable account-id order"
   end
 
-  # Round 30 (P6): the LEGACY plan path (plan, not plan_graph) never reads
+  # the LEGACY plan path (plan, not plan_graph) never reads
   # the required percents — resolve_edges receives an empty split map, so a
   # required edge carrying a stored percent plans EXACTLY as today. This is
-  # the stop-rule's legacy-side half (the graph-side half is P4 in the
+  # the stop-rule's legacy-side half (the graph-side half is pinned in the
   # graph test file).
   test "the legacy plan ignores required percents (P6)" do
     a = income(id: "A", owner_id: P1, amounts: [ 50_000, 50_000 ])
@@ -464,34 +464,34 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
 end
 
 # ---------------------------------------------------------------------------
-# R35 (Flow Scenarios): the planner seam. Scenario mode is "a preview whose
-# base set is the snapshot instead of the live tables" (design §2.1). The
-# seam is three edits, each with an S0 invariant:
+# (Flow Scenarios): the planner seam. Scenario mode is "a preview whose
+# base set is the snapshot instead of the live tables" (the design). The
+# seam is three edits, each with an invariant:
 #   * apply_draft :linked_bank_counts — absent key = byte-identical no-op,
 #     present key = wholesale replace (build_graph_report's per-income
 #     limit warnings must follow the SCENARIO's edge set);
 #   * overlay_paycheck_configs configs: kwarg — nil/empty = the SAME incomes
-#     array (the R31B S0 gate, now also for the explicit empty array);
+# array (the gate, now also for the explicit empty array);
 #   * scenario_incomes / scenario_draft — the snapshot policy over the live
-#     base (design §1.4): disabled drops the series, zeroed zeroes amounts,
+# base (the design): disabled drops the series, zeroed zeroes amounts,
 #     gross replaces them, absent policy rows pass through (override map,
 #     not a whitelist), the snapshot paycheck-config copy re-derives dates
 #     from the copy (PaycheckDates on unsaved instances).
 class PaycheckFlowPlannerScenarioTest < ActiveSupport::TestCase
   def setup
     @family = families(:dylan_family)
-    @kurt = users(:family_admin)
-    @sammi = users(:family_member)
+    @primary = users(:family_admin)
+    @secondary = users(:family_member)
     @bank_a = accounts(:depository)
     travel_to Date.new(2026, 11, 15)
 
-    # Kurt: $400 x 2 (Nov 6 / Nov 20) = 80_000 cents/month.
-    # Sammi: $900 x 2 = 180_000 cents/month.
+    # Primary: $400 x 2 (Nov 6 / Nov 20) = 80_000 cents/month.
+    # Secondary: $900 x 2 = 180_000 cents/month.
     # Rent: $1000/month demand on bank A — covered by both incomes, SHORT
-    # when Sammi's paycheck disappears (the wife-quits shortfall).
-    @kurt_series = make_series(@kurt, "Kurt Paycheck", 400)
-    @sammi_series = make_series(@sammi, "Sammi Paycheck", 900)
-    [ @kurt_series, @sammi_series ].each do |series|
+    # when Secondary's paycheck disappears (the second-income-quits shortfall).
+    @primary_series = make_series(@primary, "Primary Paycheck", 400)
+    @secondary_series = make_series(@secondary, "Secondary Paycheck", 900)
+    [ @primary_series, @secondary_series ].each do |series|
       series.recurring_occurrences.destroy_all
       [ Date.new(2026, 11, 6), Date.new(2026, 11, 20) ].each do |due_on|
         @family.recurring_occurrences.create!(
@@ -527,18 +527,18 @@ class PaycheckFlowPlannerScenarioTest < ActiveSupport::TestCase
     Date.new(2026, 11, 15)
   end
 
-  def snapshot_with(sammi_policy: { "enabled" => true })
+  def snapshot_with(secondary_policy: { "enabled" => true })
     base = PlanScenarioSnapshot.reuse_current(@family)
     incomes = base["incomes"].map do |row|
-      row["series_id"] == @sammi_series.id ?
-        row.merge("enabled" => sammi_policy["enabled"],
-                  "zeroed" => sammi_policy["zeroed"] || false,
-                  "gross_per_paycheck_cents" => sammi_policy["gross_per_paycheck_cents"]) : row
+      row["series_id"] == @secondary_series.id ?
+        row.merge("enabled" => secondary_policy["enabled"],
+                  "zeroed" => secondary_policy["zeroed"] || false,
+                  "gross_per_paycheck_cents" => secondary_policy["gross_per_paycheck_cents"]) : row
     end
     base.merge("incomes" => incomes)
   end
 
-  # --- overlay_paycheck_configs configs: kwarg (S0 + unsaved parity) ---
+  # --- overlay_paycheck_configs configs: kwarg ( + unsaved parity) ---
 
   test "configs: [] returns the SAME incomes array (explicit-empty S0 no-op)" do
     assert_empty @family.family_paycheck_configs
@@ -551,7 +551,7 @@ class PaycheckFlowPlannerScenarioTest < ActiveSupport::TestCase
 
   test "an unsaved config instance overlays identically to its saved twin" do
     saved = @family.family_paycheck_configs.create!(
-      user: @kurt, recurring_transaction: @kurt_series,
+      user: @primary, recurring_transaction: @primary_series,
       gross_per_paycheck_cents: 60_000, frequency: "biweekly",
       anchor_date: Date.new(2026, 11, 2)
     )
@@ -576,17 +576,17 @@ class PaycheckFlowPlannerScenarioTest < ActiveSupport::TestCase
   # --- apply_draft :linked_bank_counts ---
 
   test "apply_draft without :linked_bank_counts is a byte-identical no-op" do
-    @kurt_series.update!(plan_max_account_links: 1)
-    bank_b = Account.create!(name: "R35 Bank B", family: @family, owner: @kurt,
+    @primary_series.update!(plan_max_account_links: 1)
+    bank_b = Account.create!(name: "R35 Bank B", family: @family, owner: @primary,
       currency: "USD", balance: 0, status: "active",
       accountable_type: "Depository", accountable: Depository.new)
-    # A second live edge on Kurt's series -> live count 2 > limit 1.
+    # A second live edge on Primary's series -> live count 2 > limit 1.
     @family.income_account_allocations.create!(
-      income_series: @kurt_series, account: bank_b, mode: "specific", value: 1.0
+      income_series: @primary_series, account: bank_b, mode: "specific", value: 1.0
     )
 
     live = PaycheckFlowPlanner.plan_graph(family: @family, month: month)
-    assert live[:limit_warnings].any? { |w| w[:income_id] == @kurt_series.id },
+    assert live[:limit_warnings].any? { |w| w[:income_id] == @primary_series.id },
       "the live graph must carry the limit warning for the fixture"
 
     inputs = PaycheckFlowPlanner.graph_inputs_for(family: @family, month: month)
@@ -601,16 +601,16 @@ class PaycheckFlowPlannerScenarioTest < ActiveSupport::TestCase
   end
 
   test "apply_draft with :linked_bank_counts replaces it wholesale" do
-    @kurt_series.update!(plan_max_account_links: 1)
-    bank_b = Account.create!(name: "R35 Bank B", family: @family, owner: @kurt,
+    @primary_series.update!(plan_max_account_links: 1)
+    bank_b = Account.create!(name: "R35 Bank B", family: @family, owner: @primary,
       currency: "USD", balance: 0, status: "active",
       accountable_type: "Depository", accountable: Depository.new)
     @family.income_account_allocations.create!(
-      income_series: @kurt_series, account: bank_b, mode: "specific", value: 1.0
+      income_series: @primary_series, account: bank_b, mode: "specific", value: 1.0
     )
 
     live = PaycheckFlowPlanner.plan_graph(family: @family, month: month)
-    assert live[:limit_warnings].any? { |w| w[:income_id] == @kurt_series.id }
+    assert live[:limit_warnings].any? { |w| w[:income_id] == @primary_series.id }
 
     inputs = PaycheckFlowPlanner.graph_inputs_for(family: @family, month: month)
     draft = {
@@ -624,7 +624,7 @@ class PaycheckFlowPlannerScenarioTest < ActiveSupport::TestCase
       "a wholesale-replaced (empty) count must clear the limit warning"
   end
 
-  # --- scenario_incomes policy (design §1.4) ---
+  # --- scenario_incomes policy (the design) ---
 
   test "reuse policy all-enabled: scenario incomes match the live base" do
     snapshot = PlanScenarioSnapshot.reuse_current(@family)
@@ -641,35 +641,35 @@ class PaycheckFlowPlannerScenarioTest < ActiveSupport::TestCase
 
   test "enabled == false drops the series entirely" do
     scenario = PaycheckFlowPlanner.scenario_incomes(
-      family: @family, month: month, snapshot: snapshot_with(sammi_policy: { "enabled" => false })
+      family: @family, month: month, snapshot: snapshot_with(secondary_policy: { "enabled" => false })
     )
-    assert scenario.map { |e| e[:id] }.exclude?(@sammi_series.id),
+    assert scenario.map { |e| e[:id] }.exclude?(@secondary_series.id),
       "a disabled series must be absent from the scenario base"
-    assert_equal [ @kurt_series.id ], scenario.map { |e| e[:id] }
+    assert_equal [ @primary_series.id ], scenario.map { |e| e[:id] }
   end
 
   test "zeroed zeroes the amounts (occurrences remain)" do
     scenario = PaycheckFlowPlanner.scenario_incomes(
-      family: @family, month: month, snapshot: snapshot_with(sammi_policy: { "zeroed" => true })
+      family: @family, month: month, snapshot: snapshot_with(secondary_policy: { "zeroed" => true })
     )
-    sammi = scenario.find { |e| e[:id] == @sammi_series.id }
-    refute_nil sammi
-    assert sammi[:occurrences].all? { |o| o[:amount_cents].zero? }
-    assert_equal 2, sammi[:occurrences].size, "dates stay; only the amounts zero"
+    secondary = scenario.find { |e| e[:id] == @secondary_series.id }
+    refute_nil secondary
+    assert secondary[:occurrences].all? { |o| o[:amount_cents].zero? }
+    assert_equal 2, secondary[:occurrences].size, "dates stay; only the amounts zero"
   end
 
   test "gross_per_paycheck_cents replaces the amounts" do
     scenario = PaycheckFlowPlanner.scenario_incomes(
       family: @family, month: month,
-      snapshot: snapshot_with(sammi_policy: { "gross_per_paycheck_cents" => 70_000 })
+      snapshot: snapshot_with(secondary_policy: { "gross_per_paycheck_cents" => 70_000 })
     )
-    sammi = scenario.find { |e| e[:id] == @sammi_series.id }
-    assert sammi[:occurrences].all? { |o| o[:amount_cents] == BigDecimal(70_000) }
+    secondary = scenario.find { |e| e[:id] == @secondary_series.id }
+    assert secondary[:occurrences].all? { |o| o[:amount_cents] == BigDecimal(70_000) }
   end
 
   test "a series absent from the policy passes through (override map, not a whitelist)" do
     snapshot = PlanScenarioSnapshot.reuse_current(@family)
-    late = make_series(@kurt, "Late Freelance", 250)
+    late = make_series(@primary, "Late Freelance", 250)
     late.recurring_occurrences.destroy_all
     late.recurring_occurrences.create!(
       family: @family, recurring_transaction: late, due_on: Date.new(2026, 11, 9),
@@ -684,30 +684,30 @@ class PaycheckFlowPlannerScenarioTest < ActiveSupport::TestCase
   end
 
   test "the snapshot paycheck-config copy re-derives dates from the copy" do
-    # Live config on Kurt's series (biweekly, 60_000 gross).
+    # Live config on Primary's series (biweekly, 60_000 gross).
     @family.family_paycheck_configs.create!(
-      user: @kurt, recurring_transaction: @kurt_series,
+      user: @primary, recurring_transaction: @primary_series,
       gross_per_paycheck_cents: 60_000, frequency: "biweekly",
       anchor_date: Date.new(2026, 11, 2)
     )
     snapshot = PlanScenarioSnapshot.reuse_current(@family)
     # The scenario edits the copy: semi_monthly, 55_000 gross.
-    row = snapshot["paycheck_configs"].find { |c| c["recurring_transaction_id"] == @kurt_series.id }
+    row = snapshot["paycheck_configs"].find { |c| c["recurring_transaction_id"] == @primary_series.id }
     refute_nil row
     row["gross_per_paycheck_cents"] = 55_000
     row["frequency"] = "semi_monthly"
 
     scenario = PaycheckFlowPlanner.scenario_incomes(family: @family, month: month, snapshot: snapshot)
-    kurt = scenario.find { |e| e[:id] == @kurt_series.id }
+    primary = scenario.find { |e| e[:id] == @primary_series.id }
     assert_equal [ Date.new(2026, 11, 15), Date.new(2026, 11, 30) ],
-                 kurt[:occurrences].map { |o| o[:date] },
+                 primary[:occurrences].map { |o| o[:date] },
       "semi_monthly = 15th + last day (the house Schedule engine)"
-    assert kurt[:occurrences].all? { |o| o[:amount_cents] == BigDecimal(55_000) }
+    assert primary[:occurrences].all? { |o| o[:amount_cents] == BigDecimal(55_000) }
 
     # The LIVE path is untouched by the scenario edit.
     live = PaycheckFlowPlanner.inputs_for(family: @family, month: month)[:incomes]
-    kurt_live = live.find { |e| e[:id] == @kurt_series.id }
-    assert kurt_live[:occurrences].all? { |o| o[:amount_cents] == BigDecimal(60_000) }
+    primary_live = live.find { |e| e[:id] == @primary_series.id }
+    assert primary_live[:occurrences].all? { |o| o[:amount_cents] == BigDecimal(60_000) }
   end
 
   # --- scenario_draft shape ---
@@ -737,34 +737,34 @@ class PaycheckFlowPlannerScenarioTest < ActiveSupport::TestCase
       "Start Fresh = empty plan over the family's CURRENT incomes"
   end
 
-  # --- wife-quits end-to-end (design §1.4 / §6) ---
+  # --- second-income-quits end-to-end (the design) ---
 
-  test "wife-quits: the re-use snapshot with Sammi disabled plans Kurt-only" do
+  test "second-income-quits: the re-use snapshot with Secondary disabled plans Primary-only" do
     live = PaycheckFlowPlanner.plan_graph(family: @family, month: month)
     assert_empty live[:over_plans], "both incomes cover the rent — no live shortfall"
 
     scenario = PaycheckFlowPlanner.plan_graph(
       family: @family, month: month,
       draft: PaycheckFlowPlanner.scenario_draft(
-        family: @family, month: month, snapshot: snapshot_with(sammi_policy: { "enabled" => false })
+        family: @family, month: month, snapshot: snapshot_with(secondary_policy: { "enabled" => false })
       )
     )
 
-    # Sammi's income node is GONE; Kurt's stays on the live occurrence base.
+    # Secondary's income node is GONE; Primary's stays on the live occurrence base.
     income_ids = scenario[:incomes].map { |i| i[:id] }
-    assert income_ids.exclude?(@sammi_series.id)
-    assert_equal [ @kurt_series.id ], income_ids
-    kurt = scenario[:incomes].first
-    assert_equal "400.00", kurt[:occurrences].first[:amount]
-    assert_equal "800.00", kurt[:total_month]
+    assert income_ids.exclude?(@secondary_series.id)
+    assert_equal [ @primary_series.id ], income_ids
+    primary = scenario[:incomes].first
+    assert_equal "400.00", primary[:occurrences].first[:amount]
+    assert_equal "800.00", primary[:total_month]
 
-    # Kurt-only funding is short of the $1000 rent: the over-plan line
+    # Primary-only funding is short of the $1000 rent: the over-plan line
     # surfaces. A specific-mode rent demands its FULL value_cents on every
     # funded date (the demand math prorates only required-mode bills), so
     # the gap is 2 x (100_000 demanded - 40_000 funded) = 120_000 cents.
     assert_equal 1, scenario[:over_plans].size
     over = scenario[:over_plans].first
-    assert_equal @kurt_series.id, over[:income_id]
+    assert_equal @primary_series.id, over[:income_id]
     assert_equal "surplus", over[:target]
     assert_equal "1200.00", over[:shortfall_month]
 

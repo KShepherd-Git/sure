@@ -1,8 +1,8 @@
 require "test_helper"
 
-# Round 31B (Direct Deposit): the FamilyPaycheckConfig model — validations
+# (Direct Deposit): the FamilyPaycheckConfig model — validations
 # (frequency set, no $0.00 paycheck, one config per member per family,
-# family/series guards), the B5 semi_monthly default, and the derived
+# family/series guards), the semi_monthly default, and the derived
 # readouts (derived_monthly_cents, upcoming_dates).
 class FamilyPaycheckConfigTest < ActiveSupport::TestCase
   def setup

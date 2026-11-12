@@ -1,0 +1,53 @@
+<%# the PLAN ISSUES icon — extracted from show.html.erb
+    into a SWAP FRAGMENT so an in-place save response can refresh it
+    without a reload (chrome.issues_icon; #inPlaceSubmit swaps the holder's
+    contents — the icon can APPEAR or DISAPPEAR in place). Rendered inside
+    the stable <span data-flow-chrome="issues-icon"> holder in show.html.erb
+    (page load) and via render_to_string from the in-place JSON responses
+    (the holder is absent there — the client injects the fragment).
+    The red caution icon replaces the old red line
+    groups (same locals, same t() calls, same order: over-plan lines first,
+    then the Un-Allocated discrepancies). Caution "!" line icon (lucide
+    triangle-alert, stroke style), theme-aware red (text-destructive:
+    red-500 light / red-400 dark). Same pure-CSS hover pattern as the
+    yellow scenario icon: popup above, right-aligned, extends left, pt-2
+    bridge. One list item per red line, the exact current line text.
+    Renders NOTHING while no red line exists (the holder stays empty —
+    zero layout footprint).
+    Locale keys: explicit plan_flows.show.* lookups (the keys live in the
+    show scope; this partial's lazy scope would be plan_flows.flow_issues_icon). %>
+<% if @over_plan_lines.any? || @discrepancy_lines&.any? %>
+  <span class="relative group inline-flex h-7 w-7 items-center justify-center"
+        aria-label="<%= t('plan_flows.show.aria_discrepancies') %>">
+    <svg class="h-[18px] w-[18px] text-destructive"
+         viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z"/>
+      <path d="M12 9v4"/>
+      <path d="M12 17h.01"/>
+    </svg>
+    <span class="absolute right-0 bottom-full z-50 hidden group-hover:block">
+      <span class="block pt-2">
+        <span class="block w-max max-w-[400px] rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900 shadow-md theme-dark:border-red-800 theme-dark:bg-red-950 theme-dark:text-red-100">
+          <ul class="space-y-1">
+            <% @over_plan_lines.each do |line| %>
+              <li>
+                <%= t("plan_flows.show.over_plan",
+                      amount: number_to_currency(line[:amount], currency: Current.family.currency),
+                      income: line[:income],
+                      item: line[:item]) %>
+              </li>
+            <% end %>
+            <% @discrepancy_lines&.each do |line| %>
+              <li>
+                <%= t("plan_flows.show.un_allocated",
+                      income: line[:income],
+                      amount: number_to_currency(line[:amount], currency: Current.family.currency)) %>
+              </li>
+            <% end %>
+          </ul>
+        </span>
+      </span>
+    </span>
+  </span>
+<% end %>

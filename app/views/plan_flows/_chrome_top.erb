@@ -1,23 +1,23 @@
 <%# chrome-top swap region (data-flow-chrome="top"): server-rendered so BOTH
-    the page (show.html.erb) and the in-place JSON responses (owner review
-    round 3, R1/R7) can swap it without a full reload. i18n keys are
+    the page (show.html.erb) and the in-place JSON responses (the
+    in-place responses) can swap it without a full reload. i18n keys are
     explicit (plan_flows.show.*) — a partial's lazy scope is its own name.
-    R35c (owner spec): this region shrunk to the C14 amber drift prompt
+    This region shrunk to the amber drift prompt
     only. The groups that used to live here moved to the toggle row in
     show.html.erb as compact hover icons (same @scenario / @over_plan_lines
     / @discrepancy_lines locals, same t() calls):
-      - the R35 amber scenario banner -> the yellow "i" icon's popup (the
+      - the amber scenario banner -> the yellow "i" icon's popup (the
         exact banner text + the Back to live plan link, same exit path);
-      - the over-plan RED lines (spec §6) + the R31A RED Un-Allocated
+      - the over-plan RED lines + the RED Un-Allocated
         discrepancies (@discrepancy_lines, strict >$1.00 tolerance) -> the
         red caution icon's popup (the exact line text, one item per line,
         over-plan lines first as before).
-    The C14 prompt stays here: it is amber (a prompt, not a mismatch) and
+    The prompt stays here: it is amber (a prompt, not a mismatch) and
     the Re-apply button must remain reachable inside the chrome.top swap. %>
 <div data-flow-chrome="top">
-  <%# C14 (Round 31A): the stale-config prompt — amber, NOT red (a stale
+  <%# the stale-config prompt — amber, NOT red (a stale
       config is a prompt, not a mismatch); the Re-apply link re-opens the
-      fun_money dialog so the owner re-saves (the save re-pins the input
+      fun_money dialog so the user re-saves (the save re-pins the input
       snapshot). %>
   <% stale = @graph[:allocations]&.find { |row| row[:kind] == "fun_money" && row[:inputs_stale] } %>
   <% if stale %>

@@ -1,20 +1,20 @@
-<%# Bank node -> config dialog (M2 PR#2b, round 20 progressive rework).
+<%# Bank node -> config dialog (progressive rework).
     Default-open state shows the LEAST: the account identity (top-left
     avatar with logo picker, title, subtitle), "Pull From Incomes" and the
     kebab. Everything else is progressive:
       - Pull From Incomes row: checkbox + income name only; the mode select
         and its numeric value are hidden until the row is checked
-        (round 20a). Each checkbox is preceded by a hidden enabled=""
+        . Each checkbox is preceded by a hidden enabled=""
         sentinel so an UNCHECK submit reaches the server and removes the
         link (the unchecked-checkbox-sends-nothing Rails gotcha that made
         unchecking "not save").
-      - Ownership + role (round 28, R28-4: the round-20f "Details"
+      - Ownership + role (the "Details"
         disclosure is gone — always exposed in a bg-surface-inset
         panel). Role offers exactly Savings / Checking / Credit Card /
-        Loan / Investment (round 20c); a plain account shows a disabled
+        Loan / Investment; a plain account shows a disabled
         "Plain" placeholder so the browser never silently selects a real
         role.
-      - Kebab (round 20b/e): "Make a Sub-Account" popup (select over the
+      - Kebab: "Make a Sub-Account" popup (select over the
         same candidate set as the old inline select; a "Not a sub-account"
         entry clears it) and "Configure Auto-Transfer" popup (the same
         checkbox list as the old inline section). Both popups live in the
@@ -24,7 +24,7 @@
         the HTML form= attribute. Data shapes are unchanged
         (parent_account_id, auto_transfer_target_ids fan-out with the "0"
         sentinel stripped server-side).
-      - Bank logo (round 20d): the old search + list section is gone. The
+      - Bank logo: the old search + list section is gone. The
         top-left avatar shows the custom upload or the built-in pick
         (neutral circle when empty); clicking it opens a popup with
         "Upload Custom" (POST flow_bank_logo) and a scrollable built-in
@@ -38,7 +38,7 @@
     edges: income_series_id -> IncomeAccountAllocation;
     available_bank_logos: slug -> label (BankLogoSlugs.available). %>
 <%
-  # Round 11 issue 8: fan-out candidate set = the bank rows the planner
+  # Fan-out candidate set = the bank rows the planner
   # renders (graph[:banks]) = in-plan accounts + accounts that ARE
   # sub-accounts (parent_account_id set), which the planner includes even
   # without a plan_order (sub_account_links). The auto-transfer popup rows
@@ -53,17 +53,17 @@
   disambiguated_name = lambda do |candidate|
     sub_account_name_counts[candidate.name].to_i > 1 ? "#{candidate.name} (#{candidate.id[0, 4]})" : candidate.name
   end
-  # Round 20b: sub-account popup candidate set = the old inline select's
+  # Sub-account popup candidate set = the old inline select's
   # options (in-plan accounts that are not themselves sub-accounts).
   sub_account_options = [[ t(".sub_account_none"), "" ]] +
     @in_plan_accounts.reject { |other| other.id == account.id || other.parent_account_id.present? }
                        .map { |other| [ disambiguated_name.call(other), other.id ] }
-  # Round 20d: the avatar + logo popup are data-driven off these values.
+  # The avatar + logo popup are data-driven off these values.
   avatar_url = account.plan_flow_avatar_url
   logo_custom_url = account.logo.attached? ? Rails.application.routes.url_helpers.rails_blob_path(account.logo, only_path: true) : ""
   logo_list = (available_bank_logos || {}).sort_by { |_slug, label| label.to_s.downcase }.map { |slug, label| { slug: slug, label: label, url: asset_path("bank-logos/#{slug}.svg") } }
   role_options = %w[savings_bucket checking credit_card_payoff loan_payoff investment].map { |role| [ t(".role_#{role}"), role ] }
-  # Round 25 (Item 2): the account's target allocation ("Make Allocated
+  # The account's target allocation ("Make Allocated
   # Sub-Account"), if any — the kebab swaps the forward action for the
   # REVERSE (the sibling destroy form below) when one exists. Deterministic
   # first row when 2+ exist (same order as the planner's rows).
@@ -73,10 +73,10 @@
   # parent pre-checked if it has one, else the first bank row (nil -> the
   # partial's "No bank (unassigned)" row). The user can change it.
   allocated_source_default = account.parent_account_id.presence || @in_plan_accounts.first&.id
-  # Round 26 R2 (owner item 3): the "Parent Account" labeled row — the MAIN
+  # The "Parent Account" labeled row — the MAIN
   # section (not the kebab), rendered only when the account has a parent
   # link. The display name reuses the fan-out set's name-collision
-  # disambiguation (two "SoFi Savings" -> "(6deb)"). The picker's
+  # disambiguation (two "SoFi Savings" -> "(a1b2)"). The picker's
   # candidate set is the family's TOP-LEVEL accounts (parent_account_id
   # NULL), excluding self; the current parent always satisfies both rules
   # (the validate_parent_change 422 contract), so it is always one of the
@@ -98,10 +98,10 @@
         node_id: "bank:#{account.id}",
         controller: "bank-config-dialog",
         bank_config_dialog_logos_value: logo_list.to_json,
-        # Round 27 (items 3+4): the read-only per-income amounts (series.id
+        # The read-only per-income amounts (series.id
         # => { paycheck: "2700.00", occurrences: 2 }) the Pull-From-Incomes
-        # controller's client-side auto-fill / ratio math needs (design
-        # R27-T3 §7). JSON (the Stimulus Object value parses it).
+        # controller's client-side auto-fill / ratio math needs.
+        # JSON (the Stimulus Object value parses it).
         bank_config_dialog_income_amounts_value: (income_amounts || {}).to_json,
         bank_config_dialog_slug_value: account.bank_logo_slug.to_s,
         bank_config_dialog_custom_url_value: logo_custom_url,
@@ -111,7 +111,7 @@
       }) do |dialog| %>
   <% dialog.with_header(custom_header: true) do %>
     <div class="flex items-center gap-3">
-      <%# Round 20d: the account avatar, top-left. Shows the custom upload
+      <%# the account avatar, top-left. Shows the custom upload
           or the built-in pick; neutral circle when empty. Hover reveals
           the pencil; click opens the logo popup (upload + built-ins). %>
       <div class="relative shrink-0" data-bank-config-dialog-target="avatarWrap">
@@ -193,7 +193,7 @@
         <h2 id="<%= dialog.title_id %>" class="font-medium text-primary"><%= t(".title", name: account.name) %></h2>
         <p class="text-sm text-secondary"><%= t(".subtitle") %></p>
       </div>
-      <%# Round 20b/e: the kebab. Sub-account + auto-transfer moved out of
+      <%# e: the kebab. Sub-account + auto-transfer moved out of
           the body into popups; the main form carries the hidden inputs
           they sync into, and the popups' Save buttons submit it via form=. %>
       <div class="relative ml-auto shrink-0" data-bank-config-dialog-target="kebabWrap">
@@ -207,7 +207,7 @@
         </button>
         <div class="hidden absolute right-0 top-full z-30 mt-1 w-56 py-1 rounded-lg bg-container shadow-border-lg"
              data-bank-config-dialog-target="kebabMenu">
-          <%# Round 26 R2 (owner items 3 + 5): the CONTEXT-AWARE kebab
+          <%# the CONTEXT-AWARE kebab
               matrix.
               Slot 1: a parent link is present -> "Make Parent Account"
               (opens the EXISTING sub-account popup; its "Not a
@@ -220,11 +220,11 @@
               account's row reappears per the draw priority — sub row if
               parent-linked, bank row if plan_order, unplaced otherwise);
               else -> "Make Allocated Sub-Account" (the forward popup).
-              Slot 3: "Configure Auto-Transfer" — LAST (owner item 5: not
+              Slot 3: "Configure Auto-Transfer" — LAST (not
               in the middle). A dressed+parent account renders BOTH
               "Make Parent Account" items (slot 1 clears the link, slot 2
               destroys the target) — two adjacent items sharing a label
-              is the owner-accepted reading (no live instance today).
+              is the accepted reading (no live instance today).
               Slot 1 is ABSENT for a dressed account without a parent
               (the spec's dressed state = the reverse + auto-transfer,
               2 items — a dressed account offers no forward
@@ -256,7 +256,7 @@
             <%= t(".menu_configure_auto_transfer") %>
           </button>
         </div>
-        <%# Round 25 (Item 2): the "Make Allocated Sub-Account" popup
+        <%# the "Make Allocated Sub-Account" popup
             (only for a plain account — a dressed one renders the REVERSE
             instead). Unlike the sibling popups (which sync the main form's
             hidden inputs and submit it via form=), this one is a
@@ -279,7 +279,7 @@
                         plan_flow_inplace: "true",
                         bank_config_dialog_target: "allocatedSubPopup"
                       } do %>
-          <%# R35 (Flow Scenarios): scope the write to the active scenario. %>
+          <%# (Flow Scenarios): scope the write to the active scenario. %>
           <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
           <p class="text-sm font-medium text-primary"><%= t(".allocated_sub_title") %></p>
           <p class="text-xs text-secondary"><%= t(".allocated_sub_hint") %></p>
@@ -289,7 +289,7 @@
             <input type="text" name="plan_allocation[name]" value="<%= account.name %>"
                    required class="text-sm border border-primary rounded-lg px-3 py-1.5 bg-container text-primary w-full">
           </div>
-          <%# The same amount control as the allocation dialog (the owner's
+          <%# The same amount control as the allocation dialog (the
               "How much you want to put in there"): mode select + the value
               input it renames. kind is fixed to savings — the "Allocation
               Role" of a dressed account (the planner's money-destination
@@ -337,7 +337,7 @@
           </div>
         <% end %>
         <% end %>
-        <%# Sub-account popup (round 20b): same candidate set + "Not a
+        <%# Sub-account popup: same candidate set + "Not a
             sub-account" clear as the removed inline select; live-syncs
             account[parent_account_id] in the form. %>
         <div class="hidden absolute right-0 top-full z-40 mt-1 w-72 space-y-2 rounded-lg bg-container p-3 shadow-border-lg"
@@ -363,7 +363,7 @@
             </button>
           </div>
         </div>
-        <%# Auto-transfer popup (round 20e): the same checkbox list the
+        <%# Auto-transfer popup: the same checkbox list the
             old inline section had (disabled unless a sub-account of this
             account); live-rebuilds the form's hidden target-id inputs
             (the "0" sentinel stays, so an all-unchecked save clears). %>
@@ -407,10 +407,10 @@
     </div>
   <% end %>
   <% dialog.with_body do %>
-    <%# In-place validation errors (owner round 3, R1/R7): the 422 response
+    <%# In-place validation errors: the 422 response
         renders them here — no full-reload flash for in-place submits. %>
     <div data-in-place-errors class="hidden space-y-1"></div>
-    <%# In-place submit (owner round 3, R1/R7): data-turbo off + the
+    <%# In-place submit: data-turbo off + the
         in-place submit handler — the diagram tweens to the new graph
         instead of a full reload destroying it. The id backs the popup
         Save buttons' form= attribute (the popups live in the header,
@@ -419,7 +419,7 @@
                   class: "space-y-5",
                   html: { id: "bank_config_form_#{account.id}" },
                   data: { turbo: "false", plan_flow_inplace: "true" } do |form| %>
-      <%# R35 (Flow Scenarios): scope the write to the active scenario. %>
+      <%# (Flow Scenarios): scope the write to the active scenario. %>
       <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
       <%# Hidden state the header popups sync (the popups are outside the
           form): the logo slug (the logo popup writes it), the sub-account
@@ -428,14 +428,14 @@
           the array (the server strips it); the checked target ids are the
           data-marked hidden inputs the auto-transfer popup rebuilds in
           row order. %>
-      <%# Round 27 (item 7): the active Per Paycheck / Per Month view.
+      <%# the active Per Paycheck / Per Month view.
           The view toggle is a full-reload link, so this hidden input is
           always fresh when the in-place submit (fetch + FormData) posts
           it — the re-rendered chrome re-renders the dialogs in the same
           view unit. (The controller's flow_view only reads params[:view]
           on the graph/draft paths; the dialog save path uses it too.) %>
       <input type="hidden" name="view" value="<%= view %>">
-      <%# Round 33: the active Per-Paycheck unit (income | family). Posted
+      <%# the active Per-Paycheck unit (income | family). Posted
           with every in-place bank save so the re-rendered dialog readouts
           keep the selected divisor (the controller's paycheck_unit reads
           it the same way flow_view reads params[:view]). %>
@@ -448,14 +448,14 @@
                data-auto-transfer-tid="1">
       <% end %>
 
-      <%# Round 26 R2 (owner item 3): the "Parent Account" labeled row —
+      <%# the "Parent Account" labeled row —
           the MAIN section (not the kebab dropdown), shown only when the
           account has a parent link (sub or dressed+parent). The label
           shows the parent's disambiguated name; the picker (NEW target
           name: mainParentSelect — no collision with the header popups')
           offers the family's top-level accounts (parent NULL) excluding
           self and live-syncs the form's hidden account[parent_account_id]
-          — the dialog's Save submits it through the validate_parent_change
+          the dialog's Save submits it through the validate_parent_change
           422 contract (the same path as the sub-account popup). %>
       <% if parent_account %>
         <section class="space-y-1" data-bank-config-dialog-target="parentRow">
@@ -477,26 +477,26 @@
         </section>
       <% end %>
 
-      <%# Round 20a / Round 27 (owner items 3+4): "Pull From Incomes" —
-          the default-visible income section. Round 27 restyle: the native
-          mode select is an R26-style trigger button + floating option
+      <%# "Pull From Incomes" —
+          the default-visible income section. The native
+          mode select is a trigger button + floating option
           panel (reusing the dialog's floatLayer/#floatPopup machinery),
           and the SUBMIT carriers are the per-income hidden inputs
-          (links[<id>][mode|value]) — the R26 trigger pattern: the visible
+          (links[<id>][mode|value]) — the trigger pattern: the visible
           controls are nameless and the dialog controller live-syncs the
           hidden inputs, which is what save_bank_links sees (the param
           contract is byte-identical). With 2+ incomes checked the per-row
           details collapse into the shared control set after the rows (mode
           trigger, then the Ratio trigger, then the amount input — the
-          owner's exact placement). The Ratio is NEVER submitted (design
-          R27-T3 §3 decision (a)): it is re-derived below from the stored
+          exact placement). The Ratio is NEVER submitted. Decision (a):
+          it is re-derived below from the stored
           per-income values + the read-only income amounts so a re-open
-          shows the same numbers. Round 30: the REQUIRED-mode split
+          shows the same numbers. The REQUIRED-mode split
           percents RIDE the existing links[<id>][value] carrier (2 dp
           major units of the bank's required amount; blank = nil = the
           equal split) — the only value save_bank_links sees. The hidden
           enabled="" sentinel before
-          each checkbox stays the round-20 save fix: an unchecked Rails
+          each checkbox stays the save fix: an unchecked Rails
           checkbox sends nothing, so the sentinel is what reaches the
           controller with an empty value and destroys the link; when
           checked, the checkbox's own "1" follows the sentinel and wins. %>
@@ -513,7 +513,7 @@
         # Combined paychecks per month (4 events / 2 incomes = 2): the
         # monthly-total -> per-paycheck conversion factor for the shared
         # input (stored values are per-paycheck; the input renders in the
-        # active view unit — Q7).
+        # active view unit).
         combined_pp_count = n_checked.positive? ? (total_events / n_checked) : 1
         shared = n_checked >= 2
         shared_modes = checked_series.map { |s| edges[s.id].mode }.uniq
@@ -523,7 +523,7 @@
         # equal dollars <= 1c, then dollars proportional to the income
         # amounts <= 1c, else fixed amounts; percent: equal fractions <=
         # 0.01p, then equal dollar contributions <= 1c, else fixed
-        # amounts; required — Round 30 D-REOPEN: all-nil or
+        # amounts; required — the all-nil or
         # each-within-1c-of-100/n -> equal, each-within-1c of the strict
         # income-proportional percents -> rational, otherwise percent
         # (the typed percents — a saved 75/25 re-opens as Percent)).
@@ -600,7 +600,7 @@
         <% if @income_series.empty? %>
           <p class="text-xs text-secondary"><%= t(".no_incomes") %></p>
         <% end %>
-        <%# Round 29 (R29-1): each_with_index — the shared control set
+        <%# ( -1): each_with_index — the shared control set
             moved OUT of the loop (it now renders below all the rows, after
             the loop's end); the index is no longer referenced inside. %>
         <% @income_series.each_with_index do |series, i| %>
@@ -620,8 +620,8 @@
                             format("%.2f", edge.mode == "specific" ? (view == "monthly" ? edge.value * income_counts.fetch(series.id, 1) : edge.value) : edge.value * 100)
                           end %>
           <%# The greyed per-income readout (State B only; the dialog
-              controller fills it). Round 30: server-seeded for the
-              required split — 50/50 / Proportional AND Percent (W2: the $
+              controller fills it). Server-seeded for the
+              required split — 50/50 / Proportional AND Percent (the $
               readouts stay visible next to the % inputs; only Fixed
               Amounts hides them for its $ inputs). The JS re-derives the
               same on connect; hidden otherwise. %>
@@ -639,7 +639,7 @@
             <span class="min-w-0 flex-1 basis-32 truncate text-sm text-primary" title="<%= series.name %>"
                   data-bank-row-name><%= series.name %></span>
             <span class="<%= required_readout ? "ml-auto " : "hidden ml-auto " %>text-xs text-secondary tabular-nums" data-bank-per-income-readout><%= required_readout %></span>
-            <%# Round 28 (R28-3): the Fixed Amounts per-row $ input + the
+            <%# ( -3): the Fixed Amounts per-row $ input + the
                 mixed-state mode tag live inline at the row's right end
                 (moved from the old bottom-center split wrap). The
                 server-rendered value seeds the mixed-state pre-fill; the
@@ -653,7 +653,7 @@
                    data-action="input->bank-config-dialog#recalcPullFrom">
             <span class="hidden text-xs text-secondary rounded bg-surface-inset px-1 shrink-0" data-bank-mode-tag="<%= series.id %>"></span>
             <div class="<%= "hidden " unless edge %>flex items-center gap-2 flex-wrap" data-bank-row-details>
-              <%# The row's submit carriers (R26 trigger pattern): the
+              <%# The row's submit carriers ( trigger pattern): the
                   hidden mode + value inputs are what submits. Mode
                   defaults to "required" for an unchecked row (the
                   sentinel destroys it on save anyway); value mirrors the
@@ -661,11 +661,11 @@
                   0-100 (percent). The JS live-syncs them from the
                   visible controls. %>
               <input type="hidden" name="links[<%= series.id %>][mode]" value="<%= edge ? edge.mode : "required" %>">
-              <%# Round 30: the required-mode [value] carrier transitions
+              <%# the required-mode [value] carrier transitions
                   from always-blank to the stored 2-dp percent of the bank's
                   required amount (blank = nil = the equal split). %>
               <input type="hidden" name="links[<%= series.id %>][value]" value="<%= edge ? (edge.mode == "specific" ? format("%.2f", edge.value) : (edge.mode == "percent" ? format("%.2f", edge.value * 100) : (edge.mode == "required" && edge.value ? format("%.2f", edge.value) : ""))) : "" %>">
-              <%# Mode trigger (the R26 pattern): the visible control is a
+              <%# Mode trigger (the pattern): the visible control is a
                   button; the panel radios sync the hidden mode input. %>
               <button type="button"
                       data-action="click->bank-config-dialog#openPullPanel"
@@ -678,7 +678,7 @@
               <div class="hidden absolute left-0 top-full z-30 mt-1 w-44 rounded-lg bg-container p-1 shadow-border-lg"
                    data-bank-pull-panel data-bank-pull-panel-group="row-<%= series.id %>">
                 <% %w[required specific percent leftover].each do |mode| %>
-                  <%# Round 34 (spec 3): one Leftover per member's paycheck.
+                  <%# one Leftover per member's paycheck.
                       The "Leftover" option is disabled (greyed + tooltip)
                       when this income series already has a leftover edge to a
                       DIFFERENT account (the opened account is the one being
@@ -712,17 +712,17 @@
             </div>
           </div>
         <% end %>
-        <%# Round 29 (R29-1): the shared control set renders BELOW all the
-            income rows — the owner's placement change (R28-3 had it between
-            the rows; below flows better per the owner). Emitted whenever
+        <%# The shared control set renders BELOW all the
+            income rows — the placement change (it used to sit between
+            the rows; below flows better). Emitted whenever
             2+ income series exist; the dialog controller hides it (hidden
             class on data-bank-pull-from-shared) unless 2+ are checked
             (shared state) — the visibility toggle is unchanged. Contents/
-            behavior identical to the R28-3 block: the grey Mode / Split
+            behavior identical to the shared-split block: the grey Mode / Split
             Behavior labels above the two triggers, then the control row —
-            mode trigger (the shared amount source, sign-off Q1-A), the
-            split-icon behavior trigger, the conditional total input (R29-2:
-            w-40, the same width as the trigger boxes), the running total
+            mode trigger (the shared amount source), the
+            split-icon behavior trigger, the conditional total input (w-40,
+            the same width as the trigger boxes), the running total
             right-aligned. Section order: rows -> Split Options -> the
             Ownership + Role panel below the section (unchanged). %>
         <% if @income_series.size >= 2 %>
@@ -741,7 +741,7 @@
                 </span>
                 <%= icon "chevron-down", size: "sm", class: "shrink-0 text-secondary" %>
               </button>
-              <%# Shared-mode panel (R5 fix): the radios sync the hidden
+              <%# Shared-mode panel ( fix): the radios sync the hidden
                   links[<id>][mode] inputs of every checked row via
                   setPullMode (group "shared-mode"). None is checked in the
                   mixed stored-modes state — picking one resolves it. %>
@@ -758,7 +758,7 @@
                 <% end %>
               </div>
               <%# Behavior trigger (the split icon): visible for every
-                  shared mode per sign-off §8.1 — greyed + non-interactive
+                  shared mode per the agreed spec — greyed + non-interactive
                   under Required / Leftover / mixed (the JS toggles the wrap
                   + disabled on connect and on every recalc). %>
               <div class="flex items-center gap-2 flex-wrap <%= "hidden" unless shared_ratio_shown %>" data-bank-pull-ratio-wrap>
@@ -790,7 +790,7 @@
                       <span class="text-xs text-primary"><%= t(".ratio_#{ratio}") %></span>
                     </label>
                   <% end %>
-                  <%# Round 30: the 4th behavior option (Percent of the
+                  <%# the 4th behavior option (Percent of the
                       required amount) — a Required-mode-only control: the
                       wrapper renders hidden + the radio disabled unless the
                       stored shared mode is required (the JS recalc mirrors
@@ -828,7 +828,7 @@
           </div>
         <% end %>
       </section>
-    <%# Round 28 (R28-4): the "Details" disclosure is gone — Ownership +
+    <%# ( -4): the "Details" disclosure is gone — Ownership +
         Role stay always exposed, wrapped in a slightly-darker soft-
         cornered panel (bg-surface-inset rounded-xl p-3) so they read as
         secondary to the Pull From Incomes section. Rendered inside the
@@ -855,7 +855,7 @@
           <label for="account_plan_role_<%= account.id %>" class="block text-xs text-secondary">
             <%= role_label_text %>
           </label>
-          <%# Round 20c: exactly Savings / Checking / Credit Card / Loan /
+          <%# exactly Savings / Checking / Credit Card / Loan /
               Investment. The disabled "Plain" placeholder (plain
               accounts only) keeps a nil role honest across saves. %>
           <select id="account_plan_role_<%= account.id %>" name="account[plan_role]"
@@ -866,15 +866,15 @@
       </div>
     </div>
     <div class="flex items-center justify-between gap-2 pt-1 border-t border-subdued">
-      <%# Remove from plan (owner round 3, R3): the form is the SIBLING
+      <%# Remove from plan: the form is the SIBLING
           below the main form (nested <form> is invalid HTML and the
           parser would swallow it). Assigned allocations persist
           unassigned with the "No Assignment" marker (never deleted).
-          The in-place submit handler confirm()s when allocations
+          The in-place submit handler confirms when allocations
           are attached (data-remove-confirm + data-allocated-count). %>
-      <%# R35 (Flow Scenarios): "Remove from plan" is a LIVE family-structure
-          op (plan_order / plan_role / fan-outs are not snapshotted — design
-          §1.3), so it is not offered inside a scenario. The (untriggerable)
+      <%# (Flow Scenarios): "Remove from plan" is a LIVE family-structure
+          op (plan_order / plan_role / fan-outs are not snapshotted), so
+          it is not offered inside a scenario. The (untriggerable)
           sibling form below stays rendered — the in-place handler re-renders
           this partial on every save, so the gate persists across saves. %>
       <% unless @scenario %>
@@ -907,7 +907,7 @@
                 } do %>
     <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
   <% end %>
-  <%# Round 25 (Item 2): the REVERSE sibling form (only when the account is
+  <%# the REVERSE sibling form (only when the account is
       dressed): the kebab item submits it (type=submit + form=). The
       in-place handler DELETEs the target allocation row; the response
       re-renders this whole dialog with the forward action back (the

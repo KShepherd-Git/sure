@@ -632,11 +632,11 @@ class BillsControllerTest < ActionDispatch::IntegrationTest
   # The filter is on the DATE, not on derived_state, and this test asserts the
   # same. An earlier version checked `derived_state == :overdue` and passed
   # while the bug was plainly visible on screen: derived_state only turns
-  # :overdue after the 3-day grace period, so a bill two days late was still
-  # :due, sailed into the strip, and the date column rendered it "2 days late".
+  # overdue after the 3-day grace period, so a bill two days late was still
+  # due, sailed into the strip, and the date column rendered it "2 days late".
   test "next up holds nothing that is already past due, grace period included" do
     # Two days late is INSIDE the grace period, so derived_state still reads
-    # :due. That is the case that slipped through.
+    # due. That is the case that slipped through.
     just_late = 2.days.ago.to_date
     create_bill(name: "Barely Late Co", amount: 12, manual: true, dedup_scope: "bl",
                 anchor_date: just_late, expected_day_of_month: just_late.day,

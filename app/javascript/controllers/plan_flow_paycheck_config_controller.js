@@ -1,5 +1,5 @@
 import { Controller } from "@hotwired/stimulus";
-// Round 34b (T2): the leftover icon glyph + variant constant live on the
+// the leftover icon glyph + variant constant live on the
 // sankey controller (LEFTOVER_ICON_VARIANT / LEFTOVER_ICON_GLYPHS /
 // LEFTOVER_ICON_SIZE) so BOTH surfaces share ONE config constant — switching
 // the icon is a one-line change there, and this readout follows automatically
@@ -7,8 +7,8 @@ import { Controller } from "@hotwired/stimulus";
 // has no import back here, so there is no cycle).
 import PlanFlowSankeyController from "controllers/plan_flow_sankey_controller";
 
-// Round 31B (Direct Deposit) -> Round 34: the Direct Deposit Review dialog is
-// now a STATIC READ-ONLY paycheck readout (spec 1). The old live config form
+// The Direct Deposit Review dialog is
+// now a STATIC READ-ONLY paycheck readout. The old live config form
 // (gross / frequency / anchor / derived monthly / next-4 pay dates) is GONE.
 // Each member tab is a read-only table of the accounts the member's paycheck
 // funds in the current plan, with PER-PAYCHECK amounts (matching what the
@@ -17,13 +17,13 @@ import PlanFlowSankeyController from "controllers/plan_flow_sankey_controller";
 //
 // The table rows render CLIENT-SIDE from /plan/flow/graph (zero new
 // endpoints — the payload carries incomes[owner_id] + bank inflow rows, and
-// Round 34 added the additive inflow.mode field so the leftover row is
+// added the additive inflow.mode field so the leftover row is
 // derivable). The header / max-DD-connections note / series context are
 // server-rendered (the tab's labeled income series).
 //
 // House Stimulus pattern (plan_flow_controller.js): the controller element IS
 // the dialog (data-controller on the DS::Dialog), so every query is scoped to
-// this.element — the round-28 rule (dialog-scoped queries, NO document-level
+// this.element — the rule (dialog-scoped queries, NO document-level
 // listeners). The dialog hosts no re-parented popups, so there is no
 // outside-click handling either (native <dialog> close: backdrop / esc /
 // header X).
@@ -31,7 +31,7 @@ import PlanFlowSankeyController from "controllers/plan_flow_sankey_controller";
 // Per-paycheck math mirrors the house unit module
 // (utils/plan_flow_sankey_unit — bankInflowInfo): each inflow row's amount /
 // that income's occurrence count, summed over the member's rows for the bank.
-// The payload's inflow amounts are already dollars (the planner runs money()
+// The payload's inflow amounts are already dollars (the planner runs money
 // on raw cents), so the result is dollars.
 export default class extends Controller {
   connect() {
@@ -44,7 +44,8 @@ export default class extends Controller {
       const response = await fetch("/plan/flow/graph", {
         headers: { Accept: "application/json" },
       });
-      if (!response.ok) throw new Error(`plan-flow graph status ${response.status}`);
+      if (!response.ok)
+        throw new Error(`plan-flow graph status ${response.status}`);
       graph = await response.json();
     } catch (error) {
       // Leave the server-rendered placeholder rows; never leave a broken
@@ -80,10 +81,13 @@ export default class extends Controller {
     if (memberIncomeIds.size === 0) return [];
     const rows = [];
     (graph.banks || []).forEach((bank) => {
-      const inflow = (bank.inflow || []).filter((row) => memberIncomeIds.has(row.income_id));
+      const inflow = (bank.inflow || []).filter((row) =>
+        memberIncomeIds.has(row.income_id),
+      );
       if (inflow.length === 0) return;
       const perPaycheck = inflow.reduce(
-        (sum, row) => sum + Number(row.amount || 0) / (counts.get(row.income_id) || 1),
+        (sum, row) =>
+          sum + Number(row.amount || 0) / (counts.get(row.income_id) || 1),
         0,
       );
       const leftover = inflow.some((row) => row.mode === "leftover");
@@ -112,9 +116,9 @@ export default class extends Controller {
     }
   }
 
-  // The leftover icon (spec 4) — the SAME line-vector glyph as the sankey,
+  // The leftover icon — the SAME line-vector glyph as the sankey,
   // inline SVG, 14px, stroke-only with stroke=currentColor so it inherits the
-  // row's text color. Round 34b (T2): the inner markup is read from the
+  // row's text color.: the inner markup is read from the
   // sankey controller's shared LEFTOVER_ICON (variant-driven), so the readout
   // and the diagram always show the same glyph. Positioning: the icon sits in
   // its own flex slot (gap-1.5 = 6px >= the 4px clearance rule) to the LEFT
@@ -122,68 +126,70 @@ export default class extends Controller {
   // placement, no overlap by construction (measured in the DOM per release).
   #leftoverIconSvg() {
     const size = PlanFlowSankeyController.LEFTOVER_ICON_SIZE;
-    return (
-      `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" fill="none" stroke="currentColor" ` +
-      'stroke-width="1.4" stroke-linecap="round" class="dd-leftover-icon" aria-hidden="true">' +
-      PlanFlowSankeyController.LEFTOVER_ICON + '</svg>'
-    );
+    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" class="dd-leftover-icon" aria-hidden="true">${PlanFlowSankeyController.LEFTOVER_ICON}</svg>`;
   }
 
   #render(graph) {
     // One tbody per member tab (the server-rendered data-paycheck-dd-member).
-    this.element.querySelectorAll("[data-paycheck-dd-member]").forEach((tbody) => {
-      const memberId = tbody.dataset.paycheckDdMember;
-      const rows = this.#memberRows(graph, memberId);
-      tbody.innerHTML = "";
-      if (rows.length === 0) {
-        const tr = document.createElement("tr");
-        tr.dataset.paycheckDdEmpty = "";
-        const td = document.createElement("td");
-        td.colSpan = 2;
-        td.className = "text-xs text-secondary py-2";
-        td.textContent = "This paycheck has no direct deposit rows in the current plan.";
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-        return;
-      }
-      rows.forEach(({ bank, perPaycheck, leftover }) => {
-        const tr = document.createElement("tr");
-        tr.className = "border-b border-primary/10 last:border-b-0";
-        // Account cell — the same "Name [last4]" identity as the diagram
-        // (labelName), so the rows match the sankey labels and same-named
-        // accounts disambiguate.
-        const tdAccount = document.createElement("td");
-        tdAccount.className = "py-1.5 pr-3 text-sm text-primary";
-        tdAccount.textContent =
-          bank.last4 != null && String(bank.last4) !== ""
-            ? `${bank.name} [${bank.last4}]`
-            : bank.name;
-        // Amount cell.
-        const tdAmount = document.createElement("td");
-        tdAmount.className = "py-1.5 text-right text-sm font-mono tabular-nums";
-        if (leftover) {
-          // spec 1: "Leftover" in the amount cell, with the computed
-          // per-paycheck value + the leftover icon (spec 4).
-          tdAmount.classList.add("text-secondary");
-          const wrap = document.createElement("span");
-          wrap.className = "dd-leftover-cell inline-flex items-center justify-end gap-1.5";
-          const icon = document.createElement("span");
-          icon.className = "dd-leftover-icon-wrap";
-          icon.innerHTML = this.#leftoverIconSvg();
-          const label = document.createElement("span");
-          label.className = "font-medium";
-          label.textContent = `Leftover - ${this.#money(perPaycheck)}`;
-          wrap.appendChild(icon);
-          wrap.appendChild(label);
-          tdAmount.appendChild(wrap);
-        } else {
-          tdAmount.classList.add("text-primary");
-          tdAmount.textContent = this.#money(perPaycheck);
+    this.element
+      .querySelectorAll("[data-paycheck-dd-member]")
+      .forEach((tbody) => {
+        const memberId = tbody.dataset.paycheckDdMember;
+        const rows = this.#memberRows(graph, memberId);
+        tbody.innerHTML = "";
+        if (rows.length === 0) {
+          const tr = document.createElement("tr");
+          tr.dataset.paycheckDdEmpty = "";
+          const td = document.createElement("td");
+          td.colSpan = 2;
+          td.className = "text-xs text-secondary py-2";
+          td.textContent =
+            tbody.dataset.paycheckDdEmptyText ||
+            "This paycheck has no direct deposit rows in the current plan.";
+          tr.appendChild(td);
+          tbody.appendChild(tr);
+          return;
         }
-        tr.appendChild(tdAccount);
-        tr.appendChild(tdAmount);
-        tbody.appendChild(tr);
+        rows.forEach(({ bank, perPaycheck, leftover }) => {
+          const tr = document.createElement("tr");
+          tr.className = "border-b border-primary/10 last:border-b-0";
+          // Account cell — the same "Name [last4]" identity as the diagram
+          // (labelName), so the rows match the sankey labels and same-named
+          // accounts disambiguate.
+          const tdAccount = document.createElement("td");
+          tdAccount.className = "py-1.5 pr-3 text-sm text-primary";
+          tdAccount.textContent =
+            bank.last4 != null && String(bank.last4) !== ""
+              ? `${bank.name} [${bank.last4}]`
+              : bank.name;
+          // Amount cell.
+          const tdAmount = document.createElement("td");
+          tdAmount.className =
+            "py-1.5 text-right text-sm font-mono tabular-nums";
+          if (leftover) {
+            // "Leftover" in the amount cell, with the computed
+            // per-paycheck value + the leftover icon.
+            tdAmount.classList.add("text-secondary");
+            const wrap = document.createElement("span");
+            wrap.className =
+              "dd-leftover-cell inline-flex items-center justify-end gap-1.5";
+            const icon = document.createElement("span");
+            icon.className = "dd-leftover-icon-wrap";
+            icon.innerHTML = this.#leftoverIconSvg();
+            const label = document.createElement("span");
+            label.className = "font-medium";
+            label.textContent = `Leftover - ${this.#money(perPaycheck)}`;
+            wrap.appendChild(icon);
+            wrap.appendChild(label);
+            tdAmount.appendChild(wrap);
+          } else {
+            tdAmount.classList.add("text-primary");
+            tdAmount.textContent = this.#money(perPaycheck);
+          }
+          tr.appendChild(tdAccount);
+          tr.appendChild(tdAmount);
+          tbody.appendChild(tr);
+        });
       });
-    });
   }
 }

@@ -1,6 +1,6 @@
 require "test_helper"
 
-# Round 35 (Flow Scenarios): the snapshot builders. The shapes MUST match
+# (Flow Scenarios): the snapshot builders. The shapes MUST match
 # the planner's draft seam exactly — `plan_allocation_rows` / `edge_rows`
 # stringified — so a Re-Use Current snapshot deep-equals the live rows and
 # a Start Fresh snapshot is an empty plan over the live income series.
@@ -12,13 +12,13 @@ class PlanScenarioSnapshotTest < ActiveSupport::TestCase
     @account = accounts(:depository)
     travel_to Date.new(2026, 11, 15)
 
-    # Two live income series (Kurt / Sammi payroll pattern) with the house
+    # Two live income series (Primary / Secondary payroll pattern) with the house
     # Nov 6 / Nov 20 occurrence window.
-    @kurt_series = income_series("Kurt Payroll", @admin, 2_700)
-    @sammi_series = income_series("Sammi Payroll", @member, 2_700)
+    @primary_series = income_series("Primary Payroll", @admin, 2_700)
+    @secondary_series = income_series("Secondary Payroll", @member, 2_700)
 
     # Live plan state: one required bill allocation, one fun_money row (the
-    # R31A fields must ride along byte-faithful), one income->bank edge.
+    # the fun-money fields must ride along byte-faithful), one income->bank edge.
     @family.plan_allocations.create!(
       account: @account, name: "Rent", cadence: "monthly",
       kind: "bill", mode: "required", recurring_transaction: rent_series,
@@ -31,15 +31,15 @@ class PlanScenarioSnapshotTest < ActiveSupport::TestCase
       distribution_params: { "percents" => { @member.id => "30.00", @admin.id => "70.00" } }
     )
     @family.income_account_allocations.create!(
-      income_series: @kurt_series, account: @account,
+      income_series: @primary_series, account: @account,
       mode: "specific", value: 1000
     )
     @family.income_account_allocations.create!(
-      income_series: @sammi_series, account: @account, mode: "leftover"
+      income_series: @secondary_series, account: @account, mode: "leftover"
     )
     # One paycheck config copy source (gross / frequency / anchor).
     @family.family_paycheck_configs.create!(
-      user: @member, recurring_transaction: @sammi_series,
+      user: @member, recurring_transaction: @secondary_series,
       gross_per_paycheck_cents: 270_000, frequency: "semi_monthly",
       anchor_date: Date.new(2026, 11, 15)
     )
@@ -89,7 +89,7 @@ class PlanScenarioSnapshotTest < ActiveSupport::TestCase
       assert_equal [], snapshot["paycheck_configs"]
 
       policy = snapshot["incomes"]
-      assert_equal [ @kurt_series.id, @sammi_series.id ].sort,
+      assert_equal [ @primary_series.id, @secondary_series.id ].sort,
                    policy.map { |row| row["series_id"] },
                    "policy lists the live series in :id (uuid) order"
       policy.each do |row|
@@ -132,7 +132,7 @@ class PlanScenarioSnapshotTest < ActiveSupport::TestCase
       configs = snapshot["paycheck_configs"]
       assert_equal 1, configs.size
       assert_equal @member.id, configs.first["user_id"]
-      assert_equal @sammi_series.id, configs.first["recurring_transaction_id"]
+      assert_equal @secondary_series.id, configs.first["recurring_transaction_id"]
       assert_equal 270_000, configs.first["gross_per_paycheck_cents"]
       assert_equal "semi_monthly", configs.first["frequency"]
       assert_equal "2026-11-15", configs.first["anchor_date"]

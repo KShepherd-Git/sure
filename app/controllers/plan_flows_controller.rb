@@ -1,11 +1,11 @@
-# Paycheck Flow Planner (M2 PR#2b): the planning diagram — incomes -> banks
+# Paycheck Flow Planner: the planning diagram — incomes -> banks
 # -> allocations as a Sankey in the house Cashflow style. The diagram itself
 # fetches /plan/flow/graph (PaycheckFlowPlanner.plan_graph); this controller
 # renders the page shell, the dialogs, and the config writes.
 class PlanFlowsController < ApplicationController
   include PreviewGateable
   before_action :require_preview_features!
-  # R35 (Flow Scenarios, design §2.2): resolve ?scenario= for every action
+  # resolve ?scenario= for every action
   # whose state it scopes. Absent / blank / "default" = the Default (live)
   # path — @scenario stays nil and every downstream branch is the live one
   # (the structural no-op invariants). Unknown ids: JSON callers get the
@@ -16,7 +16,7 @@ class PlanFlowsController < ApplicationController
     :update_account, :update_income, :update_paycheck_config
   ]
 
-  # Round 20d: custom bank-logo upload limits. SVG is excluded on purpose
+  # custom bank-logo upload limits. SVG is excluded on purpose
   # (an uploaded SVG can carry scripts; the built-in vendored set ships its
   # own SVGs and is not user input). 1 MiB keeps the blob blobby but sane.
   BANK_LOGO_CONTENT_TYPES = %w[image/png image/jpeg image/webp image/gif].freeze
@@ -25,15 +25,15 @@ class PlanFlowsController < ApplicationController
   def show
     @month = Date.current
     @view = flow_view
-    # Round 33: the Per-Paycheck divisor unit (?paycheck_unit=). "income"
+    # the Per-Paycheck divisor unit (?paycheck_unit=). "income"
     # (DEFAULT): each Per Paycheck figure divides by how many times THAT
     # income lands in the month (the payload's per-income occurrences).
     # "family": the old family composite — divide by the month's total
-    # paycheck count (Kurt 2 + Sammi 2 = 4). Display-only; the settlement
+    # paycheck count (primary 2 + secondary 2 = 4). Display-only; the settlement
     # math (the planner) is untouched.
     @paycheck_unit = paycheck_unit
-    # R35 (Flow Scenarios): the active scenario's snapshot is the draft's
-    # base set (design §2.1 — no form draft on page load, same as today).
+    # (Flow Scenarios): the active scenario's snapshot is the draft's
+    # base set (the design — no form draft on page load, same as today).
     # @scenario nil -> the call is token-for-token today's (Default is
     # byte-identical, the hard rule).
     @graph = @scenario ?
@@ -43,11 +43,11 @@ class PlanFlowsController < ApplicationController
     # Static (non-plan-state) data the Sankey needs: account names and which
     # accounts are on the plan. The plan state itself comes from /plan/flow/graph.
     @account_names = @flow_accounts.map { |account| [ account.id, account.name ] }.to_h
-    # "Known Allocations" list for the allocation dialog (owner round 2,
-    # F3) — see #known_allocations (also feeds the in-place JSON chrome).
+    # "Known Allocations" list for the allocation dialog (
+    # ) — see #known_allocations (also feeds the in-place JSON chrome).
     @known_allocations = known_allocations
-    # Round 31B (Direct Deposit): the per-member paycheck-config tabs (one
-    # per EXISTING member, B3) — member, their labeled income series (or
+    # (Direct Deposit): the per-member paycheck-config tabs (one
+    # per EXISTING member) — member, their labeled income series (or
     # the empty state), the saved config, derived monthly + next-4.
     @paycheck_config_tabs = paycheck_config_tabs
     @breadcrumbs = [
@@ -57,31 +57,31 @@ class PlanFlowsController < ApplicationController
     ]
   end
 
-  # Planning diagram JSON (M2 PR#2b): the whole page state in one payload —
+  # Planning diagram JSON: the whole page state in one payload —
   # the saved state with draft rows merged over it (same draft pattern as
   # the preview action): the selected income's saved edges are replaced by
   # the form's edge rows, and the allocation rows merge per-id over the
   # saved set. No write.
   def graph
     @month = Date.current
-    # R35 (Flow Scenarios, design §2.1): the scenario's snapshot rows are
+    # the scenario's snapshot rows are
     # the draft's base set; the form's unsaved dialog rows win over them
-    # (the merge order is the design's: scenario first, form on top).
+    # .
     draft = graph_draft.presence
     draft = scenario_draft.merge(draft || {}) if @scenario
     @graph = PaycheckFlowPlanner.plan_graph(family: Current.family, month: @month, draft: draft.presence)
     # Additive top-level key ONLY for an active scenario — the Default
-    # payload is byte-identical to the pre-R35 one (no :scenario key).
+    # payload is byte-identical to the legacy one (no :scenario key).
     render json: @scenario ? @graph.merge(scenario: { id: @scenario.id, name: @scenario.name }) : @graph
   end
 
-  # Allocation dialog save (M2 PR#2b): upsert by (family, source bank, name)
-  # — re-saving the same row from the dialog edits it in place instead of
+  # Allocation dialog save: upsert by (family, source bank, name)
+  # re-saving the same row from the dialog edits it in place instead of
   # duplicating. Invalid rows flash the house alert, no 500.
   def create_allocation
     row = plan_allocation_params
     if @scenario
-      # R35 (design §2.2): the dialog row merges into the scenario's
+      # the dialog row merges into the scenario's
       # snapshot (the live path's upsert key: account + name), validated
       # with the real PlanAllocation model — the 422 contract is identical
       # to a live save. No live table is touched.
@@ -111,13 +111,13 @@ class PlanFlowsController < ApplicationController
       false
     end
 
-    # Round 31A (C14): pin the current input snapshot on a freshly saved
+    # pin the current input snapshot on a freshly saved
     # fun_money row (the drift prompt's baseline).
     persist_fun_money_input_snapshot(allocation) if result
 
-    # Round 25 (Item 2): a target row dresses the target account — ship the
+    # a target row dresses the target account — ship the
     # fresh bank dialog for that account so its kebab flips to the REVERSE
-    # action without a reload. Round 26 R2 (in-place staleness): the SOURCE
+    # action without a reload. (in-place staleness): the SOURCE
     # bank's holder goes stale too (its Remove allocated_count), and the
     # OPENED dialog is the target's own (the allocated-sub popup lives in
     # it) — ship the full affected set so the in-place swap replaces every
@@ -137,7 +137,7 @@ class PlanFlowsController < ApplicationController
 
   def update_allocation
     if @scenario
-      # R35 (design §2.2): the update path addresses the snapshot row by
+      # the update path addresses the snapshot row by
       # id (the live path's RecordNotFound contract is mirrored: unknown
       # id -> 404 JSON / the house redirect).
       row = plan_allocation_params
@@ -157,7 +157,7 @@ class PlanFlowsController < ApplicationController
       end
     end
     allocation = Current.family.plan_allocations.find(params[:id])
-    # Round 26 R2 (in-place staleness): the save can move the row's source
+    # (in-place staleness): the save can move the row's source
     # bank and/or target account — capture the OLD source before the
     # attributes apply (the old + new sources' Remove allocated_count and
     # the target's kebab matrix can all go stale from one save).
@@ -171,7 +171,7 @@ class PlanFlowsController < ApplicationController
       false
     end
 
-    # Round 31A (C14): pin the current input snapshot on a freshly saved
+    # pin the current input snapshot on a freshly saved
     # fun_money row (the drift prompt's baseline).
     persist_fun_money_input_snapshot(allocation) if result
 
@@ -187,7 +187,7 @@ class PlanFlowsController < ApplicationController
 
   def destroy_allocation
     if @scenario
-      # R35 (design §2.2): the snapshot row leaves the scenario's edge /
+      # the snapshot row leaves the scenario's edge /
       # allocation sets — nothing live is destroyed. The account set ships
       # the same way as the live path so the bank dialogs re-render.
       snapshot = @scenario.snapshot # jsonb reads deserialize fresh — capture once
@@ -206,11 +206,11 @@ class PlanFlowsController < ApplicationController
       redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view), notice: t(".saved")
     end
     allocation = Current.family.plan_allocations.find(params[:id])
-    # Round 25 (Item 2): the REVERSE of "Make Allocated Sub-Account" — a
+    # the REVERSE of "Make Allocated Sub-Account" — a
     # destroyed target row unfreezes its dressed bank row, so ship the fresh
     # bank dialog for the target account (the kebab flips back to "Make
     # Allocated Sub-Account"; no stale reverse action after the in-place
-    # delete). Round 26 R2 (in-place staleness): the SOURCE bank's holder
+    # delete). (in-place staleness): the SOURCE bank's holder
     # goes stale too (its Remove allocated_count) — ship both, captured
     # BEFORE the destroy.
     target_account = allocation.target_account
@@ -221,24 +221,24 @@ class PlanFlowsController < ApplicationController
     redirect_to flow_plan_path(view: flow_view), notice: t(".saved")
   end
 
-  # Remove a bank from the plan (owner review round 3, R3, the "Remove"
+  # Remove a bank from the plan (the "Remove"
   # button in the bank config dialog). Semantics: the bank's income edges and
   # plan markers (order / role / auto-transfer) are dropped, and its
   # allocations PERSIST without a source bank — the planner reports them
   # with status "unassigned" (the diagram's "No Assignment" marker) and the
   # allocation dialog can re-assign a source bank.
-  # Round 27 R1: removal is a FULL plan removal — in one transaction the
+  # removal is a FULL plan removal — in one transaction the
   # bank's income edges, plan markers, sub-account link AND its membership
   # in every other account's auto_transfer_target_ids fan-out all leave the
   # plan. A lingering fan-out entry would keep the account drawn as a $0.00
   # bank row (the planner's bank_ids union includes fan-out membership)
   # while in_plan_account_ids drops it (no fan-out membership there) — the
-  # invisible ghost row (owner report 2026-11-06). Guarded (422): an
+  # invisible ghost row (reported defect). Guarded (422): an
   # account named by a target allocation or with child sub-accounts.
   def remove_account
     account = Current.family.accounts.find(params[:account_id])
 
-    # Guardrails (Round 27 R1): reject BEFORE touching anything. An account
+    # Guardrails: reject BEFORE touching anything. An account
     # named by a target allocation is drawn as its dressed allocation-pillar
     # node (removing it would orphan that row); an account with child
     # sub-accounts would leave those children pointing at a bank that left
@@ -255,12 +255,12 @@ class PlanFlowsController < ApplicationController
       ActiveRecord::Base.transaction do
         Current.family.income_account_allocations.where(account_id: account.id).destroy_all
         Current.family.plan_allocations.where(account_id: account.id).update_all(account_id: nil)
-        # Round 11 issue 8: the sub-account link + fan-out targets leave the
+        # the sub-account link + fan-out targets leave the
         # plan with the bank (a removed bank is no longer anyone's child and
         # fans out to no one).
         account.update!(plan_order: nil, plan_role: nil, auto_transfer_to_account_id: nil,
                         parent_account_id: nil, auto_transfer_target_ids: [])
-        # Round 27 R1: the reverse of the Round 11 link — drop the removed
+        # the reverse of the link — drop the removed
         # account from EVERY other account's fan-out (order-preserving, the
         # sync_parent_fan_out unlink semantics), or the entry keeps it in
         # the planner's bank list after the row it names has left.
@@ -271,7 +271,7 @@ class PlanFlowsController < ApplicationController
       false
     end
 
-    # Round 4: a removed bank drops its config dialog element in the JS
+    # a removed bank drops its config dialog element in the JS
     # (bank_removed) instead of shipping a dialog for a bank that left the plan.
     return render_flow_json(removed_account: account, ok: result, error_object: account) if json_request?
 
@@ -282,7 +282,7 @@ class PlanFlowsController < ApplicationController
     end
   end
 
-  # Round 27 R1: the 422 contract for a guarded removal — set the error on
+  # the 422 contract for a guarded removal — set the error on
   # the record and ship the in-place errors payload (JSON) / the alert
   # redirect (HTML fallback).
   def reject_removal(account, message)
@@ -292,7 +292,7 @@ class PlanFlowsController < ApplicationController
     redirect_to flow_plan_path(view: flow_view), alert: message
   end
 
-  # Round 27 R1: drop `account` from every family account whose fan-out
+  # drop `account` from every family account whose fan-out
   # still names it. The removed parent link is the common case; the scan
   # covers ANY parent so a stale entry (hand-edit / legacy array) is
   # cleaned too. Order-preserving subtraction — the same semantics as
@@ -314,12 +314,12 @@ class PlanFlowsController < ApplicationController
   # the manual bank-creation form.
   def add_accounts_modal
     in_flow = Current.family.income_account_allocations.pluck(:account_id).to_set
-    # Round 26 (item 4): the Add-Account guardrail — the offered list is the
+    # the Add-Account guardrail — the offered list is the
     # family's accounts MINUS the income series' own source and MINUS every
     # account already placed in ANOTHER area: a top-level bank row (plan_order),
     # a sub-row (parent_account_id), or the dressed allocation pillar (a target
     # allocation). Offering one would let it be placed in a second area (the
-    # owner's duplication, discover-A 5.1 — the Add-Account click created the
+    # duplication, discover-A 5.1 — the Add-Account click created the
     # invisible double-placement row).
     dressed_target_ids = Current.family.plan_allocations
       .where.not(target_account_id: nil).pluck(:target_account_id).to_set
@@ -327,8 +327,8 @@ class PlanFlowsController < ApplicationController
       account.plan_order.present? || in_flow.include?(account.id) ||
         account.parent_account_id.present? || dressed_target_ids.include?(account.id)
     end
-    # Round 16 (owner note 4): the same last-4 the plan-flow payload carries,
-    # so the "Add Bank Account" list shows ****8979-style suffixes too. nil
+    # the same last-4 the plan-flow payload carries,
+    # so the "Add Bank Account" list shows ****1234-style suffixes too. nil
     # for every account without a mask (never fabricated).
     @account_last4s = PaycheckFlowPlanner.account_last4s_for(Current.family)
     # Full template (not a partial): a controller `render "prefix/name"`
@@ -342,7 +342,7 @@ class PlanFlowsController < ApplicationController
   # "Add Bank Account" modal, part 1: attach existing family accounts to the
   # map by giving them a plan_order (max + 1..).
   def add_accounts
-    # Round 26 (item 4): defense in depth on the server — the modal's offer
+    # defense in depth on the server — the modal's offer
     # filter (add_accounts_modal) is the first guard; this one rejects a
     # submission that names an account ALREADY placed by any placement (a
     # top-level bank row via plan_order, a sub-row via the parent link, the
@@ -370,7 +370,7 @@ class PlanFlowsController < ApplicationController
       account.update!(plan_order: base + index + 1)
       added << account
     end
-    # Round 4 (ghost banks): the planner now renders plan-ordered banks with
+    # (ghost banks): the planner now renders plan-ordered banks with
     # no flow, and the response ships each new bank's config dialog so the
     # node is operable in place.
     return render_flow_json(accounts: added) if json_request?
@@ -378,13 +378,13 @@ class PlanFlowsController < ApplicationController
     redirect_to flow_plan_path(view: flow_view), notice: t(".accounts_added")
   end
 
-  # (create_account removed in owner round 2, F2: the flow page no longer
+  # (create_account removed in , : the flow page no longer
   # creates its own accounts — the Add Account modal only lists Sure's
   # existing accounts; "Add Manual Account" goes to the house account page.)
 
   # Center card edits: ownership label (Home/Shared | member) + plan_order.
   # The card's single dropdown submits "shared" or "user:<user_id>" so one
-  # control writes both plan_ownership and plan_owner_user_id. M2 PR#2b adds
+  # control writes both plan_ownership and plan_owner_user_id. adds
   # the bank-config fields: plan_role (savings bucket / credit card payoff /
   # loan payoff label), auto_transfer_to_account_id, and the linked-income
   # edges (upserted by income+account, per-edge mode/value — same semantics
@@ -392,10 +392,10 @@ class PlanFlowsController < ApplicationController
   def update_account
     account = Current.family.accounts.find(params[:account_id])
     if @scenario
-      # R35 (design §2.2): a scenario save touches ONLY the snapshot's edge
+      # a scenario save touches ONLY the snapshot's edge
       # rows (the form's links section). The structural account fields
       # (ownership / plan role / auto-transfer / sub-account links) are live
-      # family structure — design §1.3: scenarios do not snapshot family
+      # family structure — the design: scenarios do not snapshot family
       # structure — so they are left untouched here. The leftover guardrail
       # and the model value validations run against the SCENARIO's edge set
       # (the same 422 contract as the live path).
@@ -414,11 +414,11 @@ class PlanFlowsController < ApplicationController
       end
     end
     ownership = params.dig(:account, :plan_ownership).to_s
-    # Round 26 R2 (in-place staleness): captured BEFORE the transaction —
+    # (in-place staleness): captured BEFORE the transaction —
     # when the parent link changes (the sub-account popup's Save / the
     # main-section "Parent Account" picker), the OLD and NEW parents'
     # holders go stale (their fan-out rows + Remove allocated_count), so
-    # the response ships their fresh dialogs too (the R25 cosmetic note:
+    # the response ships their fresh dialogs too (the cosmetic note:
     # the new parent's dialog lagged one reload — same mechanism, fixed
     # here).
     old_parent_id = account.parent_account_id
@@ -454,7 +454,7 @@ class PlanFlowsController < ApplicationController
     end
   end
 
-  # Round 20d: custom bank-logo upload from the avatar popup in the bank
+  # custom bank-logo upload from the avatar popup in the bank
   # config dialog. Image-only content types (SVG deliberately excluded —
   # uploaded SVG is an XSS vector and the built-in set ships its own),
   # sane max size, per-account ActiveStorage attachment (account.logo).
@@ -489,7 +489,7 @@ class PlanFlowsController < ApplicationController
     render json: { logo_url: Rails.application.routes.url_helpers.rails_blob_path(account.logo, only_path: true) }
   end
 
-  # Round 20d: remove the custom logo (the avatar falls back to the
+  # remove the custom logo (the avatar falls back to the
   # built-in pick or the neutral circle server-side on the next save).
   def remove_bank_logo
     account = Current.family.accounts.find(params[:account_id])
@@ -498,13 +498,13 @@ class PlanFlowsController < ApplicationController
   end
 
   # Income card edit: label the income to a family member (or clear the
-  # label back to the account-owner fallback). M2 PR#2b adds
+  # label back to the account-holder fallback). adds
   # plan_max_account_links — the income's hard bank-link limit; blank clears.
   def update_income
     if @scenario
-      # R35 (design §4.5): the scenario income dialog carries the snapshot's
+      # the scenario income dialog carries the snapshot's
       # income-policy override (enabled / zeroed / gross) — NOT a live
-      # series edit (the structural fields stay live, design §1.3). The
+      # series edit (the structural fields stay live, the design). The
       # effective policy row is validated (the gross must be a positive
       # amount — the 422 contract via the income's in-memory errors).
       income = income_series.find { |series| series.id == params[:income_id] }
@@ -575,10 +575,10 @@ class PlanFlowsController < ApplicationController
     end
   end
 
-  # Round 31B (Direct Deposit): save one member's paycheck config (gross /
+  # (Direct Deposit): save one member's paycheck config (gross /
   # frequency / anchor) against the member's labeled income series. The
   # planner overlay derives the pay dates from the house Schedule engine —
-  # NO occurrences are written (B6: the allocation "wanted" amounts are
+  # NO occurrences are written ( : the allocation "wanted" amounts are
   # immutable to this write). v1: a member with no labeled income series
   # gets a 422 (the dialog shows the empty state + the bills link instead).
   def update_paycheck_config
@@ -597,7 +597,7 @@ class PlanFlowsController < ApplicationController
     end
 
     if @scenario
-      # R35 (design §4.5): the config merges into the scenario's snapshot
+      # the config merges into the scenario's snapshot
       # copy (the live family_paycheck_configs table is untouched). The
       # EFFECTIVE config is validated with the real model — the 422
       # contract is identical to a live save.
@@ -657,14 +657,14 @@ class PlanFlowsController < ApplicationController
   end
 
   # -----------------------------------------------------------------------
-  # R35 (Flow Scenarios, design §3 / §5): the scenario CRUD + reset.
+  # the scenario CRUD + reset.
   # The picker is the only client (server-rendered menu + the create
   # dialog); the JSON contract is the design's, the HTML fallback is the
   # house redirect. "default" / unknown ids 404 (JSON) or redirect + alert
   # (HTML) — same contract on rename / delete / reset.
   # -----------------------------------------------------------------------
 
-  # GET /plan/flow/scenarios — the picker's row list (design §3 index).
+  # GET /plan/flow/scenarios — the picker's row list (the design index).
   def flow_scenarios
     render json: {
       ok: true,
@@ -707,7 +707,7 @@ class PlanFlowsController < ApplicationController
   end
 
   # PATCH /plan/flow/scenarios/:id — { name } rename. 404 on 'default' /
-  # unknown (design §3); 422 { ok: false, errors } on the model's name
+  # unknown (the design); 422 { ok: false, errors } on the model's name
   # errors (blank / too long / reserved / case-insensitive collision).
   def flow_scenario_rename
     scenario = find_scenario_or_404
@@ -748,7 +748,7 @@ class PlanFlowsController < ApplicationController
   end
 
   # POST /plan/flow/scenarios/:id/reset — REBUILD the scenario's snapshot
-  # from its source (owner decision R35): 'reuse_current' re-snapshots the
+  # from its source (the design decision ): 'reuse_current' re-snapshots the
   # current live plan; 'fresh' re-derives the empty plan over the family's
   # current incomes. All in-scenario edits are discarded. 404 on
   # 'default' / unknown (same contract as rename).
@@ -770,7 +770,7 @@ class PlanFlowsController < ApplicationController
     end
   end
 
-  # R35: the scenario lookup shared by rename / delete / reset — the design
+  # the scenario lookup shared by rename / delete / reset — the design
   # 404 contract ('default' and unknown ids alike). JSON: the 404 body;
   # HTML: the house redirect + alert (the UI never addresses 'default').
   def find_scenario_or_404
@@ -790,7 +790,7 @@ class PlanFlowsController < ApplicationController
     scenario
   end
 
-  # R35: the scenario's picker row (design §3 shape) + the request's active
+  # the scenario's picker row (the design shape) + the request's active
   # scenario id (nil for Default / unknown) + the scenario's plan graph
   # (the create / reset responses ship it so the UI can switch in place).
   def scenario_payload(scenario)
@@ -827,13 +827,13 @@ class PlanFlowsController < ApplicationController
 
   private
 
-    # R35 (Flow Scenarios, design §2.2): the active scenario for this
+    # the active scenario for this
     # request. Blank / "default" = the Default (live plan) — the structural
     # no-op path where every scenario branch below is skipped and the
     # output is byte-identical to today. Unknown ids: the JSON contract is
     # the 404 (the sankey's graph fetch sends Accept: json, so a stale
     # ?scenario= in a URL never 500s the diagram); HTML callers (a
-    # hand-typed ?scenario=) get the house redirect + alert (design §3).
+    # hand-typed ?scenario=) get the house redirect + alert (the design).
     def load_scenario
       @scenario = nil
       id = params[:scenario].presence
@@ -845,13 +845,13 @@ class PlanFlowsController < ApplicationController
       if json_request?
         render json: { ok: false, error: "unknown scenario" }, status: :not_found
       else
-        # The design §4.6 key lives under show (the page's canonical home);
+        # The the design key lives under show (the page's canonical home);
         # reference it absolutely so every scoped action shares it.
         redirect_to flow_plan_path, alert: t("plan_flows.show.scenario_missing")
       end
     end
 
-    # R35: the planner draft for the active scenario (design §2.1) — the
+    # the planner draft for the active scenario (the design) — the
     # snapshot's stored rows symbolized to the planner's key shape, over the
     # live income base with the snapshot's paycheck-config copy + income
     # policy re-applied. nil-safe: @scenario must be non-nil (callers gate).
@@ -861,7 +861,7 @@ class PlanFlowsController < ApplicationController
       )
     end
 
-    # R35: the snapshot's edge rows (string-keyed) for the draft base —
+    # the snapshot's edge rows (string-keyed) for the draft base —
     # the scenario-mode twin of the live PaycheckFlowPlanner.edge_rows read
     # in graph_draft / merge_draft_allocation_rows. Rows go through the
     # planner's scenario_row normalizer (symbol keys + BigDecimal numerics —
@@ -871,19 +871,19 @@ class PlanFlowsController < ApplicationController
       (@scenario.snapshot["allocations"] || []).map { |row| PaycheckFlowPlanner.scenario_row(row) }
     end
 
-    # R35: the snapshot's plan-allocation rows for the draft base (the
+    # the snapshot's plan-allocation rows for the draft base (the
     # scenario-mode twin of plan_allocation_rows).
     def scenario_snapshot_plan_allocations
       (@scenario.snapshot["plan_allocations"] || []).map { |row| PaycheckFlowPlanner.scenario_row(row) }
     end
 
-    # R35: a snapshot edge row wrapped with the model-like accessors the
+    # a snapshot edge row wrapped with the model-like accessors the
     # bank config dialog reads (.mode / .value — the model's major-unit
     # conventions: specific -> dollars, percent -> the 0-1 fraction,
     # required -> the 0-100 major-unit percent, leftover -> nil).
     ScenarioEdge = Struct.new(:mode, :value, :income_series_id, :account_id)
 
-    # R35: the scenario's edge rows for one account, indexed by income
+    # the scenario's edge rows for one account, indexed by income
     # series id — the snapshot twin of the live index_by(&:income_series_id)
     # read in render_flow_json / the page-load bank dialog render.
     def scenario_edges_for_account(account_id)
@@ -892,16 +892,16 @@ class PlanFlowsController < ApplicationController
         .index_by { |row| row["income_id"] }
         .transform_values do |row|
           value = case row["mode"]
-                  when "specific" then row["value_cents"].to_d / 100
-                  when "percent" then row["value_percent"].to_d
-                  when "required" then row["required_percent"].to_d
-                  else nil
-                  end
+          when "specific" then row["value_cents"].to_d / 100
+          when "percent" then row["value_percent"].to_d
+          when "required" then row["required_percent"].to_d
+          else nil
+          end
           ScenarioEdge.new(row["mode"], value, row["income_id"], row["account_id"])
         end
     end
 
-    # R35: the scenario's plan-allocation rows as UNSAVED PlanAllocation
+    # the scenario's plan-allocation rows as UNSAVED PlanAllocation
     # instances — the allocation dialog partial and the empty-state CTA read
     # model accessors, which work on unsaved records (the values are the
     # snapshot's; nothing is persisted). The snapshot order is the
@@ -926,7 +926,7 @@ class PlanFlowsController < ApplicationController
       end
     end
 
-    # R35: the scenario's paycheck-config snapshot copy for one member (an
+    # the scenario's paycheck-config snapshot copy for one member (an
     # UNSAVED instance — the PaycheckDates math reads only frequency /
     # anchor_date / gross_per_paycheck_cents, so derived values compute
     # identically on the copy). nil when the member has no config row.
@@ -934,22 +934,39 @@ class PlanFlowsController < ApplicationController
       row = (@scenario.snapshot["paycheck_configs"] || []).find { |c| c["user_id"] == member.id }
       return nil unless row
 
+      # Snapshots are app-written iso8601, but a corrupted anchor_date must
+      # not 500 the readout (no-crash on bad input): an unparseable row is
+      # skipped as if the member had no config — the biweekly schedule math
+      # needs a real anchor, so a nil-anchor copy is unusable.
+      anchor_date = parse_snapshot_date(row["anchor_date"])
+      return nil if anchor_date.nil?
+
       FamilyPaycheckConfig.new(
         family_id: Current.family.id,
         user_id: row["user_id"],
         recurring_transaction_id: row["recurring_transaction_id"],
         gross_per_paycheck_cents: row["gross_per_paycheck_cents"],
         frequency: row["frequency"],
-        anchor_date: row["anchor_date"].blank? ? nil : Date.parse(row["anchor_date"])
+        anchor_date: anchor_date
       )
     end
 
-    # R35 (design §2.2): the scenario allocation write — upsert the dialog
+    # A snapshot anchor_date string, parsed; blank or unparseable -> nil.
+    # (Same rescue/nil guard idiom as CashFlowsController#parse_date.)
+    def parse_snapshot_date(value)
+      return nil if value.blank?
+
+      Date.parse(value)
+    rescue Date::Error
+      nil
+    end
+
+    # the allocation dialog's BANK SOURCE rows render
     # row into the active scenario's snapshot. The upsert key is the live
     # path's (account + name) for create, the explicit id for update. The
     # EFFECTIVE row is validated with the real PlanAllocation model, so the
     # 422 contract is identical to a live save; a new row gets a fresh uuid
-    # (the re-use rows keep their live ids — design §1.1). Returns
+    # the swapped-in rows carry the ****last4 spans too.
     # [ok, model, saved_row-or-nil]; [nil, nil, nil] when the update id is
     # not in the scenario.
     def scenario_save_plan_allocation(row:, id: nil)
@@ -983,7 +1000,7 @@ class PlanFlowsController < ApplicationController
       [ true, allocation, saved_row ]
     end
 
-    # R35 (Round 31A C14 twin for scenarios): pin the fun-money input
+    # ( twin for scenarios): pin the fun-money input
     # snapshot on a freshly-saved scenario row. The planner runs on the
     # scenario's draft (the just-updated snapshot), and the inputs land in
     # the SCENARIO row's distribution_params jsonb — no AR write.
@@ -1012,7 +1029,7 @@ class PlanFlowsController < ApplicationController
       @scenario.update!(snapshot: snapshot, snapshotted_at: Time.current)
     end
 
-    # R35 (design §2.2): the scenario-mode bank links — the form's links
+    # the sankey inPlanValue excludes dressed accounts
     # rows merge into the active scenario's snapshot edge set. Same value
     # shaping as the live path (draft_edges' major-unit conventions),
     # validated with the real IncomeAccountAllocation model (the 422
@@ -1058,16 +1075,16 @@ class PlanFlowsController < ApplicationController
           # `presence` ("" -> nil is VALID; "" -> 0 would trip the
           # model's 0 < value <= 100 range check and 422 spuriously).
           value = case mode
-                  when "specific"
-                    link["value"].to_s.strip.to_d
-                  when "percent"
-                    percent = link["value"].to_s.strip.to_d / 100
-                    percent.positive? && percent <= 1 ? percent : 0
-                  when "required"
-                    link["value"].to_s.strip.presence&.to_d
-                  else
-                    nil
-                  end
+          when "specific"
+            link["value"].to_s.strip.to_d
+          when "percent"
+            percent = link["value"].to_s.strip.to_d / 100
+            percent.positive? && percent <= 1 ? percent : 0
+          when "required"
+            link["value"].to_s.strip.presence&.to_d
+          else
+            nil
+          end
 
           record = IncomeAccountAllocation.new(
             family: Current.family, income_series: series,
@@ -1099,7 +1116,7 @@ class PlanFlowsController < ApplicationController
       @scenario.update!(snapshot: snapshot, snapshotted_at: Time.current)
     end
 
-    # R35: the allocation write's unknown-id 404 contract (the live path's
+    # the allocation write's unknown-id 404 contract (the live path's
     # RecordNotFound, mirrored for the snapshot rows).
     def not_found_allocation_redirect
       if json_request?
@@ -1113,7 +1130,7 @@ class PlanFlowsController < ApplicationController
       %w[paycheck monthly].include?(params[:view].to_s) ? params[:view] : "paycheck"
     end
 
-    # Round 33: the Per-Paycheck unit choice (the kebab right of the
+    # the Per-Paycheck unit choice (the kebab right of the
     # Manage/View control). "income" is the DEFAULT (per-income occurrence
     # count); "family" keeps the old family-composite divisor (the month's
     # total paycheck count). Persisted as ?paycheck_unit= like ?view=.
@@ -1121,7 +1138,7 @@ class PlanFlowsController < ApplicationController
       %w[income family].include?(params[:paycheck_unit].to_s) ? params[:paycheck_unit] : "income"
     end
 
-    # In-place diagram updates (owner review round 3, R1/R7): the page's
+    # In-place diagram updates: the page's
     # mutation forms submit as Accept: application/json fetches (data-turbo
     # disabled) instead of full-reload submissions, so the Sankey can tween
     # to the new layout in place. These requests get a JSON response:
@@ -1135,21 +1152,21 @@ class PlanFlowsController < ApplicationController
     def render_flow_json(ok: true, allocation_changed: false, accounts: [], income: nil, removed_account: nil, error_object: nil, paycheck_config_member: nil)
       return render(json: { errors: error_messages(error_object) }, status: :unprocessable_entity) unless ok
 
-      # R35 (Flow Scenarios): for an active scenario the plan re-derives from
+      # (Flow Scenarios): for an active scenario the plan re-derives from
       # the (just-updated) snapshot; the Default call is token-for-token
       # today's (the structural no-op invariant).
       graph = @scenario ?
         PaycheckFlowPlanner.plan_graph(family: Current.family, month: Date.current, draft: scenario_draft) :
         PaycheckFlowPlanner.plan_graph(family: Current.family, month: Date.current)
       @graph = graph
-      # Round 27 (owner item 4): the bank dialog form now carries a hidden
+      # the family's scenarios for the
       # view input, so the in-place response renders the dialog readouts in
-      # the SUBMITTING view (Q7: the display unit follows the active view).
+      # the SUBMITTING view (the display unit follows the active view).
       @view = flow_view
       set_chrome_instance_vars
       @known_allocations = known_allocations
 
-      # Round 4 (ghost banks): the bank config dialog for every affected bank,
+      # (ghost banks): the bank config dialog for every affected bank,
       # so an in-place add/edit makes the (new) bank node operable without a
       # reload. A removed bank ships no dialog — the JS drops its element.
       bank_dialogs = removed_account ? nil : accounts.map do |account|
@@ -1157,37 +1174,37 @@ class PlanFlowsController < ApplicationController
           node_id: "bank:#{account.id}",
           html: render_to_string(partial: "plan_flows/bank_config_dialog", locals: {
             account: account,
-            # R35 (Flow Scenarios): the dialog's edge rows come from the
+            # (Flow Scenarios): the dialog's edge rows come from the
             # scenario's snapshot (wrapped with the model-like accessors the
             # partial reads — .mode / .value); Default is the live table.
             edges: @scenario ?
               scenario_edges_for_account(account.id) :
               Current.family.income_account_allocations.where(account_id: account.id).index_by(&:income_series_id),
-            # Round 16: the picker's searchable logo list (same-origin
+            # the picker's searchable logo list (same-origin
             # assets; client-side filtering, no endpoint).
             available_bank_logos: @available_bank_logos,
-            # Round 27 (owner item 4): the read-only dialog context (same
+            # fix: graph_required_monthly hands back CENTS; the view
             # locals as the page-load render — the re-rendered partial is
             # the only place the new context lands).
             view: @view,
             required_display_amount: (@bank_required_display || {})[account.id],
             income_amounts: @income_display_amounts,
-            # Round 30: the per-income required-split readouts (the
+            # the per-income required-split readouts (the
             # greyed 50/50 / Proportional readouts + the stored percents
             # behind the Percent behavior's inputs).
             required_splits: (@bank_required_splits || {})[account.id],
-            # Round 33: the active paycheck unit (the dialog's hidden
+            # the active paycheck unit (the dialog's hidden
             # paycheck_unit input — in-place saves re-render the readouts
             # in the selected unit; the save form posts it back).
             paycheck_unit: paycheck_unit,
-            # Round 34 (spec 3): the Leftover guardrail (same local as the
+            # fix-round (BUG- -1, display-only): both paycheck-view
             # page-load render — recomputed in set_chrome_instance_vars so
             # it is current after the just-saved change).
             leftover_accounts: @leftover_accounts
           })
         }
       end
-      # Round 34 (spec 1): the paycheck-config dialog is now a STATIC
+      # the old family composite — the monthly base prorated
       # READ-ONLY paycheck readout derived from the live plan graph, so it
       # must refresh after EVERY in-place save that changes the plan (a bank
       # link / allocation / income save) — not only after a paycheck-config
@@ -1211,22 +1228,29 @@ class PlanFlowsController < ApplicationController
         chrome: {
           top: render_to_string(partial: "plan_flows/chrome_top"),
           overlays: render_to_string(partial: "plan_flows/chrome_overlays"),
+          # legacy defensive value.
+          # on every in-place write so it can appear or disappear without a
+          # reload (#inPlaceSubmit swaps the holder's contents; empty
+          # fragment = no red lines = icon gone). The partial reads the
+          # same @over_plan_lines / @discrepancy_lines set above (unit-aware
+          # amounts, the design decision 3).
+          issues_icon: render_to_string(partial: "plan_flows/flow_issues_icon"),
           known: allocation_changed ? render_to_string(partial: "plan_flows/known_allocations", locals: { known_allocations: @known_allocations, known_hidden: @known_allocations_hidden }) : nil,
-          # Round 21 T8: the allocation dialog's BANK SOURCE rows render
+          # the allocation dialog's BANK SOURCE rows render
           # once at page load, so an in-place account change ships a fresh
           # fragment for #inPlaceSubmit to swap in place (the off-plan
           # row a dialog may append is out of scope here).
-          # Round 22 (N1): the swapped-in rows carry the ****last4 spans too.
+          # the swapped-in rows carry the ****last4 spans too.
           allocation_bank_rows: (accounts.any? || removed_account) ? render_to_string(partial: "plan_flows/allocation_bank_rows", locals: { bank_rows: @in_plan_accounts, account_last4s: @account_last4s }) : nil,
           bank_dialogs: bank_dialogs.presence,
           bank_removed: removed_account ? "bank:#{removed_account.id}" : nil,
-          # Round 7: the Sankey's in-plan / account-name values are
+          # the Sankey's in-plan / account-name values are
           # page-load state; refresh them after every in-place write or a
           # removed bank is re-synthesized as a phantom floor node until the
           # next reload.
           sankey: {
             accounts: @flow_accounts.map { |account| [ account.id, account.name ] }.to_h,
-            # Round 26 R2: the sankey inPlanValue excludes dressed accounts
+            # the sankey inPlanValue excludes dressed accounts
             # (sankey_in_plan_ids) so a po-dressed account never re-synthesizes
             # a phantom bank row next to its allocation-pillar node.
             in_plan: sankey_in_plan_ids
@@ -1244,7 +1268,7 @@ class PlanFlowsController < ApplicationController
     # in-place JSON responses so the server-rendered chrome never drifts.
     def set_chrome_instance_vars
       @family_users = family_users
-      # Round 16: the usable bank-logo set (vendored file + label) the bank
+      # the usable bank-logo set (vendored file + label) the bank
       # config dialog's searchable picker filters over. The plan-graph
       # payload carries the same list at its root (available_bank_logos) so
       # the in-place JS path needs no extra source.
@@ -1253,29 +1277,29 @@ class PlanFlowsController < ApplicationController
       @flow_accounts = flow_accounts
       @in_plan_account_ids = in_plan_account_ids
       @in_plan_accounts = @flow_accounts.select { |account| @in_plan_account_ids.include?(account.id) }
-      # Round 26 R2 (owner item 3, MOVE): the sankey-only inPlan list — the
+      # (Flow Scenarios): in a scenario the "already planned" set comes
       # full list minus the dressed allocation targets. Feeds ONLY the sankey
       # inPlanValue (show.html.erb data attr + the render_flow_json chrome
       # payload); a dressed account is drawn exactly once, as its own
       # allocation-pillar node, and must never re-enter the bank column.
       @sankey_in_plan_ids = sankey_in_plan_ids
-      # Round 22 (N1): the masked last-4 map the allocation dialog bank rows
+      # the masked last-4 map the allocation dialog bank rows
       # render next to each name (****NNNN, the Add Account modal style);
       # the same helper the plan-graph payload and that modal already use —
       # plain 4 digits from plaid_accounts.mask, nil when absent.
       @account_last4s = PaycheckFlowPlanner.account_last4s_for(Current.family)
       @unplanned_count = @flow_accounts.count - @in_plan_accounts.count
-      # R35 (Flow Scenarios): the allocation dialog loop + empty-state CTA
+      # (Flow Scenarios): the allocation dialog loop + empty-state CTA
       # render the scenario's snapshot rows (unsaved model instances with
       # the snapshot's values — the partial's accessors work on both);
       # Default is the live relation (token-for-token today).
       @plan_allocations = @scenario ? scenario_plan_allocations :
                               Current.family.plan_allocations.includes(:account).order(:name)
-      # R35 (Flow Scenarios, design §4.1): the family's scenarios for the
+      # (Direct Deposit): the member's labeled income series —
       # header picker (chrome, not plan state — the live table in both
       # modes, order stable by creation).
       @scenarios = Current.family.plan_scenarios.order(:created_at, :id)
-      # Round 34 (spec 3): the Leftover guardrail — income series id -> the
+      # the member's existing paycheck config (one per member,
       # account id of its existing leftover edge (IncomeAccountAllocation
       # mode "leftover"). The bank dialog greys the "Leftover" option for a
       # member's other allocations when that paycheck already has a leftover
@@ -1285,13 +1309,13 @@ class PlanFlowsController < ApplicationController
       # save, not just at page load.
       @leftover_accounts = leftover_accounts
       @over_plan_lines = over_plan_lines
-      # Round 31A (Fun Money v2): the Un-Allocated discrepancy lines (the
+      # (Fun Money v2): the Un-Allocated discrepancy lines (the
       # second line group in _chrome_top.erb).
       @discrepancy_lines = discrepancy_lines
       set_bank_dialog_context
     end
 
-    # Round 27 (owner item 4): the read-only "Pull From Incomes" dialog
+    # member ( : no member creation here). Each tab carries the member,
     # context — the account's required base in the ACTIVE VIEW UNIT (Per
     # Paycheck: the monthly base prorated over the required-edge paychecks,
     # mirroring the planner's required_per_paycheck; Per Month: as-is; nil
@@ -1309,12 +1333,12 @@ class PlanFlowsController < ApplicationController
       planner = PaycheckFlowPlanner.new(**PaycheckFlowPlanner.graph_inputs_for(family: Current.family, month: month))
       required_monthly = planner.send(:graph_required_monthly)
       funding_counts = planner.send(:required_edge_funding_counts)
-      # R5 fix (BUG-1): graph_required_monthly hands back CENTS; the view
+      # fix: graph_required_monthly hands back CENTS; the view
       # layer formats + renders dollars (ERB L552 formats this directly,
       # and the dialog's $/thousands-separator labels are the JS's job).
-      # The integer per-paycheck division keeps the R1-R4 semantics
+      # The integer per-paycheck division keeps the - semantics
       # exactly — only the scale changes.
-      # R28B (BUG-B): the fallback divisor when a bank has no stored
+      # The fallback divisor when a bank has no stored
       # required edge — required_edge_funding_counts is then 0 and the
       # display would nil to "—" / $0.00 even though the bank's required
       # base (its allocation required amount, graph_required_monthly)
@@ -1329,7 +1353,7 @@ class PlanFlowsController < ApplicationController
       linked_series_by_bank = Current.family.income_account_allocations
                                            .pluck(:account_id, :income_series_id)
                                            .group_by { |account_id, _| account_id }
-      # Round 30 fix-round (BUG-R30-1, display-only): both paycheck-view
+      # fix-round (BUG- -1, display-only): both paycheck-view
       # branches divide by the AVERAGE occurrences per linked income (the
       # composite paycheck) -- pre-fix the stored-required-edge branch
       # divided by the SUM of occurrences across all required edges (2
@@ -1350,11 +1374,11 @@ class PlanFlowsController < ApplicationController
                            .select(&:positive?)
         if flow_view == "paycheck"
           if paycheck_unit == "family"
-            # Round 33: the old family composite — the monthly base prorated
+            # the old family composite — the monthly base prorated
             # over the month's TOTAL paycheck count (every income's
-            # occurrences summed; Kurt 2 + Sammi 2 = 4). The funding-sum
+            # occurrences summed; primary 2 + secondary 2 = 4). The funding-sum
             # fallback (no paycheck dates — the impossible case) keeps the
-            # pre-R30 defensive value.
+            # legacy defensive value.
             family_total = @graph[:total_paychecks].to_i
             if family_total.positive?
               base / family_total / 100.0
@@ -1364,7 +1388,7 @@ class PlanFlowsController < ApplicationController
               nil
             end
           elsif counts.any?
-            # Round 33 default (the R30 line, kept verbatim): the base over
+            # default (the line, kept verbatim): the base over
             # the AVERAGE occurrences per linked income — the per-income
             # occurrence unit in the composite dialog readout.
             base / (BigDecimal(counts.sum) / counts.size) / 100.0
@@ -1386,7 +1410,7 @@ class PlanFlowsController < ApplicationController
           occurrences: count
         }
       end
-      # Round 30: the required-split readouts the dialog seeds — the greyed
+      # the required-split readouts the dialog seeds — the greyed
       # per-income readouts (50/50 / Proportional behaviors) and the stored
       # percents behind the Percent behavior's inputs. Per account with >=2
       # required edges: each income's percent = the D-REOPEN behavior
@@ -1403,7 +1427,7 @@ class PlanFlowsController < ApplicationController
                                       .order(:income_series_id).to_a
         next if required_edges.size < 2
 
-        # Round 30: the display absorb follows the dialog row order
+        # the display absorb follows the dialog row order
         # (@income_series' name order — the JS recalc absorbs in DOM row
         # order, so the server seed and the client must agree on which
         # income is "last").
@@ -1425,7 +1449,7 @@ class PlanFlowsController < ApplicationController
       end
     end
 
-    # Round 30 (D-REOPEN, controller side): the percents the dialog seeds
+    # (D-REOPEN, controller side): the percents the dialog seeds
     # from — the behavior derivation with the last income (income_series_id
     # order) absorbing the 2-dp residual: all-nil or each-within-1c-of-100/n
     # -> the equal split; each-within-1c of the strict income-proportional
@@ -1458,15 +1482,15 @@ class PlanFlowsController < ApplicationController
       end
     end
 
-    # "Known Allocations" list for the allocation dialog (owner round 2,
-    # F3; round 8: only what is NOT already in the diagram): the bills /
+    # "Known Allocations" list for the allocation dialog (
+    # ; : only what is NOT already in the diagram): the bills /
     # auto-tracked subscriptions Sure already has, MINUS the ones a plan
     # allocation already links — those show in the diagram, so the dialog
     # offers only the rest. When every detected bill is planned,
     # @known_allocations_hidden is set so the empty list says
     # "already in the diagram" instead of implying nothing was detected.
     def known_allocations
-      # R35 (Flow Scenarios): in a scenario the "already planned" set comes
+      # (Flow Scenarios): in a scenario the "already planned" set comes
       # from the snapshot's plan-allocation rows (the known list must track
       # the scenario's plan, not the live one); Default is the live pluck.
       covered_ids = @scenario ?
@@ -1487,7 +1511,7 @@ class PlanFlowsController < ApplicationController
           cadence: PaycheckFlowPlanner.cadence_for(series),
           amount_cents: PaycheckFlowPlanner.to_family_cents(series.monthly_equivalent_amount, Current.family.currency),
           account_id: series.account_id,
-          # Round 26 R4 (item 7a): the bill's own category (nil when
+          # the top-bar figure is UNIT-AWARE —
           # untagged) so the dialog's prefill paths can preselect it
           # (openKnownAllocation reads data-known-category; the dialog's
           # category radios mirror it through #checkCategoryRadio).
@@ -1505,7 +1529,7 @@ class PlanFlowsController < ApplicationController
       return { base: [ t("plan_flows.common.save_failed") ] } if record.nil?
 
       out = record.errors.messages.each_with_object({}) { |(field, messages), h| h[field.to_s] = messages.map(&:to_s) }
-      # R5 fix (BUG-7): a bank-links 422 fails on an
+      # fix: a bank-links 422 fails on an
       # IncomeAccountAllocation validation, not on the account record —
       # the account carries no errors, so the 422 body used to be
       # {"errors":{}} with zero user feedback. save_bank_links rescues
@@ -1529,7 +1553,7 @@ class PlanFlowsController < ApplicationController
       @family_user_ids ||= Current.family.users.pluck(:id).to_set
     end
 
-    # Round 31B (Direct Deposit): the member's labeled income series —
+    # (Direct Deposit): the member's labeled income series —
     # bill_type income, active, manual, explicitly labeled to the member
     # (plan_owner_user_id == member.id). First by (name, id) so the overlay
     # target is deterministic when a member labels more than one series.
@@ -1542,20 +1566,20 @@ class PlanFlowsController < ApplicationController
                    .first
     end
 
-    # Round 31B: the member's existing paycheck config (one per member,
+    # the member's existing paycheck config (one per member,
     # unique (family_id, user_id)) or a new one ready to assign.
     def paycheck_config_for(member)
       Current.family.family_paycheck_configs.find_or_initialize_by(user: member)
     end
 
-    # Round 31B: the paycheck-config dialog tabs — one per EXISTING family
-    # member (B3: no member creation here). Each tab carries the member,
+    # the paycheck-config dialog tabs — one per EXISTING family
+    # member ( : no member creation here). Each tab carries the member,
     # their labeled series (nil -> the panel's empty state), the saved
     # config (or nil), and the derived monthly cents + next-4 pay dates
     # (nil when there is no config to derive from).
     def paycheck_config_tabs
       family_users.map do |member|
-        # R35 (Flow Scenarios): the readout tabs carry the scenario's
+        # (Flow Scenarios): the readout tabs carry the scenario's
         # paycheck-config snapshot copy (an UNSAVED instance — the
         # PaycheckDates math reads only its fields, so the derived values
         # compute identically); Default is the live saved config.
@@ -1571,13 +1595,13 @@ class PlanFlowsController < ApplicationController
       end
     end
 
-    # Round 34 (spec 3): the Leftover guardrail — the map of income series
+    # + : a draft bucket row (savings /
     # id -> the account id of its existing leftover edge (IncomeAccountAllocation
     # mode "leftover"). A member's paycheck may fund at most ONE account as
     # its leftover (the per-paycheck remainder), so the bank dialog greys the
     # "Leftover" option for the member's other allocations. Nil-valued entries
     # never occur (mode "leftover" always carries an account_id).
-    # R35 (Flow Scenarios): in a scenario the map comes from the snapshot's
+    # (Flow Scenarios): in a scenario the map comes from the snapshot's
     # edge rows (the guardrail greys against the scenario's own leftover);
     # Default is the live pluck.
     def leftover_accounts
@@ -1593,7 +1617,7 @@ class PlanFlowsController < ApplicationController
       end
     end
 
-    # Round 31B: gross per paycheck in cents. The form submits a 2-dp
+    # gross per paycheck in cents. The form submits a 2-dp
     # major-unit amount (step 0.01); 1250.50 -> 125050. Blank/invalid ->
     # nil (the model's presence + greater_than 0 validations reject it).
     def paycheck_gross_cents(params)
@@ -1603,7 +1627,7 @@ class PlanFlowsController < ApplicationController
       (gross.to_d * 100).round
     end
 
-    # Round 31B: the frequency, defaulting to semi_monthly (B5) when the
+    # the frequency, defaulting to semi_monthly when the
     # param is blank. An out-of-set value falls through to the model's
     # inclusion validation (a 422, not a silent default).
     def paycheck_frequency(params)
@@ -1633,10 +1657,10 @@ class PlanFlowsController < ApplicationController
 
     # On the plan = an explicit plan_order marker, a linked income edge, a
     # plan allocation sourced from it, or a plan label (role / auto-transfer).
-    # Unassigned allocations (round 3 R3: source bank removed) have a nil
+    # Unassigned allocations ( : source bank removed) have a nil
     # account_id and must NOT pull a bank into the plan — a nil leaking into
-    # this list becomes a phantom "Account" row in the diagram (round 7:
-    # the owner's delete left a blank account row that survived reloads).
+    # this list becomes a phantom "Account" row in the diagram (:
+    # the delete left a blank account row that survived reloads).
     def in_plan_account_ids
       (
         Current.family.accounts.where.not(plan_order: nil).pluck(:id) |
@@ -1644,7 +1668,7 @@ class PlanFlowsController < ApplicationController
           Current.family.plan_allocations.where.not(account_id: nil).pluck(:account_id) |
           Current.family.accounts.where.not(plan_role: nil).pluck(:id) |
           Current.family.accounts.where.not(auto_transfer_to_account_id: nil).pluck(:id) |
-          # Round 26 (item 4): sub-rows (parent-linked accounts) are drawn from
+          # the account the row dresses (the bank dialog's
           # the graph's bank rows (sub_account_links), so a sub-account keeps
           # its bank dialog even after its accidental second placement
           # (plan_order) is dropped — every drawn row stays fully interactive
@@ -1653,12 +1677,12 @@ class PlanFlowsController < ApplicationController
       ).compact
     end
 
-    # Round 26 R2 (owner item 3, MOVE): the sankey's inPlanValue must EXCLUDE
+    # buckets keep the user-chosen mode + value — the generic
     # dressed accounts (plan_allocations.target_account_id). The sankey bank
-    # column is graphBanks + (inPlan − graphBanks); Round 26 R1 already drops a
+    # column is graphBanks + (inPlan − graphBanks); already drops a
     # dressed account from graphBanks (the planner's bank_ids reject), so a
     # po-dressed account left in inPlan would synthesize a second, floor-valued
-    # bank row next to its own allocation-pillar node — the CDP MOVE cycle's
+    # bank row next to its own allocation-pillar node — the the browser harness MOVE cycle's
     # double-draw. Everything else that reads in_plan_account_ids (the bank
     # dialog loop, the allocation bank-source radios, the sub-account popup,
     # #checkAccountRadio) keeps the FULL list: a po'd or parent-linked dressed
@@ -1675,7 +1699,7 @@ class PlanFlowsController < ApplicationController
     def over_plan_lines
       @graph[:over_plans].map do |over|
         income = @graph[:incomes].find { |row| row[:id] == over[:income_id] }
-        # Round 11 issue 8 (Q3): a fan-out shortfall names the unsatisfied
+        # A fan-out shortfall names the unsatisfied
         # BUCKET (a bank row, not an allocation) — nothing hidden about
         # which sub-account came up short.
         item = if over[:target] == "bucket" && over[:target_id]
@@ -1685,8 +1709,32 @@ class PlanFlowsController < ApplicationController
         else
           "the surplus line"
         end
-        { income: income&.dig(:name) || "an income", item: item, amount: over[:shortfall_month] }
+        # pre-checks for a sub-account (parent) change, run BEFORE any
+        # the per-paycheck amount in the Per Paycheck view, the monthly
+        # amount in the Per Month view (one line per income; the
+        # per-account amounts live on the chart labels).
+        { income: income&.dig(:name) || "an income", item: item, amount: unit_aware_amount(over[:shortfall_month], income) }
       end
+    end
+
+    # (Fun Money v2): the fun_money config value shaping — only
+    # per-paycheck figure (monthly / the income's occurrence count) in the
+    # Per Paycheck view, the monthly figure otherwise. The per-paycheck
+    # figure rounds through the same double the client renders (the
+    # sankey's toFixed(2)), so the top bar and the chart labels agree to
+    # the cent.
+    def unit_aware_amount(monthly_amount, income)
+      monthly = monthly_amount.to_d
+      return monthly unless @view == "paycheck"
+
+      occurrences = income&.dig(:occurrences)&.size
+      return monthly if occurrences.nil? || occurrences.zero?
+
+      # format("%.2f") rounds the exact binary double (C printf), which
+      # matches the client's toFixed(2) on the SAME value — 2021.33/2
+      # renders 1010.66 here and in the chart labels, where Ruby's
+      # Float#round would print 1010.67 and desync the top bar by a cent.
+      format("%.2f", (monthly / occurrences).to_f)
     end
 
     def load_selected_income
@@ -1722,7 +1770,7 @@ class PlanFlowsController < ApplicationController
       end
     end
 
-    # The plan-graph draft (M2 PR#2b), same shape as the preview action's:
+    # The plan-graph draft , same shape as the preview action's:
     # the selected income's saved edges replaced by the form's edge rows,
     # and the allocation rows merged per-id over the saved set. Only the
     # sets the form actually carries are present — the planner applies each
@@ -1732,7 +1780,7 @@ class PlanFlowsController < ApplicationController
 
       income = load_selected_income
       if income && params[:edges].present?
-        # R35 (Flow Scenarios): the form-preview edge base is the scenario's
+        # (Flow Scenarios): the form-preview edge base is the scenario's
         # snapshot edge rows when a scenario is active (the merge below
         # replaces only the selected income's edges); Default is the live
         # read.
@@ -1743,7 +1791,7 @@ class PlanFlowsController < ApplicationController
             income_id: income.id,
             account_id: account_id,
             mode: attrs[:mode],
-            value_cents: attrs[:mode] == "specific" ? (attrs[:value].to_f * 100).round : nil,
+            value_cents: attrs[:mode] == "specific" ? (attrs[:value].to_d * 100).round : nil,
             value_percent: attrs[:mode] == "percent" ? attrs[:value] : nil
           }
         end
@@ -1763,7 +1811,7 @@ class PlanFlowsController < ApplicationController
     # from the form survive untouched.
     def merge_draft_allocation_rows
       form_rows = params[:allocations].to_unsafe_h
-      # R35 (Flow Scenarios): the per-id merge base is the scenario's
+      # (Flow Scenarios): the per-id merge base is the scenario's
       # snapshot plan rows when a scenario is active; Default is the live
       # read. The merge itself is shape-agnostic (symbol-keyed base rows
       # either way).
@@ -1790,16 +1838,16 @@ class PlanFlowsController < ApplicationController
             cadence: attrs["cadence"].presence,
             recurring_transaction_id: attrs["recurring_transaction_id"].presence,
             auto_transfer: attrs["auto_transfer"].present?,
-            # Round 16: the picker submits on every dialog save, so the
+            # the picker submits on every dialog save, so the
             # draft row carries the selection (blank = no category).
             category_id: attrs["category_id"].presence
           )
-          # Round 10 issue 4 + round 25 R2: a draft bucket row (savings /
+          # + : a draft bucket row (savings /
           # fun_money) keeps the user-chosen mode — the generic merge above
           # already shapes value_cents / value_percent to the mode, so the
           # in-place preview matches what a save persists, for every mode
           # (value validation stays model-owned). The bucket-specific drops
-          # stay for the hidden controls: cadence (round 3 owns bucket
+          # stay for the hidden controls: cadence ( owns bucket
           # cadence) and the detected-bill link (hidden for buckets) + the
           # gone auto-transfer flag.
           # (Plain if-guard: `expr if cond` returns nil when cond is false,
@@ -1808,7 +1856,7 @@ class PlanFlowsController < ApplicationController
             merged = merged.merge(cadence: nil, recurring_transaction_id: nil,
               auto_transfer: false)
           end
-          # Round 31A (Fun Money v2): the fun_money row's config in the
+          # (Fun Money v2): the fun_money row's config in the
           # draft preview (fun_money kind only; the other kinds never
           # submit these, and the merge drops them — same scoping as the
           # sanitizer). attrs is a plain string-keyed hash, so the
@@ -1838,9 +1886,9 @@ class PlanFlowsController < ApplicationController
       row
     end
 
-    # The dialog row, shaped for persistence (owner round 10, issue 4;
-    # round 20 U; round 25 R2): kind "savings" / "fun_money" are buckets
-    # funded from an associated account — and round 25 R2 makes every mode
+    # The dialog row, shaped for persistence (issue 4;
+    # U; ): kind "savings" / "fun_money" are buckets
+    # funded from an associated account — and makes every mode
     # valid for buckets (the Mode selector is visible + functional for all
     # four kinds), so the user-chosen mode and its value survive to the
     # model (value validation stays model-owned; the DB check constraint
@@ -1862,22 +1910,22 @@ class PlanFlowsController < ApplicationController
         cadence: a[:cadence].presence,
         recurring_transaction_id: a[:recurring_transaction_id].presence,
         auto_transfer: a[:auto_transfer].present?,
-        # Round 16: the Sure category whose color the diagram uses; blank
+        # the Sure category whose color the diagram uses; blank
         # clears (nil). Survives the savings-bucket reshaping below — the
         # picker is visible for every kind.
         category_id: a[:category_id].presence,
-        # Round 25 (Item 2): the account the row dresses (the bank dialog's
+        # the account the row dresses (the bank dialog's
         # "Make Allocated Sub-Account" popup sends the opened account's id;
         # the allocation dialog carries it in a hidden input so an edit
         # never silently unfreezes a dressed row). Blank = a plain row.
         # Existence + family membership are model-validated (422 contract).
         target_account_id: a[:target_account_id].presence
       }
-      # Round 25 R2: buckets keep the user-chosen mode + value — the generic
+      # buckets keep the user-chosen mode + value — the generic
       # shaping above already sets value_cents for required/specific and
       # value_percent for percent, exactly what the model wants for every
       # kind. Only the dialog's HIDDEN bucket controls are dropped here:
-      # cadence (round 3 owns bucket cadence), the detected-bill link
+      # cadence ( owns bucket cadence), the detected-bill link
       # (hidden for buckets — a bucket is never a bill shape) and the gone
       # auto-transfer flag.
       if %w[savings fun_money].include?(row[:kind].to_s)
@@ -1885,11 +1933,11 @@ class PlanFlowsController < ApplicationController
         row[:recurring_transaction_id] = nil
         row[:auto_transfer] = false
       end
-      # Round 31A (Fun Money v2): the fun_money row's configuration —
+      # (Fun Money v2): the fun_money row's configuration —
       # fun_money kind ONLY. For the other kinds the values are dropped
       # (nil) — a row edited from fun_money back to another kind clears its
       # config, and the non-fun_money dialog path is byte-identical to the
-      # pre-Round-31A one (the stop-rule property). The model's
+      # pre-fun-money one (the stop-rule property). The model's
       # fun_money_configuration is the backstop for hand-edited rows.
       # Blank/null ownership = the legacy Household behavior (the planner
       # treats NULL ownership as Household).
@@ -1911,11 +1959,11 @@ class PlanFlowsController < ApplicationController
     def parse_value_cents(value)
       return nil if value.blank?
 
-      cents = value.to_s.to_d * 100
+      cents = (value.to_s.to_d * 100).round
       cents.zero? ? nil : cents
     end
 
-    # Round 31A (Fun Money v2): the fun_money config value shaping — only
+    # (Fun Money v2): the fun_money config value shaping — only
     # values the model accepts pass through; anything else is nil (the
     # model's fun_money_configuration is the 422 backstop, and the dialog
     # only ever submits these for kind "fun_money").
@@ -1933,12 +1981,12 @@ class PlanFlowsController < ApplicationController
       end
     end
 
-    # Round 31A (Fun Money v2): the per-member percents (distribution
-    # "percent", C9) the dialog submits as
+    # (Fun Money v2): the per-member percents (distribution
+    # "percent") the dialog submits as
     # plan_allocation[distribution_percents][<user_id>] — stored in
     # distribution_params["percents"] (jsonb, string values). Blank for
     # every other distribution (a change away from "percent" clears the
-    # percents). The C14 input snapshot
+    # percents). The input snapshot
     # (distribution_params["inputs_snapshot"]) is written separately at
     # save time (persist_fun_money_input_snapshot).
     def fun_money_distribution_params(a, kind)
@@ -1962,7 +2010,7 @@ class PlanFlowsController < ApplicationController
       end
     end
 
-    # Round 31A (C14): after a successful fun_money row save, persist the
+    # after a successful fun_money row save, persist the
     # reconciliation's CURRENT input totals (per-income I_k / B_k / S_k
     # cents) into the row's distribution_params as the drift snapshot. The
     # planner compares the snapshot with the current inputs on every
@@ -1985,15 +2033,20 @@ class PlanFlowsController < ApplicationController
       allocation.update_columns(distribution_params: params)
     end
 
-    # Round 31A (Fun Money v2): the RED Un-Allocated lines — one per
+    # (Fun Money v2): the RED Un-Allocated lines — one per
     # discrepancy strictly above the 100-cent tolerance, naming the income
-    # ("an income" fallback, S10) or the aggregate Household line (C6).
+    # ("an income" fallback) or the aggregate Household line.
     # Pre-resolved server-side from the graph (same pattern as
     # over_plan_lines); rendered as the second line group in
     # _chrome_top.erb (no new endpoint).
     def discrepancy_lines
       @discrepancy_lines ||= (@graph[:discrepancies] || []).map do |row|
-        { income: row[:income_name] || "an income", amount: row[:un_allocated_month] }
+        # unit-aware like the over-plan lines
+        # (per-paycheck in the Per Paycheck view). The aggregate
+        # Household line (income_id nil) has no single income to divide
+        # by — it keeps its monthly figure in both views.
+        income = row[:income_id] && @graph[:incomes].find { |i| i[:id] == row[:income_id] }
+        { income: row[:income_name] || "an income", amount: unit_aware_amount(row[:un_allocated_month], income) }
       end
     end
 
@@ -2006,8 +2059,8 @@ class PlanFlowsController < ApplicationController
       fraction.zero? ? nil : fraction
     end
 
-    # Bank-config fields from the center card dialog (M2 PR#2b): plan_role,
-    # auto_transfer_to_account_id, the linked-income edges, and round 11
+    # Bank-config fields from the center card dialog: plan_role,
+    # auto_transfer_to_account_id, the linked-income edges, and
     # issue 8's sub-account link + multi-target auto-transfer. Absent keys
     # are left alone, so the old two-field card form keeps working.
     def apply_bank_config(account)
@@ -2020,7 +2073,7 @@ class PlanFlowsController < ApplicationController
       if account_params.key?("auto_transfer_to_account_id")
         account.update!(auto_transfer_to_account_id: account_params["auto_transfer_to_account_id"].presence)
       end
-      # Round 25 (owner-confirmed direction): the opened account becomes a
+      # the opened account becomes a
       # sub-account of the SELECTED bank — the ORIGINAL direction. Around
       # the parent change, keep the old/new parent's auto_transfer_target_ids
       # in sync so the split band draws and the child's allocations fund via
@@ -2037,14 +2090,14 @@ class PlanFlowsController < ApplicationController
         account.update!(parent_account_id: new_parent_id)
         sync_parent_fan_out(old_parent_id, new_parent_id, account)
       end
-      # Round 16: the logo picker (search + click-to-assign + clear). The
+      # the logo picker (search + click-to-assign + clear). The
       # dialog's hidden input always submits the current value, so presence
       # = keep / assign, blank = clear. An unknown slug 422s through the
       # model validation (BankLogoSlugs.available — vendored files only).
       if account_params.key?("bank_logo_slug")
         account.update!(bank_logo_slug: account_params["bank_logo_slug"].presence)
       end
-      # Round 11 issue 8: the checkbox submission order IS the band order —
+      # the checkbox submission order IS the band order —
       # the array is rebuilt from the param order, never re-sorted. The
       # "0" sent by an all-unchecked checkbox set is dropped.
       if account_params.key?("auto_transfer_target_ids")
@@ -2064,7 +2117,7 @@ class PlanFlowsController < ApplicationController
                 .compact
     end
 
-    # Round 25: pre-checks for a sub-account (parent) change, run BEFORE any
+    # pre-checks for a sub-account (parent) change, run BEFORE any
     # write inside update_account's transaction. The error field matches the
     # model's sub_account_consistent (:parent_account) so the 422 contract
     # (render_flow_json -> {"errors": {...}}) is identical to the model's
@@ -2086,10 +2139,10 @@ class PlanFlowsController < ApplicationController
       end
     end
 
-    # Round 25 (owner-confirmed direction): keep the parent's fan-out in
+    # keep the parent's fan-out in
     # sync with the opened account's sub-account (parent) change — the
     # SELECTED bank becomes the opened account's parent, so:
-    #   - link  (new parent P present, P != OLD): P.auto_transfer_target_ids
+    # - link (new parent P present, P != OLD): P.auto_transfer_target_ids
     #     gains `account.id` (order-preserving) -> the split band draws and
     #     the child's allocations fund via the fan-out pool.
     #   - unlink (new parent blank/nil, OLD present): the old parent's
@@ -2139,7 +2192,7 @@ class PlanFlowsController < ApplicationController
                                .index_by(&:income_series_id)
 
       begin
-        # Round 34 (spec 3): the Leftover guardrail — one account per member's
+        # the Leftover guardrail — one account per member's
         # paycheck may carry the leftover. If this save sets a leftover edge
         # for an income series that ALREADY has a leftover edge to a
         # DIFFERENT account, it would create a second leftover account for the
@@ -2181,7 +2234,7 @@ class PlanFlowsController < ApplicationController
               percent = row["value"].to_s.strip.to_d / 100
               (percent.positive? && percent <= 1) ? percent : 0
             when "required"
-              # Round 30: the stored percent of the bank's required
+              # the stored percent of the bank's required
               # amount this income funds (2 dp major units, blank =
               # nil = the equal split). The model validates the
               # 0 < value <= 100 range (the 422 {errors} path).
@@ -2207,7 +2260,7 @@ class PlanFlowsController < ApplicationController
         # non-editable incomes survive the dialog.
         editable_ids = income_series.map(&:id).to_set
         existing.each_value { |allocation| allocation.destroy! if editable_ids.include?(allocation.income_series_id) }
-      # R5 fix (BUG-7): the failing validation lives on the
+      # fix: the failing validation lives on the
       # IncomeAccountAllocation (value numericity), not on the account —
       # capture its errors for error_messages (the 422 body used to be
       # {"errors":{}}) and re-raise so update_account's existing rescue

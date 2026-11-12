@@ -1,5 +1,5 @@
-<%# Income node -> config dialog (M2 PR#2b): label the income to a family
-    member (blank = account-owner fallback), the hard bank-link limit
+<%# Income node -> config dialog: label the income to a family
+    member (blank = falls back to the account holder), the hard bank-link limit
     (plan_max_account_links, blank = unlimited; plan-time amber warning
     when exceeded, spec A4), and the link to the house Add-Family-Member
     page (Profile settings -> Household). Submits the PATCH flow_income
@@ -9,25 +9,25 @@
       data: { node_id: "income:#{series.id}" }) do |dialog| %>
   <% dialog.with_header(title: t(".title", name: series.name), subtitle: t(".subtitle")) %>
   <% dialog.with_body do %>
-    <%# In-place validation errors (owner round 3, R1/R7): the 422 response
+    <%# In-place validation errors: the 422 response
         renders them here — no full-reload flash for in-place submits. %>
     <div data-in-place-errors class="hidden space-y-1"></div>
-    <%# In-place submit (owner round 3, R1/R7): data-turbo off + the
+    <%# In-place submit: data-turbo off + the
         the in-place submit handler — the diagram tweens to the
         new graph instead of a full reload destroying it. %>
     <%= form_with url: flow_income_plan_path(series.id), method: :patch, scope: :series,
                   class: "space-y-5",
                   data: { turbo: "false", plan_flow_inplace: "true" } do |form| %>
-      <%# R35 (Flow Scenarios, design §2.2): the hidden scenario field —
+      <%# the hidden scenario field —
           rendered when a scenario is active so the in-place PATCH stays
           scoped (load_scenario reads params[:scenario]); absent = the
           live path, byte-identical Default DOM. %>
       <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
       <% if @scenario %>
-        <%# Scenario mode (design §4.5): the income-policy override — enabled /
+        <%# Scenario mode (the design): the income-policy override — enabled /
             zeroed / gross — writes the snapshot's income-policy row. The live
-            structural fields (owner / max links) are NOT scenario-editable
-            (they stay live, design §1.3). %>
+            structural fields (account holder / max links) are NOT scenario-editable
+            (they stay live). %>
         <% policy_row = (@scenario.snapshot["incomes"] || []).find { |r| r["series_id"] == series.id } %>
         <% enabled = policy_row ? policy_row["enabled"] != false : true %>
         <% zeroed  = policy_row ? policy_row["zeroed"] == true : false %>
@@ -82,7 +82,7 @@
       <% end %>
 
       <div class="flex justify-end pt-1">
-        <%# In-place save (owner round 3, R1/R7): see the form's data-action. %>
+        <%# In-place save: see the form's data-action. %>
         <button type="submit"
                 class="text-sm bg-primary text-on-primary rounded-lg px-3 py-1.5 hover:opacity-90">
           <%= t(".save") %>

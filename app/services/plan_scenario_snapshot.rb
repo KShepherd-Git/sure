@@ -1,4 +1,4 @@
-# Round 35 (Flow Scenarios): the snapshot builders. A scenario's `snapshot`
+# (Flow Scenarios): the snapshot builders. A scenario's `snapshot`
 # jsonb holds the plan state in the EXACT row shapes the planner's draft
 # seam already consumes — `PaycheckFlowPlanner.plan_allocation_rows` and
 # `edge_rows` (stringified) — plus per-member paycheck-config copies and a
@@ -10,11 +10,11 @@
 #   {
 #     "v" => 1,
 #     "plan_allocations" => [ plan_allocation_rows shape (string keys) ],
-#     "allocations"      => [ edge_rows shape (string keys) ],
+# "allocations" => [ edge_rows shape (string keys) ],
 #     "paycheck_configs" => [ { user_id, recurring_transaction_id,
 #                               gross_per_paycheck_cents, frequency,
 #                               anchor_date } ],
-#     "incomes"          => [ { series_id, enabled, zeroed,
+# "incomes" => [ { series_id, enabled, zeroed,
 #                               gross_per_paycheck_cents } ]
 #   }
 #

@@ -1,4 +1,4 @@
-# M2 PR#2b (Sure Paycheck Flow redesign): one allocation pulled out of a
+# one allocation pulled out of a
 # source bank on the family's planning diagram -- a bill, debt payment,
 # savings target, or fun money. The mode decides how much it gets per
 # paycheck; the bank-level resolution order is fixed and non-configurable
@@ -9,16 +9,16 @@ class PlanAllocation < ApplicationRecord
   # linked recurring transaction's interval/weekday, editable in the dialog.
   CADENCES = %w[weekly biweekly monthly quarterly yearly].freeze
 
-  # Round 31A (Fun Money as a first-class allocation): the fun_money row's
+  # (Fun Money as a first-class allocation): the fun_money row's
   # OWNERSHIP + DISTRIBUTION + MATCHING configuration (fun_money kind only —
   # every other kind ignores the columns, model-scoped below).
-  #   ownership:      "household" or a family user id; NULL = legacy row
+  # ownership: "household" or a family user id; NULL = legacy row
   #                   (treated as Household, byte-identical behavior).
-  #   distribution:   mirrors the bank-dialog Split Behavior values (C2);
+  # distribution: mirrors the bank-dialog Split Behavior values;
   #                   "percent" carries per-member percents in
-  #                   distribution_params (sum 100.00 +/- 0.01, C9).
-  #   matching:       C1's behaviors (Equalize | Per Income); NULL/ignored
-  #                   on Household and legacy rows (M2).
+  # distribution_params (sum 100.00 +/- 0.01).
+  # matching: 's behaviors (Equalize | Per Income); NULL/ignored
+  # on Household and legacy rows.
   FM_OWNERSHIP_HOUSEHOLD = "household".freeze
   FM_DISTRIBUTIONS = %w[equal rational percent individual_leftover].freeze
   FM_MATCHINGS = %w[equalize per_income].freeze
@@ -36,24 +36,24 @@ class PlanAllocation < ApplicationRecord
 
   belongs_to :family
   # The source bank the money is pulled from (the diagram's "SOURCE BANK").
-  # Optional (owner review round 3, R3): a bank removed from the plan leaves
+  # Optional: a bank removed from the plan leaves
   # its allocations behind, unassigned ("No Assignment" marker) — they are
   # excluded from resolution until re-assigned.
   # The source bank the money is pulled from (the diagram's "SOURCE BANK").
-  # Optional (owner review round 3, R3): a bank removed from the plan leaves
+  # Optional: a bank removed from the plan leaves
   # its allocations behind, unassigned ("No Assignment" marker) — they are
-  # excluded from resolution until re-assigned. For kind "savings" (owner
-  # round 10, issue 4) this SAME field is the bucket's associated account:
+  # excluded from resolution until re-assigned. For kind "savings"
+  # this SAME field is the bucket's associated account:
   # the planner resolution and the Sankey band both key off it, and the
   # dialog labels it "Which Account is this Savings Bucket Associated to".
   belongs_to :account, optional: true
   # The detected bill/debt this allocation represents (autofill source).
   belongs_to :recurring_transaction, optional: true
-  # Round 16 (owner note 2): the Sure category whose color the diagram uses
+  # the Sure category whose color the diagram uses
   # for this allocation's band. Optional — an allocation without a category
   # renders with no color (nil), never a fabricated one.
   belongs_to :category, optional: true
-  # Round 25 (Item 2): "Make Allocated Sub-Account" — the account this row
+  # "Make Allocated Sub-Account" — the account this row
   # DRESSES. Present, the row is the account's own pillar node in the
   # allocation column (the diagram draws it with the account's identity)
   # funded from the source bank (account_id, frozen semantics); the bank's
@@ -69,7 +69,7 @@ class PlanAllocation < ApplicationRecord
   validate :references_belong_to_family
   validate :fun_money_configuration
 
-  # Round 31A (C11 legacy-safe): the ownership as the planner reads it —
+  # ( legacy-safe): the ownership as the planner reads it —
   # NULL (legacy rows) behaves as the Household shared pool.
   def resolved_ownership
     ownership.presence || FM_OWNERSHIP_HOUSEHOLD
@@ -86,8 +86,8 @@ class PlanAllocation < ApplicationRecord
   end
 
   private
-    # Round 31A (Fun Money v2): the ownership / distribution / matching
-    # configuration is fun_money-kind only (C1-C2, C9, C11). House pattern
+    # (Fun Money v2): the ownership / distribution / matching
+    # configuration is fun_money-kind only ( - ). House pattern
     # (cf. references_belong_to_family): model-level validation, 422
     # contract on violation; no DB check constraints (the migration is
     # additive + nullable on purpose).
@@ -100,10 +100,10 @@ class PlanAllocation < ApplicationRecord
     #   - distribution / matching must be one of the fixed sets;
     #   - distribution "percent" requires per-member percents in
     #     distribution_params: keyed by family user ids, 0-100, summing to
-    #     100.00 +/- 0.01 (C9).
+    # 100.00 +/- 0.01.
     def fun_money_configuration
       unless kind == "fun_money"
-        # Fun Money v2 (Round 31A): the config columns are fun_money-only —
+        # Fun Money v2: the config columns are fun_money-only —
         # a value on any other kind is a 422 (the dialog never submits
         # them; this is the backstop for hand-edited rows).
         errors.add(:ownership, "is only set on a Fun Money allocation") if ownership.present?
@@ -156,10 +156,10 @@ class PlanAllocation < ApplicationRecord
       case mode
       when "required"
         if kind == "savings"
-          # Round 10 issue 4: a savings bucket's monthly figure is always
+          # a savings bucket's monthly figure is always
           # TYPED (the dialog hides the detected-bill link for kind
           # "savings"), so a linked recurring transaction is no substitute
-          # — the explicit monthly amount is required.
+          # the explicit monthly amount is required.
           errors.add(:value_cents, "is required for a savings bucket") if value_cents.nil?
         elsif value_cents.nil? && recurring_transaction_id.blank?
           errors.add(:value_cents, "is required unless a recurring transaction is linked")
@@ -199,7 +199,7 @@ class PlanAllocation < ApplicationRecord
       errors.add(:category, "must belong to the same family") if
         category.present? && category.family_id != family_id
 
-      # Round 25 (Item 2): the dressed account (Make Allocated Sub-Account)
+      # the dressed account (Make Allocated Sub-Account)
       # must exist AND belong to this family. A blank id is a plain row;
       # a dangling id loads nil (existence check), a cross-family id loads
       # the account (membership check) — same shape as the checks above.

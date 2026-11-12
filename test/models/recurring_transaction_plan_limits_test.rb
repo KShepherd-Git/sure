@@ -1,6 +1,6 @@
 require "test_helper"
 
-# M2 PR#2b: the income's hard bank-link limit (plan_max_account_links). At
+# the income's hard bank-link limit (plan_max_account_links). At
 # plan time the planner raises a warning, never an error; the model only
 # enforces "positive integer when set".
 class RecurringTransactionPlanLimitsTest < ActiveSupport::TestCase

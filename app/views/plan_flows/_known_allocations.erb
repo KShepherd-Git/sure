@@ -1,9 +1,9 @@
-<%# The "Known Allocations" list (owner round 2, F3; round 8) for the
+<%# The "Known Allocations" list (; ) for the
     new-allocation dialog: the family's detected bills / subscriptions that
     are NOT already in the diagram — an allocation that links a detected
-    bill keeps it out of this list (owner: "it only lists Known Allocations
+    bill keeps it out of this list (the stated requirement: "it only lists Known Allocations
     that are not already in the Diagram"). Extracted so the in-place
-    allocation updates (owner round 3, R1/R7) can refresh it without a full
+    allocation updates can refresh it without a full
     reload.
     locals: (known_allocations, known_hidden = false) — known_hidden is
     true when at least one detected bill is already planned (so an empty
@@ -15,7 +15,7 @@
   <% if known_allocations.blank? %>
     <p class="text-xs text-secondary"><%= known_hidden ? t("plan_flows.allocation_dialog.known_all_planned") : t("plan_flows.allocation_dialog.known_empty") %></p>
   <% end %>
-  <%# Round 21 T3: the list is a shorter sub-section inside the dialog (the
+  <%# the list is a shorter sub-section inside the dialog (the
       container around this partial is a darker, less-tall inset), so the
       scroll cap comes down a step. %>
   <ul class="space-y-1 max-h-40 overflow-y-auto pr-1">

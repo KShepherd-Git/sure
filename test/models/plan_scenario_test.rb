@@ -1,6 +1,6 @@
 require "test_helper"
 
-# Round 35 (Flow Scenarios): the PlanScenario model. The "Default" plan is
+# (Flow Scenarios): the PlanScenario model. The "Default" plan is
 # the ABSENCE of an active scenario (no row), so the model only guards what
 # a row may be: a family-scoped name (presence, 40 chars, case-insensitive
 # uniqueness, the reserved word "default"), a valid source, and the
@@ -36,16 +36,16 @@ class PlanScenarioTest < ActiveSupport::TestCase
 
   test "case-insensitive family-scoped uniqueness" do
     family = families(:dylan_family)
-    family.plan_scenarios.create!(name: "Wife quits", snapshot: {})
+    family.plan_scenarios.create!(name: "Second income quits", snapshot: {})
 
-    assert_not build(name: "Wife Quits").valid?, "case-insensitive collision must fail"
-    collision = build(name: "wife quits")
+    assert_not build(name: "Second Income Quits").valid?, "case-insensitive collision must fail"
+    collision = build(name: "second income quits")
     assert_not collision.valid?
     assert_equal [ "has already been taken" ], collision.errors[:name]
 
     # Other families may use the same name (family-scoped).
     other = families(:empty)
-    assert build(name: "Wife quits", family: other).valid?
+    assert build(name: "Second income quits", family: other).valid?
   end
 
   test "reserved name default (case-insensitive)" do

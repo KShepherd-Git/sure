@@ -1,4 +1,4 @@
-# Round 35 (Flow Scenarios): the scenario-owned snapshot blob (design (a2):
+# (Flow Scenarios): the scenario-owned snapshot blob (design (a2):
 # one plan_scenarios.snapshot jsonb column per scenario, in the planner's
 # draft row shapes). Default is NOT a row — the absence of an active
 # scenario is the live plan — so the invariants are structural: Default

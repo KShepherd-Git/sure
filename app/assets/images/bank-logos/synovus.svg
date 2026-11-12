@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-<!-- monogram fallback (P3-f 2026-11-02); original lockup at git HEAD 1ef7aac -->
+<!-- monogram fallback (2026-11-02); original lockup at git HEAD 1ef7aac -->
 <rect x="2" y="2" width="44" height="44" rx="10" fill="#e52127"/>
 <text x="24" y="24" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#ffffff" text-anchor="middle" dominant-baseline="central">S</text>
 </svg>

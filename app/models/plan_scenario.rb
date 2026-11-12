@@ -1,4 +1,4 @@
-# Round 35 (Flow Scenarios): one what-if plan for a family. The `snapshot`
+# (Flow Scenarios): one what-if plan for a family. The `snapshot`
 # jsonb holds the plan state in the planner's draft row shapes (see
 # PlanScenarioSnapshot) — plan allocations, income->bank edges, paycheck
 # config copies and the per-series income policy. "Default" is not a row:

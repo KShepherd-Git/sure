@@ -504,20 +504,20 @@ Rails.application.routes.draw do
 
   # Hub page fronting budgets + goals under a single "Plan" nav entry.
   resource :plan, only: :show do
-    # Paycheck Flow (M2 PR#2b): the planning diagram (Sankey), preview-gated.
+    # Paycheck Flow: the planning diagram (Sankey), preview-gated.
     get :flow, to: "plan_flows#show", on: :collection, as: :flow
     get :flow_add_accounts_modal, to: "plan_flows#add_accounts_modal", on: :collection,
                                   as: :flow_add_accounts_modal, path: "flow/add-accounts"
     post :flow_add_accounts, to: "plan_flows#add_accounts", on: :collection, as: :flow_add_accounts
-    # (flow_create_account removed in owner round 2, F2: no own manual
+    # (flow_create_account removed in , : no own manual
     # account creation on this page — the modal links to the house page.)
     patch :flow_account, to: "plan_flows#update_account", on: :collection, as: :flow_account,
                          path: "flow/accounts/:account_id", params: [ :account_id ]
-    # Remove a bank from the plan (owner review round 3, R3): its allocations
+    # Remove a bank from the plan: its allocations
     # persist unassigned ("No Assignment"), edges + plan markers are dropped.
     delete :flow_account_remove, to: "plan_flows#remove_account", on: :collection, as: :flow_account_remove,
                                  path: "flow/accounts/:account_id", params: [ :account_id ]
-    # Round 20d: custom bank-logo upload + removal (the avatar popup in the
+    # custom bank-logo upload + removal (the avatar popup in the
     # bank config dialog). Image only, sane size; per-account ActiveStorage.
     post :flow_bank_logo, to: "plan_flows#upload_bank_logo", on: :collection, as: :flow_bank_logo,
                           path: "flow/accounts/:account_id/bank-logo", params: [ :account_id ]
@@ -525,25 +525,25 @@ Rails.application.routes.draw do
                                    path: "flow/accounts/:account_id/bank-logo", params: [ :account_id ]
     patch :flow_income, to: "plan_flows#update_income", on: :collection, as: :flow_income,
                         path: "flow/incomes/:income_id", params: [ :income_id ]
-    # Round 31B (Direct Deposit): save one member's paycheck config
+    # (Direct Deposit): save one member's paycheck config
     # (gross / frequency / anchor). Derived dates flow through the planner
     # overlay; no occurrences are written.
     patch :flow_paycheck_config, to: "plan_flows#update_paycheck_config", on: :collection,
                                  as: :flow_paycheck_config, path: "flow/paycheck-config/:user_id",
                                  params: [ :user_id ]
-    # Planning diagram JSON (M2 PR#2b): saved state + draft preview.
+    # Planning diagram JSON: saved state + draft preview.
     get :flow_graph, to: "plan_flows#graph", on: :collection, as: :flow_graph, path: "flow/graph"
-    # Allocation dialog CRUD (M2 PR#2b).
+    # Allocation dialog CRUD.
     post :flow_allocation_create, to: "plan_flows#create_allocation", on: :collection,
                                   as: :flow_allocation_create, path: "flow/allocations"
     patch :flow_allocation_update, to: "plan_flows#update_allocation", on: :collection,
                                    as: :flow_allocation_update, path: "flow/allocations/:id", params: [ :id ]
     delete :flow_allocation_destroy, to: "plan_flows#destroy_allocation", on: :collection,
                                     as: :flow_allocation_destroy, path: "flow/allocations/:id", params: [ :id ]
-    # R35 (Flow Scenarios): the scenario CRUD + reset (design §3). The
+    # (Flow Scenarios): the scenario CRUD + reset (the design). The
     # picker (server-rendered DS::Menu) drives index / rename / delete; the
     # create dialog drives create; the per-scenario Reset affordance
-    # (owner decision) drives reset. ?scenario= scopes every plan-flow
+    # drives reset. ?scenario= scopes every plan-flow
     # state/action URL (the load_scenario before_action resolves it).
     get :flow_scenarios, to: "plan_flows#flow_scenarios", on: :collection,
                         as: :flow_scenarios, path: "flow/scenarios"
@@ -919,7 +919,7 @@ Rails.application.routes.draw do
       end
       resource :usage, only: [ :show ], controller: :usage
       resource :cash_flow, only: [ :show ], controller: :cash_flows
-      # Paycheck Flow Planner (M2): resolved money map for one month.
+      # Paycheck Flow Planner: resolved money map for one month.
       get "families/:id/paycheck-plans", to: "paycheck_plans#show", as: :family_paycheck_plans
       resource :spending_vs_normal, only: [ :show ], controller: :spending_vs_normal
       resource :balance_sheet, only: [ :show ], controller: :balance_sheet

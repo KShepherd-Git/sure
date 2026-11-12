@@ -51,13 +51,13 @@ class Family < ApplicationRecord
   has_many :accounts, dependent: :destroy
   has_many :invitations, dependent: :destroy
 
-  # Paycheck Flow Planner (M2): the income -> account money map and its
+  # Paycheck Flow Planner: the income -> account money map and its
   # leftover attribution setting.
   has_many :income_account_allocations, dependent: :destroy
   has_one :family_plan_settings, dependent: :destroy
-  # Paycheck Flow Planner (M2 PR#2b): the bank -> item allocations.
+  # Paycheck Flow Planner: the bank -> item allocations.
   has_many :plan_allocations, dependent: :destroy
-  # Round 35 (Flow Scenarios): the scenario-owned plan snapshots (the
+  # (Flow Scenarios): the scenario-owned plan snapshots (the
   # Default plan is the absence of an active scenario — it has no row).
   has_many :plan_scenarios, dependent: :destroy
 
@@ -148,7 +148,7 @@ class Family < ApplicationRecord
   has_many :recurring_transactions, dependent: :destroy
   has_many :recurring_occurrences, dependent: :destroy
   has_many :insights, dependent: :destroy
-  # Round 31B (Direct Deposit): per-member paycheck configs (the planner's
+  # (Direct Deposit): per-member paycheck configs (the planner's
   # overlay source — derived dates + gross, no stored occurrences).
   has_many :family_paycheck_configs, dependent: :destroy
 

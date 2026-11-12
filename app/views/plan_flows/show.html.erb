@@ -1,4 +1,4 @@
-<%# Paycheck Flow (M2 PR#2b redesign): the planning diagram — incomes ->
+<%# Paycheck Flow: the planning diagram — incomes ->
     banks -> allocations as a Sankey in the house Cashflow style. Node
     vertical order is ALGORITHMIC (flow-weighted, stable, crossing-
     minimizing; no manual ordering UI, spec A2). Per Paycheck | Per Month
@@ -24,7 +24,7 @@
 
   <div class="flex items-center justify-between gap-3 flex-wrap">
     <div class="flex items-center gap-3">
-      <%# R35 (Flow Scenarios, design §4.1) / R35b: the Flow Scenario
+      <%# The Flow Scenario
           picker — the FIRST item of the toggle row (moved here from the
           standalone right-aligned row above). The trigger renders inside
           the house segmented-control track (the same .segmented-control
@@ -33,10 +33,10 @@
           font). Default state labels the live plan ("Flow Scenario:
           Default"); an active scenario labels its name with the --active
           segment styling. No :scenario param means the page is
-          byte-identical to the pre-R35 one beyond this row. %>
+          byte-identical to the legacy one beyond this row. %>
       <%= render "plan_flows/scenario_picker", scenarios: @scenarios, active: @scenario %>
 
-      <%# Round 33 (spec 3): Per Paycheck <-> Per Month is now an IN-PLACE
+      <%# Per Paycheck <-> Per Month is now an IN-PLACE
           toggle (plain buttons, no href — same house pattern as the
           Manage/View sizing mode below): the sankey controller's
           document-level delegation flips the active segment, morphs ONLY
@@ -52,7 +52,7 @@
         <% control.with_segment(t(".view_monthly"), active: @view == "monthly", data: { plan_flow_sankey_view: "monthly" }) %>
       <% end %>
 
-      <%# Issue 10 (View/Manage): the diagram sizing-mode toggle — styled
+      <%# (View/Manage): the diagram sizing-mode toggle — styled
           and positioned like the view toggle above (same component, same
           row). Plain buttons, no href: unlike the ?view= reload toggle,
           the sankey controller re-renders the diagram IN PLACE and flips
@@ -63,7 +63,7 @@
         <% control.with_segment(t(".mode_view"), active: false, data: { plan_flow_sankey_mode: "view" }) %>
       <% end %>
 
-      <%# Round 33 (spec 2): the paycheck-unit kebab — RIGHT of the
+      <%# The paycheck-unit kebab — RIGHT of the
           Manage/View segmented control. The Per Paycheck divisor choice:
           per income occurrence (DEFAULT — each Per Paycheck figure
           divides by how many times THAT income lands in the month) or the
@@ -74,7 +74,7 @@
           Turbo), morphs the values, and persists ?paycheck_unit= via
           replaceUrl — the hrefs keep a no-JS full-reload fallback. The
           check gutter flips client-side (see #updateUnitToggleUI). %>
-      <%# R35c (owner spec): the kebab + the two compact hover icons share ONE
+      <%# The kebab + the two compact hover icons share ONE
           flex unit (gap-2 = 8px between kebab / yellow / red); the row's own
           gap-3 still separates the Manage/View toggle from the kebab. %>
       <div class="flex items-center gap-2">
@@ -83,11 +83,11 @@
           <% menu.with_item(variant: "link", text: t(".unit_family"), selected: @paycheck_unit == "family", href: flow_plan_path(view: @view, paycheck_unit: "family"), data: { plan_flow_sankey_unit: "family" }) %>
         <% end %>
 
-        <%# R35c (owner spec): the SCENARIO info icon — replaces the amber
-            banner strip (R35c removed it from _chrome_top.erb). One "i" in a
+        <%# The SCENARIO info icon — replaces the amber
+            banner strip (removed from _chrome_top.erb). One "i" in a
             circle (lucide info), amber, 18px in a 28px row slot, vertically
             centered. Pure CSS hover (group / group-hover — NO JS listeners,
-            round-28 float rule): the popup floats ABOVE the icon, right edge
+            float rule): the popup floats ABOVE the icon, right edge
             aligned (right-0) so it extends LEFT into open space (the legend
             sits at the far right of the row). The pt-2 bridge span makes the
             8px gap part of the hoverable DOM so the mouse can travel from
@@ -118,56 +118,17 @@
           </span>
         <% end %>
 
-        <%# R35c (owner spec): the PLAN ISSUES icon — replaces the red line
-            groups (R35c removed the over-plan + Un-Allocated line groups
-            from _chrome_top.erb; same locals, same t() calls, same order:
-            over-plan lines first, then the Un-Allocated discrepancies).
-            Caution "!" line icon (lucide triangle-alert, stroke style),
-            theme-aware red (text-destructive: red-500 light / red-400
-            dark). Same pure-CSS hover pattern as the yellow icon: popup
-            above, right-aligned, extends left, pt-2 bridge. One list item
-            per red line, the exact current line text. Visible only while at
-            least one red line exists. %>
-        <% if @over_plan_lines.any? || @discrepancy_lines&.any? %>
-          <span class="relative group inline-flex h-7 w-7 items-center justify-center"
-                aria-label="<%= t('.aria_discrepancies') %>">
-            <svg class="h-[18px] w-[18px] text-destructive"
-                 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z"/>
-              <path d="M12 9v4"/>
-              <path d="M12 17h.01"/>
-            </svg>
-            <span class="absolute right-0 bottom-full z-50 hidden group-hover:block">
-              <span class="block pt-2">
-                <span class="block w-max max-w-[400px] rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900 shadow-md theme-dark:border-red-800 theme-dark:bg-red-950 theme-dark:text-red-100">
-                  <ul class="space-y-1">
-                    <% @over_plan_lines.each do |line| %>
-                      <li>
-                        <%= t(".over_plan",
-                              amount: number_to_currency(line[:amount], currency: Current.family.currency),
-                              income: line[:income],
-                              item: line[:item]) %>
-                      </li>
-                    <% end %>
-                    <% @discrepancy_lines&.each do |line| %>
-                      <li>
-                        <%= t(".un_allocated",
-                              income: line[:income],
-                              amount: number_to_currency(line[:amount], currency: Current.family.currency)) %>
-                      </li>
-                    <% end %>
-                  </ul>
-                </span>
-              </span>
-            </span>
-          </span>
-        <% end %>
+        <%# The PLAN ISSUES icon is a SWAP FRAGMENT —
+            the icon markup lives in _flow_issues_icon (unchanged); show renders it inside the ALWAYS-present holder span so
+            an in-place save response (chrome.issues_icon) can swap the
+            holder's contents and the icon appears or disappears without a
+            reload. Empty holder (no red lines) = zero layout footprint. %>
+        <span data-flow-chrome="issues-icon"><%= render partial: "plan_flows/flow_issues_icon" %></span>
       </div>
     </div>
 
-    <%# The color language (spec §2): income green / spending amber / debt
-        red / savings blue (owner round 3, R4) / surplus green /
+    <%# The color language: income green / spending amber / debt
+        red / savings blue / surplus green /
         unallocated half-tone. %>
     <div class="hidden md:flex items-center gap-4 text-xs text-secondary">
       <span class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-[#10A861]"></span><%= t(".legend_income") %></span>
@@ -179,19 +140,19 @@
     </div>
   </div>
 
-  <%# R35c (owner spec): the former chrome-top line groups moved — the
-      amber scenario banner (R35) and the red line groups (the over-plan
-      lines + the R31A Un-Allocated discrepancies) now live as compact
+  <%# The former chrome-top line groups moved — the
+      amber scenario banner and the red line groups (the over-plan
+      lines + the RED Un-Allocated discrepancies) now live as compact
       hover icons in the toggle row above (right of the kebab, fed from the
       same @scenario / @over_plan_lines / @discrepancy_lines locals). The
       red node styling is still drawn by the Sankey from the same graph
-      data. The chrome partial now ships only the C14 amber drift prompt;
-      the in-place JSON swaps (owner round 3, R1/R7) re-render it as
+      data. The chrome partial now ships only the amber drift prompt;
+      the in-place JSON swaps re-render it as
       before. %>
   <%= render "plan_flows/chrome_top" %>
 
   <div class="relative rounded-xl bg-container shadow-border-xs overflow-hidden">
-    <%# Column action buttons (owner round 2, F2: replace the black SVG
+    <%# Column action buttons (: replace the black SVG
         column headers). + Add Income -> the house income/payroll page;
         + Add Account -> the known-accounts popup; + Add Allocation -> the
         dialog. Same styling as the floating Add Allocation button. %>
@@ -201,7 +162,7 @@
         <%= icon("plus", class: "h-3 w-3") %><%= t(".add_income") %>
       <% end %>
     </div>
-    <%# Owner round 3, R5: Add Account matches the Add Income / Add
+    <%# Add Account matches the Add Income / Add
         Allocation buttons exactly (same classes; the DS::Link outline
         variant was taller). Same modal frame as before. %>
     <div class="absolute left-1/2 -translate-x-1/2 top-2 z-10">
@@ -214,23 +175,23 @@
     <%# The diagram. The Sankey controller fetches /plan/flow/graph and
         draws it; the embedded maps are static (names + in-plan membership),
         never plan state.
-        Round 16 (owner notes A/B, 2026-11-07): the wrapper is min-height
+        the wrapper is min-height
         (not a fixed height) so the PAGE GROWS when the MANAGE label floors
-        grow the chart (the owner accepts the vertical page scroll — no
+        grow the chart (the vertical page scroll is accepted — no
         clipping), and overflow-x:auto so the MANAGE min-width diagram (the
         zero-label-overlap width the controller computes) scrolls
         horizontally instead of squeezing the labels. VIEW is unaffected:
         its svg fits the container width exactly, so no scrollbar appears. %>
     <div style="min-height: 480px; overflow-x: auto"
          data-controller="plan-flow-sankey"
-         <%# R35 (Flow Scenarios): the sankey fetches this exact URL, so an
+         <%# (Flow Scenarios): the sankey fetches this exact URL, so an
              active scenario rides along as ?scenario= — zero JS change.
              Default (no active scenario) renders the bare path, byte-
-             identical to the pre-R35 attribute (Rails drops nil params). %>
+             identical to the legacy attribute (Rails drops nil params). %>
          data-plan-flow-sankey-graph-url-value="<%= flow_graph_plan_path(scenario: @scenario&.id) %>"
          data-plan-flow-sankey-view-value="<%= @view %>"
          data-plan-flow-sankey-mode-value="manage"
-         <%# Round 33: the active Per-Paycheck unit (income | family).
+         <%# the active Per-Paycheck unit (income | family).
              Toggled in place by the paycheck-unit kebab; ?paycheck_unit=
              persists through replaceUrl and any full reload. %>
          data-plan-flow-sankey-unit-value="<%= @paycheck_unit %>"
@@ -240,11 +201,11 @@
          data-plan-flow-sankey-labels-value="<%= { "income" => t(".column_incomes"), "bank" => t(".column_banks"), "allocation" => t(".column_allocations"), "surplus" => t(".surplus_node"), "unallocated" => t(".unallocated_node"), "unassigned" => t(".unassigned_node"), "error" => t(".chart_error"), "empty" => t(".chart_empty") }.to_json %>">
     </div>
 
-    <%# Round 31B (Direct Deposit): the bottom action row — the Direct
-        Deposit Review entry point (B1 label, verbatim; the pill pattern
+    <%# (Direct Deposit): the bottom action row — the Direct
+        Deposit Review entry point (label text verbatim; the pill pattern
         from the segmented-control CSS). Both View and Manage sizing
         modes; opens the paycheck-config dialog (one tab per existing
-        member, B3). %>
+        member). %>
     <div class="flex items-center gap-2 px-3 pb-2">
       <button type="button"
               class="segmented-control__segment focus-ring"
@@ -255,13 +216,13 @@
 
     <%# The absolutely-positioned chrome (banks empty state, allocations
         empty state + Recommended, no-incomes note): server-rendered via
-        the chrome partial so in-place JSON updates (owner round 3,
-        R1/R7) can swap it without a reload. %>
+        the chrome partial so in-place JSON updates
+        can swap it without a reload. %>
     <%= render "plan_flows/chrome_overlays" %>
   </div>
 
   <%# Dialogs (house DS::Dialog, opened by node click / buttons). Saves are
-      in-place fetches (owner review round 3, R1/R7: data-turbo off + the
+      in-place fetches (data-turbo off + the
       in-place submit handler) — the diagram tweens to the new
       graph, no full reload. %>
   <% @in_plan_accounts.each do |account| %>
@@ -269,21 +230,21 @@
     <%= render "plan_flows/bank_config_dialog",
                account: account, edges: edges, available_bank_logos: @available_bank_logos,
                view: @view,
-               # Round 27 (owner item 4): the read-only dialog context —
+               # The read-only dialog context —
                # the required base in the active view unit + the per-income
                # amounts for the client-side auto-fill and ratio
                # re-derivation (never submitted).
                required_display_amount: (@bank_required_display || {})[account.id],
                income_amounts: @income_display_amounts,
-               # Round 30: the per-income required-split readouts (greyed
+               # The per-income required-split readouts (greyed
                # 50/50 / Proportional readouts + the stored percents behind
                # the Percent behavior's inputs).
                required_splits: (@bank_required_splits || {})[account.id],
-               # Round 33: the active paycheck unit (the dialog's hidden
+               # The active paycheck unit (the dialog's hidden
                # paycheck_unit input — in-place saves re-render the
                # readouts in the selected unit).
                paycheck_unit: @paycheck_unit,
-               # Round 34 (spec 3): the Leftover guardrail — income series
+               # The Leftover guardrail — income series
                # id -> the account id of its existing leftover edge. The
                # dialog greys the "Leftover" option for a member's other
                # allocations when that paycheck already has a leftover edge
@@ -293,19 +254,19 @@
   <% @income_series.each do |series| %>
     <%= render "plan_flows/income_config_dialog", series: series %>
   <% end %>
-  <%# Round 31B (Direct Deposit): the Direct Deposit Review dialog — one
-      tab per existing family member (B3), in-place saves (the shared
+  <%# (Direct Deposit): the Direct Deposit Review dialog — one
+      tab per existing family member, in-place saves (the shared
       #inPlaceSubmit handler), derived monthly + next-4 readouts. The
       dialog re-renders through the in-place chrome after a save. %>
   <%= render "plan_flows/paycheck_config_dialog", tabs: @paycheck_config_tabs, month: @month %>
   <%= render "plan_flows/allocation_dialog", allocation: nil, known_allocations: @known_allocations,
         known_hidden: @known_allocations_hidden %>
-  <%# Round 21 T4: the "selected allocation" window — the SAME partial a
+  <%# the "selected allocation" window — the SAME partial a
       second time (allocation nil, show_known: false so the known list and
       its CTA live ONLY in allocation:new; the in-place known-list swap
       keeps a single [data-plan-flow-target='knownSection'] holder).
-      openKnownAllocation prefills THIS dialog's form and showModal()s it.
-      It carries the bank-rows holder, so #inPlaceSubmit's R1 fragment
+      openKnownAllocation prefills THIS dialog's form and opens it via showModal().
+      It carries the bank-rows holder, so #inPlaceSubmit's fragment
       swap re-checks its radios too. %>
   <%= render "plan_flows/allocation_dialog", allocation: nil,
         node_id: "allocation:selected", show_known: false %>

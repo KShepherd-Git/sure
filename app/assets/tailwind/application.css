@@ -263,14 +263,14 @@
   );
 }
 
-/* plan flow: category popover chevron rotation (R22 N8).
+/* plan flow: category popover chevron rotation.
    Appended to the prebuilt app/assets/builds/tailwind.css in dev too
    (gitignored build artifact; no tailwind build process runs in-container). */
 [aria-expanded="true"] .planflow-cat-chevron {
   rotate: 180deg;
 }
 
-/* plan flow: round 33 value morph (spec 3). The Per Paycheck <-> Per Month
+/* plan flow: the in-place value morph. The Per Paycheck <-> Per Month
    toggle and the paycheck-unit kebab re-render the diagram IN PLACE (the
    sankey controller's tween); the dollar values fade + blur into the NEW
    numbers while the diagram stays put — the controller adds

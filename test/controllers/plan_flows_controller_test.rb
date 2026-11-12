@@ -59,7 +59,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 
   # The exact in-place save the bank dialog's Save button posts (the
   # account hidden inputs + the COMPLETE links map — one row per family
-  # income; the Round 27 dialog submits the hidden mode/value inputs,
+  # income; the dialog submits the hidden mode/value inputs,
   # which this shape mirrors).
   def patch_bank_links(links:, account: @account)
     patch "/plan/flow/accounts/#{account.id}", headers: { "Accept" => "application/json" }, params: {
@@ -88,7 +88,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_select "form[action='/plan/flow_save']", count: 0
       # The income node's config dialog is rendered for the declared series.
       assert_select "dialog[data-node-id='income:#{series.id}']", 1
-      # Owner round 2 (F2): the column headers are buttons — Add Income goes
+      # the column headers are buttons — Add Income goes
       # to the house incomes page, Add Account opens the existing-accounts
       # modal. No black column-header text on the page.
       assert_select "a[href='#{bills_path(view: 'paycheck')}']", text: /Add Income/
@@ -126,7 +126,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_response :success
       assert_includes response.body, I18n.t("plan_flows.show.banks_not_planned", count: count)
       # The header button and the empty-state card both point at the modal
-      # (round 2 F2).
+      # .
       assert_select "a[href='/plan/flow/add-accounts']", min: 1
       # No bank dialogs: nothing is in the plan.
       assert_select "dialog[data-node-id^='bank:']", count: 0
@@ -143,7 +143,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 
       assert_response :success
       assert_includes response.body, I18n.t("plan_flows.show.add_allocation")
-      # Round 25 R3: the empty-state CTA is the 4-kind picker (a DS::Menu
+      # the empty-state CTA is the 4-kind picker (a DS::Menu
       # flat action menu — Bill / Debt / Savings / Fun Money). The trigger
       # carries no plan-flow data-action of its own (the DS--menu
       # controller's own click listener toggles the menu); the items are
@@ -155,8 +155,8 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       end
       # The dialog header CTA renders its own picker instance.
       assert_select "dialog[data-node-id='allocation:new'] button[data-allocation-kind='bill']", 1
-      # Round 21 T2: the Recommended list was removed from the empty state
-      # (owner decision); the header + Add Allocation button are the only
+      # the Recommended list was removed from the empty state
+      # ; the header + Add Allocation button are the only
       # allocation access left in the empty column.
       assert_not_includes response.body, I18n.t("plan_flows.show.recommended")
       assert_select "button[data-action='plan-flow#openRecommended']", 0
@@ -176,7 +176,15 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       get "/plan/flow"
 
       assert_response :success
-      # 1800 in, 2500 required -> 700 short on the income.
+      # 1800/mo in (2 x 900.00), 2500/mo required -> 700.00/mo short.
+      # the top-bar figure is unit-aware —
+      # the default Per Paycheck view shows the per-paycheck share
+      # (700.00 / 2 occurrences = 350.00).
+      assert_includes response.body, "Over-planned by $350.00 on Bob Payroll"
+
+      # The Per Month view renders the same line with the monthly figure.
+      get "/plan/flow", params: { view: "monthly" }
+      assert_response :success
       assert_includes response.body, "Over-planned by $700.00 on Bob Payroll"
     end
   end
@@ -193,7 +201,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_select "dialog[data-node-id='bank:#{@account.id}']", 1 do
         # The linked income is checked; the value input is enabled (percent).
         assert_select "input[name='links[#{series.id}][enabled]'][checked]"
-        # Round 27 (owner item 3): the mode select is an R26-style trigger
+        # the mode select is an -style trigger
         # button — the hidden mode input (the submit carrier) holds the
         # stored mode and the four modes are the floating panel's radios.
         assert_select "input[type=hidden][name='links[#{series.id}][mode]'][value=percent]", 1
@@ -201,14 +209,14 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "[data-bank-pull-panel-group='row-#{series.id}'] input[type=radio][value=specific]", 1
         assert_select "[data-bank-pull-panel-group='row-#{series.id}'] input[type=radio][value=percent]", 1
         assert_select "[data-bank-pull-panel-group='row-#{series.id}'] input[type=radio][value=leftover]", 1
-        # Ownership / role / sub-account selects (round 11 issue 8: the
+        # Ownership / role / sub-account selects ( issue 8: the
         # legacy single auto-transfer select is replaced by the
         # sub-account-of select + the multi-target fan-out checkboxes).
         assert_select "select[name='account[plan_ownership]']"
         assert_select "select[name='account[plan_role]'] option[value=savings_bucket]"
         assert_select "select[name='account[plan_role]'] option[value=credit_card_payoff]"
         assert_select "select[name='account[plan_role]'] option[value=loan_payoff]"
-        # Round 20b: the sub-account select is unnamed (the kebab popup
+        # the sub-account select is unnamed (the kebab popup
         # syncs it into the form's hidden input, which is what submits).
         assert_select "input[type=hidden][name='account[parent_account_id]']"
         assert_select "input[type=hidden][name='account[auto_transfer_target_ids][]'][value='0']"
@@ -242,7 +250,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       get "/plan/flow"
 
       assert_response :success
-      # New dialog (round 26 R4): the Bank source is a labeled row + a
+      # New dialog: the Bank source is a labeled row + a
       # floating dropdown panel holding the radio list (the radios live
       # OUTSIDE the form — the form's hidden plan_allocation[account_id]
       # input is the submit carrier; a native select cannot show the logo
@@ -255,17 +263,17 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "[data-allocation-bank-trigger]", 1
         assert_select "input[name='plan_allocation[value]']"
         assert_select "select[name='plan_allocation[mode]'] option[value=required][selected]"
-        # Round 26 R4 (item 7c): the kind is a HIDDEN input — no visible
+        # the kind is a HIDDEN input — no visible
         # kind select anywhere in the dialog.
         assert_select "input[type=hidden][name='plan_allocation[kind]'][value=bill]", 1
         assert_select "select[name='plan_allocation[kind]']", count: 0
       end
-      # Owner round 2 (F3) + round 8: the new dialog opens on the Known
+      # + : the new dialog opens on the Known
       # Allocations list — Sure's detected bills/subscriptions, MINUS the
       # ones already in the diagram (hidden, not flagged).
       netflix = recurring_transactions(:netflix_subscription)
       assert_select "dialog[data-node-id='allocation:new'] button[data-known-id='#{netflix.id}']", 1
-      # Round 26 R4 (item 7a): the known_allocations payload carries the
+      # the known_allocations payload carries the
       # bill's category (data-known-category) so the dialog's prefill
       # paths can preselect it.
       known_category = @family.categories.create!(name: "Groceries", color: "#11AA22")
@@ -278,7 +286,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         recurring_transaction: netflix)
       get "/plan/flow"
       assert_response :success
-      # Round 8: the planned bill no longer lists — and the empty list says
+      # the planned bill no longer lists — and the empty list says
       # everything detected is already in the diagram (it was the only one).
       assert_select "dialog[data-node-id='allocation:new'] button[data-known-id='#{netflix.id}']", count: 0
       assert_select "dialog[data-node-id='allocation:new'] [data-plan-flow-target='knownSection']",
@@ -288,6 +296,18 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "input[name='plan_allocation[name]'][value='Bills']"
         assert_select "input[name='plan_allocation[value]'][value='500.00']"
         assert_select "input[type=hidden][value='delete']"
+        # the Bank source row is pre-populated with the
+        # allocation's CURRENT source bank — the trigger shows the bank
+        # name (the none-icon stays hidden), the form's hidden carrier
+        # holds the bank id, and the panel's radio for that bank is the
+        # checked row (the unassigned radio is not) — so re-opening an
+        # already-assigned allocation renders its bank, not "None
+        # Selected".
+        assert_select "[data-allocation-bank-trigger] [data-allocation-bank-name]", text: @account.name
+        assert_select "[data-allocation-bank-trigger] span[data-allocation-bank-none-icon].hidden", 1
+        assert_select "input[type=hidden][name='plan_allocation[account_id]'][value='#{@account.id}']", 1
+        assert_select "input[type=radio][name='plan_allocation[account_id]'][value='#{@account.id}'][checked]", 1
+        assert_select "input[type=radio][name='plan_allocation[account_id]'][value=''][checked]", count: 0
       end
     end
   end
@@ -301,7 +321,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_select "dialog"
     assert_select "form[action='/plan/flow_add_accounts'] input[type=checkbox][name='account_ids[]'][value='#{unassigned.id}']"
-    # Owner round 2 (F2): the page keeps no manual-creation form of its own —
+    # the page keeps no manual-creation form of its own —
     # "Add Manual Account" links to the house add-account page.
     assert_select "form[action='/plan/flow_create_account']", count: 0
     assert_select "a[href='#{new_account_path}']", 1
@@ -321,7 +341,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_equal base + 2, b.reload.plan_order
   end
 
-  # Round 4 (ghost banks): the in-place (JSON) add ships the fresh graph —
+  # (ghost banks): the in-place (JSON) add ships the fresh graph —
   # which now renders the added plan-ordered banks — plus each new bank's
   # config dialog, so the node is operable without a reload.
   test "in-place add accounts responds with the graph and the new banks' dialogs" do
@@ -351,7 +371,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_includes dialog_a["html"], %(data-node-id="bank:#{a.id}")
   end
 
-  # Round 26 (item 4): the Add-Account guardrail — an account already placed
+  # the Add-Account guardrail — an account already placed
   # in ANOTHER area (a sub-row via the parent link, the dressed allocation
   # pillar via a target allocation) is not offered by the modal: adding it
   # would place it in a second area (the invisible duplicate row).
@@ -373,7 +393,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_select "form[action='/plan/flow_add_accounts'] input[type=checkbox][name='account_ids[]'][value='#{dressed.id}']", count: 0
   end
 
-  # Round 26 (item 4): defense in depth — the server rejects a submission
+  # defense in depth — the server rejects a submission
   # that names an account already placed by ANY placement (plan_order,
   # parent link, or target allocation) with the render_flow_json 422
   # contract instead of silently placing it a second time. A mixed batch
@@ -409,7 +429,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_nil a.reload.plan_order
   end
 
-  # (create-account tests removed with the action — owner round 2, F2.)
+  # (create-account tests removed with the action — , .)
 
   test "update account writes ownership from the combined dropdown" do
     patch "/plan/flow/accounts/#{@account.id}", params: {
@@ -445,7 +465,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     # Omitting the limit param keeps the existing value (no silent wipe).
     assert_equal 5, series.plan_max_account_links
 
-    # Blank clears the label back to the account-owner fallback.
+    # Blank clears the label back to the account-holder fallback.
     patch "/plan/flow/incomes/#{series.id}", params: { series: { plan_owner_user_id: "" } }
     assert_nil series.reload.plan_owner_user_id
   end
@@ -477,7 +497,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       bank = json["banks"].find { |b| b["id"] == @account.id }
       assert_equal "1800.00", bank["inflow_month"]
       assert_equal "1300.00", bank["surplus_month"] # 1800 - 500
-      # Round 34 (spec 4): the ADDITIVE mode field on every inflow row — the
+      # the ADDITIVE mode field on every inflow row — the
       # leftover edge's inflow carries mode "leftover" (the sankey icon + the
       # DD leftover row derive from it). Additive-only: existing keys keep
       # their order, mode is appended last.
@@ -490,7 +510,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # Owner round 2 (F4): the SAVED state must expose the exact per-allocation
+  # the SAVED state must expose the exact per-allocation
   # shape the Sankey controller consumes — adding an allocation and reloading
   # (saved state, no draft params) used to crash the diagram. Every row
   # carries the full field set, per-paycheck included.
@@ -619,14 +639,14 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_nil @family.plan_allocations.find_by(id: row.id)
   end
 
-  # --- Round 10 issue 4 + round 20 U + round 25 R2: the savings bucket ---
+  # --- issue 4 + U + : the savings bucket ---
   # The dialog shows the bucket's associated-account hint (the existing
   # account_id field, now the Bank source radio list) and the mode-shaped
-  # value field. Round 25 R2: the Mode selector is visible + functional for
+  # value field.: the Mode selector is visible + functional for
   # buckets (all four kinds support all four modes; the mode group is
   # hidden only for linked rows), so a user-chosen mode + its value
   # persist — only the truly hidden controls (cadence / detected-bill
-  # link; auto-transfer is gone, round 20 U) are sanitized away
+  # link; auto-transfer is gone, U) are sanitized away
   # server-side.
 
   test "the savings bucket dialog shows the mode selector and bucket labels, hiding only cadence + RT link" do
@@ -640,12 +660,12 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       get "/plan/flow"
 
       assert_response :success
-      # Edit dialog (round 25 R2): the two bill-only blocks that STAY hidden
+      # Edit dialog: the two bill-only blocks that STAY hidden
       # for the bucket kind (cadence / detected bill link) render hidden,
       # while the Mode selector is VISIBLE with all four options (the mode
       # group is hidden only for linked rows — this bucket is unlinked),
       # and the amount input + the bank-source hint wear the bucket labels.
-      # Round 25 R3: the RT box is bill-only now (gate "bill"), hidden for
+      # the RT box is bill-only now (gate "bill"), hidden for
       # EVERY non-bill kind including debt; cadence + the category picker
       # (and the kind select) live inside the collapsed "More options"
       # disclosure instead of at the top of the form.
@@ -663,7 +683,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "label[for$='allocation_value']", text: I18n.t("plan_flows.allocation_dialog.savings_value_label")
         assert_select "p[data-allocation-kind-hint='account']", text: I18n.t("plan_flows.allocation_dialog.savings_account_hint")
         assert_select "input[name='plan_allocation[value]'][value='250.00']"
-        # Round 26 R4 (items 7c/7d): no collapsibles — the kind select is
+        # (items 7c/7d): no collapsibles — the kind select is
         # a hidden input on the current kind, and the second-tier fields
         # (cadence / category trigger + icon chip) sit flat in the form.
         assert_select "select[name='plan_allocation[kind]']", count: 0
@@ -680,7 +700,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "div[data-allocation-kinds].hidden", count: 0
         assert_select "label[for$='allocation_value']", text: I18n.t("plan_flows.allocation_dialog.value_label")
         assert_select "p[data-allocation-kind-hint='account']", text: I18n.t("plan_flows.allocation_dialog.source_bank_hint")
-        # Round 26 R4 (items 7c/7d): flat layout — the kind is a hidden
+        # (items 7c/7d): flat layout — the kind is a hidden
         # input on the form default (bill); no visible kind select.
         assert_select "input[type=hidden][name='plan_allocation[kind]'][value=bill]", 1
         assert_select "select[name='plan_allocation[kind]']", count: 0
@@ -688,7 +708,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # Round 25 R3: the detected-bill link is now BILL-ONLY (the custom box's
+  # the detected-bill link is now BILL-ONLY (the custom box's
   # data-allocation-kinds gate is "bill", was "bill,debt"). The
   # #applyAllocationVisibility kind loop hides every [data-allocation-kinds]
   # box whose list lacks the current kind, so for a DEBT allocation the RT
@@ -717,7 +737,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "div[data-allocation-kinds='bill,debt']", count: 1
         # The mode selector stays visible (hidden only for linked rows).
         assert_select "div[data-allocation-mode-group].hidden", count: 0
-        # Round 26 R4 (items 7c/7d): flat layout — the kind is a hidden
+        # (items 7c/7d): flat layout — the kind is a hidden
         # input on the current kind; the cadence select + category trigger
         # sit in the form directly.
         assert_select "select[name='plan_allocation[kind]']", count: 0
@@ -742,7 +762,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     row = @family.plan_allocations.find_by(name: "Pet Safety Fund")
     assert row, "the bucket was not created"
     assert_equal "savings", row.kind
-    # Round 25 R2: the user-chosen mode survives for buckets (all four
+    # the user-chosen mode survives for buckets (all four
     # modes are valid for every kind) — percent keeps its percent value and
     # the stale major-unit value must NOT persist (value_cents is forbidden
     # in percent mode, model-owned). The hidden controls (cadence / RT
@@ -768,7 +788,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to "/plan/flow?view=paycheck"
     assert_equal I18n.t("plan_flows.update_allocation.saved"), flash[:notice]
     assert_equal "savings", row.reload.kind
-    # Round 25 R2: the update's user-chosen mode (percent) survives — the
+    # the update's user-chosen mode (percent) survives — the
     # percent value replaces the old monthly figure (value_cents must be
     # nil in percent mode, model-owned); the hidden fields (cadence /
     # auto-transfer) are still sanitized away.
@@ -817,7 +837,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       bucket_bank = @family.accounts.create!(name: "Pet Safety Bank", owner: @user,
         currency: "USD", balance: 0, accountable: Depository.new)
 
-      # Round 25 R2: the draft merge no longer normalizes a bucket to the
+      # the draft merge no longer normalizes a bucket to the
       # monthly required shape — the user-chosen mode (percent) survives, so
       # the preview carries value_percent and the stale major-unit value is
       # not persisted. Unfunded bank: a percent of a zero pool demands
@@ -918,9 +938,9 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_nil series.reload.plan_max_account_links
   end
 
-  # --- Owner review round 3: R1 (in-place JSON responses) + R3 (bank removal) ---
+  # --- : (in-place JSON responses) + (bank removal) ---
 
-  # R1: the delete path is what broke the diagram (add worked since round 2).
+  # the delete path is what broke the diagram (add worked since ).
   # The in-place fetch expects the fresh saved-state graph back as JSON — the
   # diagram re-renders from it with NO navigation, so the response must be a
   # well-formed saved-state graph with every remaining row in the full shape.
@@ -956,7 +976,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # R1: create + update share the same in-place contract.
+  # create + update share the same in-place contract.
   test "create and update allocation respond with graph JSON in place" do
     travel_to Date.new(2026, 11, 15) do
       series = create_income_series(account: @account, name: "Bob Payroll", amount: 900)
@@ -991,7 +1011,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # Round 25 (Item 2): "Make Allocated Sub-Account" — the bank dialog kebab
+  # "Make Allocated Sub-Account" — the bank dialog kebab
   # creates a TARGET allocation (the row dresses the target account in the
   # allocation pillar; account_id stays the SOURCE bank, frozen semantics).
   # The create response carries the target fields in the graph row and
@@ -1143,7 +1163,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # Round 8: creating an allocation that links a detected bill drops that
+  # creating an allocation that links a detected bill drops that
   # bill from the in-place Known Allocations chrome — the dialog offers only
   # what isn't already in the diagram, without a reload.
   test "create allocation linked to a known bill drops it from the in-place known list" do
@@ -1174,7 +1194,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # R3: removing a bank keeps its allocations alive — they persist without a
+  # removing a bank keeps its allocations alive — they persist without a
   # source bank (status "unassigned"), the edges and plan markers are dropped,
   # and the re-assignment path (the allocation dialog) works again.
   test "remove bank from the plan unassigns allocations and drops edges" do
@@ -1219,7 +1239,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # R3: removing a bank without allocations is the plain edge/marker drop.
+  # removing a bank without allocations is the plain edge/marker drop.
   test "remove bank without allocations redirects with the removed notice" do
     travel_to Date.new(2026, 11, 15) do
       series = create_income_series(account: @account, name: "Bob Payroll", amount: 900)
@@ -1238,7 +1258,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # Round 7 (owner: deleting a bank left a blank "Account" row that survived
+  # (reported defect: deleting a bank left a blank "Account" row that survived
   # reloads): an unassigned allocation's nil account_id used to leak into the
   # in-plan list, and the Sankey synthesizes a floor node for every in-plan
   # id it does not see in the graph. Both sides must stay nil-free / fresh.
@@ -1279,7 +1299,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # Round 11 issue 8 (sub-accounts + fan-out, backend): the bank config
+  # (sub-accounts + fan-out, backend): the bank config
   # dialog persists the sub-account link and the ordered fan-out targets,
   # rejects invalid links with the 422 inline-error contract, clears both
   # when the bank leaves the plan, and the graph payload bank rows carry
@@ -1326,7 +1346,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   test "update account rejects a non-sub-account fan-out target and a depth-2 parent with 422 inline errors" do
     stranger = create_vault("Stranger Vault")
 
-    # Q1 strict rule: the source only fans out to its own sub-accounts.
+    # The strict rule: the source only fans out to its own sub-accounts.
     patch "/plan/flow/accounts/#{@account.id}", headers: { "Accept" => "application/json" }, params: {
       account: { auto_transfer_target_ids: [ stranger.id.to_s ] }
     }
@@ -1350,9 +1370,9 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_nil @account.reload.parent_account_id
   end
 
-  # Round 11 issue 8 + Round 27 R1: removing an account clears its OWN
-  # sub-account link and its OWN fan-out targets (the Round 11 semantics).
-  # Setup note (Round 27 R1): the removed account must have no children of
+  # + : removing an account clears its OWN
+  # sub-account link and its OWN fan-out targets (the semantics).
+  # Setup note: the removed account must have no children of
   # its own — a fan-out target that is not its sub-account is only valid
   # when it funds that target as a dressed allocation (the model's
   # auto_transfer_targets_consistent rule).
@@ -1371,11 +1391,11 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     account = @account.reload
     assert_nil account.parent_account_id
     assert_equal [], account.auto_transfer_target_ids
-    # The dressed allocation persists without a source bank (R3 semantics).
+    # The dressed allocation persists without a source bank ( semantics).
     assert_nil PlanAllocation.find_by(target_account_id: dressed.id)&.account_id
   end
 
-  # Round 27 R1 (the owner's bug, 2026-11-06): the removed account is the
+  # the removed account is the
   # SUB-ACCOUNT. Its parent link, its income edges, AND its entry in the
   # parent's auto_transfer_target_ids must all leave the plan in one
   # transaction — a lingering fan-out entry kept it drawn as a $0.00 bank
@@ -1407,7 +1427,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # Round 27 R1 regression pin: the plain plan-ordered bank removal path is
+  # regression pin: the plain plan-ordered bank removal path is
   # unchanged — po/role/edges drop, its allocations persist unassigned, and
   # UNRELATED accounts' fan-out arrays are untouched (the new fan-out sync
   # is a no-op for them).
@@ -1440,7 +1460,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # Round 27 R1 guardrail: an account named by a target allocation is drawn
+  # guardrail: an account named by a target allocation is drawn
   # as its dressed allocation pillar; removing it would orphan that row.
   # 422 with the inline error; nothing is touched.
   test "removing an account named by a target allocation 422s and changes nothing" do
@@ -1462,7 +1482,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_nil dressed.reload.parent_account_id
   end
 
-  # Round 27 R1 guardrail: an account with child sub-accounts would leave
+  # guardrail: an account with child sub-accounts would leave
   # those children pointing at a bank that left the plan. 422; nothing
   # touched (the parent keeps its order and its fan-out).
   test "removing an account with child sub-accounts 422s and changes nothing" do
@@ -1525,7 +1545,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # Round 16 (owner note 3b): the logo picker's hidden input saves through the
+  # the logo picker's hidden input saves through the
   # existing PATCH flow_account action (account[bank_logo_slug]). Presence
   # assigns, blank clears, an unknown slug 422s inline.
   test "update account sets the bank logo slug and clears it with a blank value" do
@@ -1552,7 +1572,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_nil @account.reload.bank_logo_slug
   end
 
-  # Round 16 (owner note 2): the allocation dialog saves a category through
+  # the allocation dialog saves a category through
   # the existing allocation actions (plan_allocation[category_id]); the graph
   # payload's allocation rows carry the category name + color (nil when none).
   test "allocation save persists the category and the graph rows carry the category color" do
@@ -1591,8 +1611,8 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # Round 16 (owner note 2 + 3b): the dialogs render the new fields — the
-  # allocation dialog's category picker (round 20 U: a radio list with the
+  # the dialogs render the new fields — the
+  # allocation dialog's category picker ( U: a radio list with the
   # same color + icon chip the house category lists use, because a native
   # select cannot render the icon + color) and the bank dialog's logo
   # picker (hidden slug input + the vendored logo list), J's existing
@@ -1610,7 +1630,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       get "/plan/flow"
       assert_response :success
 
-      # Bank config dialog (round 20d): the top-left avatar + logo popup
+      # Bank config dialog: the top-left avatar + logo popup
       # replaced the old search/list section; the hidden slug input and the
       # fan-out fields stay intact.
       assert_select "dialog[data-node-id='bank:#{@account.id}']", 1 do
@@ -1624,7 +1644,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "input[type=hidden][name='account[auto_transfer_target_ids][]'][value='0']", 1
       end
 
-      # Allocation dialog (edit mode, round 20 U + round 26 R4 7b): the
+      # Allocation dialog (edit mode, U + 7b): the
       # category picker is a radio list carrying the family's categories,
       # each with the same color-mix icon chip the house category lists
       # use; the trigger IS the labeled row and carries its own icon chip
@@ -1637,18 +1657,18 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "span[data-allocation-category-icon-chip][style]", count: 0
       end
 
-      # Round 26 R4 (item 7a): category auto-fill — a linked bill's own
+      # category auto-fill — a linked bill's own
       # category is preselected when the allocation carries none (the
       # dialog reads allocation.category_id || recurring_transaction
       # .category_id): the trigger shows the category name + colored chip,
       # and the matching radio is checked server-side.
       water = RecurringTransaction.create!(
-        family: @family, account: @account, name: "Public Water", amount: 300,
+        family: @family, account: @account, name: "Water Utility", amount: 300,
         currency: "USD", expected_day_of_month: 9, status: "active",
         manual: true, bill_type: "bill",
         last_occurrence_date: Date.current, next_expected_date: Date.current,
         category_id: category.id)
-      linked_row = PlanAllocation.create!(family: @family, account: @account, name: "Public Water",
+      linked_row = PlanAllocation.create!(family: @family, account: @account, name: "Water Utility",
         kind: "bill", mode: "required", value_cents: 3_000, cadence: "monthly",
         recurring_transaction: water)
       get "/plan/flow"
@@ -1662,7 +1682,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   end
 
   # ---------------------------------------------------------------------
-  # Round 20 (T): the save bug + the progressive-disclosure rework.
+  # (T): the save bug + the progressive-disclosure rework.
   # Controller round-trips for uncheck / sub-account / fan-out pre-date this
   # round (edge-editor era, above); these pin the NEW dialog markup, the
   # five-value role enum, and the custom-logo upload/remove endpoints.
@@ -1678,22 +1698,22 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_response :success
 
       assert_select "dialog[data-node-id='bank:#{@account.id}']", 1 do
-        # Round 20 save-bug fix: an unchecked browser checkbox sends NO
+        # save-bug fix: an unchecked browser checkbox sends NO
         # param, so the hidden empty sentinel (before the checkbox) is what
         # makes the controller see the row and destroy the edge.
         assert_select "input[type=hidden][name='links[#{series.id}][enabled]'][value='']", 1
-        # Progressive disclosure: the hidden mode input (the R27 trigger
+        # Progressive disclosure: the hidden mode input (the trigger
         # button's submit carrier) sits inside the row's details wrapper
         # (visible because this row is checked).
         assert_select "[data-bank-row-details] input[type=hidden][name='links[#{series.id}][mode]']", 1
-        # Round 20b: the kebab + the sub-account popup (the select is
+        # the kebab + the sub-account popup (the select is
         # unnamed; it syncs into the form's hidden input).
         assert_select "[data-bank-config-dialog-target=kebabMenu]", 1
         assert_select "[data-bank-config-dialog-target=subAccountPopup] [data-bank-config-dialog-target=subAccountSelect]", 1
         assert_select "[data-bank-config-dialog-target=subAccountSelect] option[value='']", 1
-        # Round 20e: the auto-transfer popup with the checkbox box.
+        # the auto-transfer popup with the checkbox box.
         assert_select "[data-bank-config-dialog-target=autoTransferPopup] [data-bank-config-dialog-target=autoTransferBox]", 1
-        # Round 20c: exactly the five roles (plus the disabled Plain
+        # exactly the five roles (plus the disabled Plain
         # placeholder while the role is nil).
         assert_select "select[name='account[plan_role]'] option[value=savings_bucket]", 1
         assert_select "select[name='account[plan_role]'] option[value=checking]", 1
@@ -1701,11 +1721,11 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         assert_select "select[name='account[plan_role]'] option[value=loan_payoff]", 1
         assert_select "select[name='account[plan_role]'] option[value=investment]", 1
         assert_select "select[name='account[plan_role]'] option[disabled][value='']", 1
-        # Round 20a heading + 20d avatar.
+        # heading + 20d avatar.
         assert_select "[data-bank-config-dialog-target=pullFrom]", 1
         assert_select "[data-bank-config-dialog-target=avatarImg]", 1
         assert_includes response.body, I18n.t("plan_flows.bank_config_dialog.pull_from_incomes")
-        # Round 28 (R28-4): the "Details" disclosure is gone — ownership +
+        # ( -4): the "Details" disclosure is gone — ownership +
         # role stay always exposed, so no <details> element exists inside
         # the dialog at all and the ownership select is directly present.
         assert_select "details", 0
@@ -1748,9 +1768,9 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   end
 
   # ---------------------------------------------------------------------
-  # Round 27 (owner items 3+4): the restyled Pull-From-Incomes. The
-  # per-income IAA rows stay the only store (persistence decision (a),
-  # design R27-T3 §3): the client-side Ratio never reaches the server, so
+  # the restyled Pull-From-Incomes. The
+  # per-income IAA rows stay the only store (persistence decision (a));
+  # the client-side Ratio never reaches the server, so
   # save_bank_links is byte-identical — these pin the saved per-income
   # shapes the shared control set derives (Fixed/Equal, Percent/Rational,
   # Required/Leftover NULL, the single<->two transition, and the re-open
@@ -1759,20 +1779,20 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 
   test "two-income Fixed/Equal save stores two specific rows summing to the total" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
 
       # What the shared control set submits (mode Fixed Amount, Ratio
       # Equal, total 100.00): two per-paycheck specific rows of 50.00.
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "50.00" },
-        sammi.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "50.00" }
+        primary.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "50.00" },
+        secondary.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "50.00" }
       })
       assert_response :success
-      kurt_edge = IncomeAccountAllocation.find_by(income_series_id: kurt.id, account_id: @account.id)
-      sammi_edge = IncomeAccountAllocation.find_by(income_series_id: sammi.id, account_id: @account.id)
-      assert_in_delta 50.00, kurt_edge.value.to_d, 0.0001
-      assert_in_delta 50.00, sammi_edge.value.to_d, 0.0001
+      primary_edge = IncomeAccountAllocation.find_by(income_series_id: primary.id, account_id: @account.id)
+      secondary_edge = IncomeAccountAllocation.find_by(income_series_id: secondary.id, account_id: @account.id)
+      assert_in_delta 50.00, primary_edge.value.to_d, 0.0001
+      assert_in_delta 50.00, secondary_edge.value.to_d, 0.0001
 
       # Re-open: the re-rendered dialog re-derives the shared state —
       # both rows checked, the shared block present, Ratio = Equal (equal
@@ -1783,54 +1803,54 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_includes html, 'data-bank-pull-from-ratio="equal"'
       assert_includes html, "checked"
 
-      # Round 29 (R29-1): the shared block renders BELOW both income rows
-      # (after row 2) — the owner's placement change from R28-3's
+      # ( -1): the shared block renders BELOW both income rows
+      # (after row 2) — the placement change from -3's
       # between-the-rows — with the grey Mode / Split Behavior labels and
-      # the owner's option labels (50/50 / Proportional Split / Fixed
+      # the option labels (50/50 / Proportional Split / Fixed
       # Amounts; the radio values stay equal/rational/fixed_amounts).
       shared_at = html.index("data-bank-pull-from-shared")
-      kurt_row_at = html.index("data-bank-series-id=\"#{kurt.id}\"")
-      sammi_row_at = html.index("data-bank-series-id=\"#{sammi.id}\"")
+      primary_row_at = html.index("data-bank-series-id=\"#{primary.id}\"")
+      secondary_row_at = html.index("data-bank-series-id=\"#{secondary.id}\"")
       assert shared_at, "shared block missing from re-rendered dialog"
-      assert kurt_row_at < sammi_row_at, "income row 1 must come before income row 2"
-      assert sammi_row_at < shared_at, "shared block must come below both income rows (R29-1)"
+      assert primary_row_at < secondary_row_at, "income row 1 must come before income row 2"
+      assert secondary_row_at < shared_at, "shared block must come below both income rows (R29-1)"
       assert_includes html, "Split Behavior"
       assert_includes html, ">Mode<"
       # The 50/50 re-derivation lands in the behavior trigger label, and
-      # all three owner labels are present (trigger + the two panel radio
+      # all three labels are present (trigger + the two panel radio
       # labels).
       assert_includes html, ">50/50<"
       assert_includes html, "Proportional Split"
       # The behavior trigger is server-visible in the Fixed/Equal state
-      # (the R27 shared_ratio_shown), with the split icon.
+      # (the shared_ratio_shown), with the split icon.
       assert_not html.match?(/flex-wrap hidden" data-bank-pull-ratio-wrap/),
         "ratio wrap must not be hidden in the Fixed/Equal state"
       # The per-row split inputs live inline in the income rows (the old
       # bottom-center split wrap is gone).
-      assert_includes html, "data-bank-split-input=\"#{kurt.id}\""
-      assert_includes html, "data-bank-split-input=\"#{sammi.id}\""
+      assert_includes html, "data-bank-split-input=\"#{primary.id}\""
+      assert_includes html, "data-bank-split-input=\"#{secondary.id}\""
       assert_not_includes html, "data-bank-pull-split-wrap"
-      # R28-4: the always-exposed details panel.
+      # -4: the always-exposed details panel.
       assert_includes html, 'class="bg-surface-inset rounded-xl p-3"'
     end
   end
 
   test "two-income Percent/Rational save stores two percent rows" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
 
       # Ratio Rational (the default): each income stores the SAME 10.00
       # percent (each pays 10% of its own paycheck) — the 0.10 fraction.
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "percent", "value" => "10.00" },
-        sammi.id.to_s => { "enabled" => "1", "mode" => "percent", "value" => "10.00" }
+        primary.id.to_s => { "enabled" => "1", "mode" => "percent", "value" => "10.00" },
+        secondary.id.to_s => { "enabled" => "1", "mode" => "percent", "value" => "10.00" }
       })
       assert_response :success
-      kurt_edge = IncomeAccountAllocation.find_by(income_series_id: kurt.id, account_id: @account.id)
-      sammi_edge = IncomeAccountAllocation.find_by(income_series_id: sammi.id, account_id: @account.id)
-      assert_in_delta 0.10, kurt_edge.value.to_d, 0.0001
-      assert_in_delta 0.10, sammi_edge.value.to_d, 0.0001
+      primary_edge = IncomeAccountAllocation.find_by(income_series_id: primary.id, account_id: @account.id)
+      secondary_edge = IncomeAccountAllocation.find_by(income_series_id: secondary.id, account_id: @account.id)
+      assert_in_delta 0.10, primary_edge.value.to_d, 0.0001
+      assert_in_delta 0.10, secondary_edge.value.to_d, 0.0001
 
       # Re-open re-derives Ratio = Rational (equal fractions).
       json = JSON.parse(response.body)
@@ -1841,20 +1861,20 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 
   test "Required and Leftover store value NULL (mixed stored modes lock the ratio)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
 
       # Required + leftover carry no value (the planner derives them);
       # the stored values must be NULL (the DB check enforces it too).
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" },
-        sammi.id.to_s => { "enabled" => "1", "mode" => "leftover", "value" => "" }
+        primary.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" },
+        secondary.id.to_s => { "enabled" => "1", "mode" => "leftover", "value" => "" }
       })
       assert_response :success
-      kurt_edge = IncomeAccountAllocation.find_by(income_series_id: kurt.id, account_id: @account.id)
-      sammi_edge = IncomeAccountAllocation.find_by(income_series_id: sammi.id, account_id: @account.id)
-      assert_nil kurt_edge.value
-      assert_nil sammi_edge.value
+      primary_edge = IncomeAccountAllocation.find_by(income_series_id: primary.id, account_id: @account.id)
+      secondary_edge = IncomeAccountAllocation.find_by(income_series_id: secondary.id, account_id: @account.id)
+      assert_nil primary_edge.value
+      assert_nil secondary_edge.value
 
       # Mixed stored modes (required + leftover): the re-rendered shared
       # block is locked to the Fixed Amounts ratio.
@@ -1866,52 +1886,52 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 
   test "two-income Fixed Amounts save stores unequal dollars and re-derives the behavior" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
 
-      # Round 28 (R28-3): Fixed Amount + Fixed Amounts — the two inline
+      # ( -3): Fixed Amount + Fixed Amounts — the two inline
       # per-row inputs (80.00 / 20.00, unequal and not income-proportional)
       # submit as the per-paycheck specific rows; the re-derivation on
       # re-open must land on fixed_amounts.
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "80.00" },
-        sammi.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "20.00" }
+        primary.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "80.00" },
+        secondary.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "20.00" }
       })
       assert_response :success
-      kurt_edge = IncomeAccountAllocation.find_by(income_series_id: kurt.id, account_id: @account.id)
-      sammi_edge = IncomeAccountAllocation.find_by(income_series_id: sammi.id, account_id: @account.id)
-      assert_in_delta 80.00, kurt_edge.value.to_d, 0.0001
-      assert_in_delta 20.00, sammi_edge.value.to_d, 0.0001
+      primary_edge = IncomeAccountAllocation.find_by(income_series_id: primary.id, account_id: @account.id)
+      secondary_edge = IncomeAccountAllocation.find_by(income_series_id: secondary.id, account_id: @account.id)
+      assert_in_delta 80.00, primary_edge.value.to_d, 0.0001
+      assert_in_delta 20.00, secondary_edge.value.to_d, 0.0001
 
       json = JSON.parse(response.body)
       html = json["chrome"]["bank_dialogs"].find { |d| d["node_id"] == "bank:#{@account.id}" }["html"]
       assert_includes html, 'data-bank-pull-from-ratio="fixed_amounts"'
       assert_includes html, ">Fixed Amounts<"
       # The inline per-row inputs pre-fill from the stored values.
-      assert html.match?(/value="80\.00"[^>]*data-bank-split-input="#{kurt.id}"/),
-        "Kurt inline split input must pre-fill 80.00"
-      assert html.match?(/value="20\.00"[^>]*data-bank-split-input="#{sammi.id}"/),
-        "Sammi inline split input must pre-fill 20.00"
+      assert html.match?(/value="80\.00"[^>]*data-bank-split-input="#{primary.id}"/),
+        "Primary inline split input must pre-fill 80.00"
+      assert html.match?(/value="20\.00"[^>]*data-bank-split-input="#{secondary.id}"/),
+        "Secondary inline split input must pre-fill 20.00"
     end
   end
 
   test "two-income Required/Required renders the shared block with hidden ratio (round 28)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
 
-      # Both incomes required, nil stored percents: Round 30 re-derives the
+      # Both incomes required, nil stored percents: re-derives the
       # equal split (the dataset carries "equal"; the ratio is still never
       # submitted).
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" },
-        sammi.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" }
+        primary.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" },
+        secondary.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" }
       })
       assert_response :success
-      kurt_edge = IncomeAccountAllocation.find_by(income_series_id: kurt.id, account_id: @account.id)
-      sammi_edge = IncomeAccountAllocation.find_by(income_series_id: sammi.id, account_id: @account.id)
-      assert_nil kurt_edge.value
-      assert_nil sammi_edge.value
+      primary_edge = IncomeAccountAllocation.find_by(income_series_id: primary.id, account_id: @account.id)
+      secondary_edge = IncomeAccountAllocation.find_by(income_series_id: secondary.id, account_id: @account.id)
+      assert_nil primary_edge.value
+      assert_nil secondary_edge.value
 
       json = JSON.parse(response.body)
       html = json["chrome"]["bank_dialogs"].find { |d| d["node_id"] == "bank:#{@account.id}" }["html"]
@@ -1922,48 +1942,48 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 
   test "single<->two income transition round-trips (edges are the only store)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
 
       # Start: one income (required), the other unchecked (the sentinel
       # submits enabled="" and destroys/creates nothing).
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "required" },
-        sammi.id.to_s => { "enabled" => "" }
+        primary.id.to_s => { "enabled" => "1", "mode" => "required" },
+        secondary.id.to_s => { "enabled" => "" }
       })
       assert_response :success
-      assert IncomeAccountAllocation.exists?(income_series_id: kurt.id, account_id: @account.id, mode: "required")
-      assert_not IncomeAccountAllocation.exists?(income_series_id: sammi.id, account_id: @account.id)
+      assert IncomeAccountAllocation.exists?(income_series_id: primary.id, account_id: @account.id, mode: "required")
+      assert_not IncomeAccountAllocation.exists?(income_series_id: secondary.id, account_id: @account.id)
 
-      # One -> two: both checked, Fixed/Equal 50.00 each — the Kurt edge
-      # upserts required -> specific, the Sammi edge is created.
+      # One -> two: both checked, Fixed/Equal 50.00 each — the Primary edge
+      # upserts required -> specific, the Secondary edge is created.
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "50.00" },
-        sammi.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "50.00" }
+        primary.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "50.00" },
+        secondary.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "50.00" }
       })
       assert_response :success
-      assert IncomeAccountAllocation.exists?(income_series_id: kurt.id, account_id: @account.id, mode: "specific")
-      assert IncomeAccountAllocation.exists?(income_series_id: sammi.id, account_id: @account.id, mode: "specific")
+      assert IncomeAccountAllocation.exists?(income_series_id: primary.id, account_id: @account.id, mode: "specific")
+      assert IncomeAccountAllocation.exists?(income_series_id: secondary.id, account_id: @account.id, mode: "specific")
       # The re-rendered dialog shows the fresh shared state (both checked,
       # Equal re-derived from the stored values).
       json = JSON.parse(response.body)
       html = json["chrome"]["bank_dialogs"].find { |d| d["node_id"] == "bank:#{@account.id}" }["html"]
       assert_includes html, 'data-bank-pull-from-ratio="equal"'
 
-      # Two -> one: uncheck Kurt (the sentinel submits enabled=""), keep
-      # Sammi at its stored value — the Kurt edge is destroyed.
+      # Two -> one: uncheck Primary (the sentinel submits enabled=""), keep
+      # Secondary at its stored value — the Primary edge is destroyed.
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "" },
-        sammi.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "50.00" }
+        primary.id.to_s => { "enabled" => "" },
+        secondary.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "50.00" }
       })
       assert_response :success
-      assert_not IncomeAccountAllocation.exists?(income_series_id: kurt.id, account_id: @account.id)
-      assert IncomeAccountAllocation.exists?(income_series_id: sammi.id, account_id: @account.id, mode: "specific")
+      assert_not IncomeAccountAllocation.exists?(income_series_id: primary.id, account_id: @account.id)
+      assert IncomeAccountAllocation.exists?(income_series_id: secondary.id, account_id: @account.id, mode: "specific")
     end
   end
 
   # ---------------------------------------------------------------------
-  # Round 27 R5 fixes (controller-render + save-path coverage).
+  # fixes (controller-render + save-path coverage).
   # ---------------------------------------------------------------------
 
   test "the bank dialog required display renders dollars, not cents (R5 BUG-1)" do
@@ -1989,16 +2009,16 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   end
 
   # ---------------------------------------------------------------------
-  # Round 28B fixes (controller context + dialog JS).
+  # fixes (controller context + dialog JS).
   # ---------------------------------------------------------------------
 
   test "the bank dialog required display falls back to the linked-income proration with no required edge (R28B BUG-B)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      # Third Sammi paycheck this month (the fallback divisor is the
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      # Third Secondary paycheck this month (the fallback divisor is the
       # AVERAGE paychecks per month of the linked incomes: (2 + 3) / 2 = 2.5).
-      sammi.recurring_occurrences.create!(family: @family, due_on: Date.new(2026, 11, 27),
+      secondary.recurring_occurrences.create!(family: @family, due_on: Date.new(2026, 11, 27),
         original_due_on: Date.new(2026, 11, 27), currency: "USD", expected_amount: 1400,
         status: "scheduled")
       # The bank's required base (its allocation required amount) with NO
@@ -2008,9 +2028,9 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       PlanAllocation.create!(family: @family, account: @account, name: "Loan Payment",
         kind: "bill", mode: "required", value_cents: 25_000, cadence: "monthly")
       # Both incomes linked as specific (the saved non-required state).
-      IncomeAccountAllocation.create!(family: @family, income_series: kurt,
+      IncomeAccountAllocation.create!(family: @family, income_series: primary,
         account: @account, mode: "specific", value: 62.50)
-      IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+      IncomeAccountAllocation.create!(family: @family, income_series: secondary,
         account: @account, mode: "specific", value: 62.50)
 
       # Fallback: 25,000 cents / 2.5 paychecks = 10,000 cents = 100.00
@@ -2023,12 +2043,12 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_response :success
       assert_select "dialog[data-node-id='bank:#{@account.id}'] [data-bank-config-dialog-target=pullFrom][data-bank-required-display='250.00']", 1
 
-      # Round 30 fix-round (BUG-R30-1): the stored-required-edge path now
+      # fix-round (BUG- -1): the stored-required-edge path now
       # uses the SAME average divisor as the fallback (the composite
-      # paycheck): (Kurt 2 + Sammi 3) / 2 = 2.5 -> 25,000/2.5 = 100.00,
-      # not the pre-fix required-edge sum (Kurt 2 -> 125.00). Display-only:
+      # paycheck): (Primary 2 + Secondary 3) / 2 = 2.5 -> 25,000/2.5 = 100.00,
+      # not the pre-fix required-edge sum (Primary 2 -> 125.00). Display-only:
       # the planner still settles over the edge sum (D-RECON).
-      IncomeAccountAllocation.find_by!(income_series_id: kurt.id, account_id: @account.id)
+      IncomeAccountAllocation.find_by!(income_series_id: primary.id, account_id: @account.id)
                             .update!(mode: "required", value: nil)
       get "/plan/flow"
       assert_response :success
@@ -2038,18 +2058,18 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 
   test "the shared-mode panel renders with four mode radios (R5 BUG-2)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      IncomeAccountAllocation.create!(family: @family, income_series: kurt,
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      IncomeAccountAllocation.create!(family: @family, income_series: primary,
         account: @account, mode: "required")
-      IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+      IncomeAccountAllocation.create!(family: @family, income_series: secondary,
         account: @account, mode: "required")
 
       get "/plan/flow"
 
       assert_response :success
       dialog = "dialog[data-node-id='bank:#{@account.id}']"
-      # BUG-2: before this fix the trigger had no panel at all (openPullPanel
+      # before this fix the trigger had no panel at all (openPullPanel
       # found nothing and returned) — all four mode radios must exist.
       %w[required specific percent leftover].each do |mode|
         assert_select "#{dialog} [data-bank-pull-panel][data-bank-pull-panel-group='shared-mode'] input[type=radio][value=#{mode}]", 1
@@ -2059,20 +2079,20 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 
   test "the shared-mode label renders real text, never a missing key (R5 BUG-3)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
       dialog = "dialog[data-node-id='bank:#{@account.id}']"
 
       # Nil case: one checked income (the shared block is hidden) used to
       # render t(".mode_") -> "translation missing: ... mode_".
-      IncomeAccountAllocation.create!(family: @family, income_series: kurt,
+      IncomeAccountAllocation.create!(family: @family, income_series: primary,
         account: @account, mode: "required")
       get "/plan/flow"
       assert_response :success
       assert_select "#{dialog} [data-bank-pull-shared-mode-label]", text: "Required"
 
       # Stored-mode case: two required edges -> shared_mode "required".
-      IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+      IncomeAccountAllocation.create!(family: @family, income_series: secondary,
         account: @account, mode: "required")
       get "/plan/flow"
       assert_response :success
@@ -2083,13 +2103,13 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 
   test "a 422 rejected bank-links save returns real error messages (R5 BUG-7)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
 
       # specific with a blank value fails the allocation's numericity
       # validation; pre-fix the 422 body was {"errors":{}} (zero client
       # feedback).
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "   " }
+        primary.id.to_s => { "enabled" => "1", "mode" => "specific", "value" => "   " }
       })
       assert_response :unprocessable_entity
       json = JSON.parse(response.body)
@@ -2097,7 +2117,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert errors.is_a?(Hash) && !errors.empty?, "expected non-empty errors, got #{json.inspect}"
       assert_includes errors.fetch("value", []).join(" "), "must be greater than 0"
       # Nothing persisted: the rejected save left no edge behind.
-      assert_not IncomeAccountAllocation.exists?(income_series_id: kurt.id, account_id: @account.id)
+      assert_not IncomeAccountAllocation.exists?(income_series_id: primary.id, account_id: @account.id)
     end
   end
 
@@ -2137,7 +2157,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   end
 
   # ---------------------------------------------------------------------
-  # Round 26 R2 (owner items 3 + 5): the context-aware kebab matrix
+  # the context-aware kebab matrix
   # ("Make Parent Account" context labels, Auto-Transfer LAST), the
   # main-section "Parent Account" labeled row + picker, the MOVE semantics
   # (make-allocated keeps the parent link), and the in-place staleness
@@ -2181,7 +2201,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       make_allocated = I18n.t("plan_flows.bank_config_dialog.menu_make_allocated_sub_account")
       auto_transfer = I18n.t("plan_flows.bank_config_dialog.menu_configure_auto_transfer")
 
-      # Normal bank (no parent, no target): the owner's three items,
+      # Normal bank (no parent, no target): the three items,
       # Auto-Transfer LAST (item 5: not in the middle).
       assert_equal [
         [ make_sub, "button", "" ],
@@ -2209,7 +2229,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       # Dressed+parent: BOTH "Make Parent Account" items (slot 1 clears
       # the link through the popup, slot 2 destroys the target) +
       # auto-transfer — two adjacent items sharing a label is the
-      # owner-accepted reading.
+      # the accepted reading.
       assert_equal [
         [ make_parent, "button", "" ],
         [ make_parent, "submit", "allocated_reverse_#{both.id}" ],
@@ -2282,7 +2302,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert target_dialog, "the unfrozen account's dialog must ship"
     assert target_dialog["html"].include?("allocated_sub_form_#{child.id}")
     assert_not target_dialog["html"].include?("allocated_reverse_#{child.id}")
-    # Round 26 R2 staleness: the SOURCE bank's holder ships too (its
+    # staleness: the SOURCE bank's holder ships too (its
     # Remove allocated_count changed).
     assert dialogs.any? { |d| d["node_id"] == "bank:#{@account.id}" },
       "the source bank's dialog must ship on a target destroy"
@@ -2322,8 +2342,8 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       "the fan-out sync must add the child to the NEW parent"
     assert_not_includes @account.reload.auto_transfer_target_ids, child.id.to_s,
       "the fan-out sync must drop the child from the OLD parent"
-    # Round 26 R2 staleness: the child + the OLD and NEW parents all ship
-    # fresh dialogs (the R25 cosmetic note — the new parent's dialog used
+    # staleness: the child + the OLD and NEW parents all ship
+    # fresh dialogs (the cosmetic note — the new parent's dialog used
     # to lag one reload).
     json = JSON.parse(response.body)
     node_ids = (json["chrome"]["bank_dialogs"] || []).map { |d| d["node_id"] }
@@ -2436,7 +2456,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ child.id.to_s ], @account.reload.auto_transfer_target_ids
 
     # All unchecked posts only the "0" sentinel -> dropped, and the jsonb
-    # column holds an empty array (the ERB's Array() render sees no rows).
+    # column holds an empty array (the ERB's Array render sees no rows).
     patch "/plan/flow/accounts/#{@account.id}", params: {
       account: { auto_transfer_target_ids: [ "0" ] }
     }
@@ -2515,10 +2535,10 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   end
 
   # ---------------------------------------------------------------------
-  # Round 30: the required split. The REQUIRED-mode split is PERSISTED as
+  # the required split. The REQUIRED-mode split is PERSISTED as
   # percents of the bank's required amount (2 dp major units) on the
   # income_account_allocations value; nil = the equal split = today.
-  # C1-C4 pin the dialog readouts/seeding and the save contract.
+  # - pin the dialog readouts/seeding and the save contract.
   # ---------------------------------------------------------------------
 
   def r30_required_base(cents)
@@ -2528,19 +2548,19 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     )
   end
 
-  # C1: stored percents 75/25 with a $100.00 displayed required seed the
+  # stored percents 75/25 with a $100.00 displayed required seed the
   # greyed readouts that sum exactly to the displayed required, re-open as
   # the Percent behavior, and seed the visible % inputs.
   test "required split: stored percents seed the readouts summing to the required (C1)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      IncomeAccountAllocation.create!(family: @family, income_series: kurt,
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      IncomeAccountAllocation.create!(family: @family, income_series: primary,
         account: @account, mode: "required", value: 75.00)
-      IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+      IncomeAccountAllocation.create!(family: @family, income_series: secondary,
         account: @account, mode: "required", value: 25.00)
       # $200/mo over the AVERAGE 2 paychecks per linked income (2 linked
-      # incomes x 2 occurrences; BUG-R30-1: the divisor is the average, not
+      # incomes x 2 occurrences; BUG- -1: the divisor is the average, not
       # the 4-edge sum) -> $100.00/paycheck.
       r30_required_base(20_000)
 
@@ -2549,30 +2569,30 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_response :success
       assert_includes response.body, %(data-bank-required-display="100.00")
       # 75% / 25% of the displayed $100.00 — the readouts sum exactly to it.
-      assert_includes response.body, "Kurt Payroll: $75.00"
-      assert_includes response.body, "Sammi Payroll: $25.00"
+      assert_includes response.body, "Primary Payroll: $75.00"
+      assert_includes response.body, "Secondary Payroll: $25.00"
       # D-REOPEN: 75/25 is neither equal (50/50 +/- 1c) nor strict
       # proportional (65.85/34.15 +/- 1c) -> the Percent behavior re-opens,
       # with the 4th option checked + enabled and the % inputs seeded.
       assert_includes response.body, %(data-bank-pull-from-ratio="percent")
       assert_select "dialog[data-node-id='bank:#{@account.id}'] [data-bank-pull-panel-group='shared-ratio'] input[type=radio][value=percent][checked]"
-      assert_select "input[data-bank-split-input='#{kurt.id}'][value='75.00']"
-      assert_select "input[data-bank-split-input='#{sammi.id}'][value='25.00']"
+      assert_select "input[data-bank-split-input='#{primary.id}'][value='75.00']"
+      assert_select "input[data-bank-split-input='#{secondary.id}'][value='25.00']"
       # The percents ride the existing [value] carrier.
-      assert_select "input[type=hidden][name='links[#{kurt.id}][value]'][value='75.00']"
-      assert_select "input[type=hidden][name='links[#{sammi.id}][value]'][value='25.00']"
+      assert_select "input[type=hidden][name='links[#{primary.id}][value]'][value='75.00']"
+      assert_select "input[type=hidden][name='links[#{secondary.id}][value]'][value='25.00']"
     end
   end
 
-  # C2: all-nil stored percents re-open as the equal split — the greyed
+  # all-nil stored percents re-open as the equal split — the greyed
   # readouts are 50% of the displayed required each.
   test "required split: nil percents re-open as the equal split readouts (C2)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      IncomeAccountAllocation.create!(family: @family, income_series: kurt,
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      IncomeAccountAllocation.create!(family: @family, income_series: primary,
         account: @account, mode: "required")
-      IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+      IncomeAccountAllocation.create!(family: @family, income_series: secondary,
         account: @account, mode: "required")
       r30_required_base(20_000) # $200/mo over the average 2 paychecks -> $100.00 display (BUG-R30-1 divisor)
 
@@ -2580,102 +2600,102 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 
       assert_response :success
       assert_includes response.body, %(data-bank-required-display="100.00")
-      assert_includes response.body, "Kurt Payroll: $50.00"
-      assert_includes response.body, "Sammi Payroll: $50.00"
+      assert_includes response.body, "Primary Payroll: $50.00"
+      assert_includes response.body, "Secondary Payroll: $50.00"
       assert_includes response.body, %(data-bank-pull-from-ratio="equal")
       # Nil stored percents: the carriers stay blank server-side (nil = the
       # equal split); the JS recalc seeds the 50.00/50.00 split client-side
       # on connect.
-      assert_select "input[type=hidden][name='links[#{kurt.id}][value]'][value='']"
-      assert_select "input[type=hidden][name='links[#{sammi.id}][value]'][value='']"
+      assert_select "input[type=hidden][name='links[#{primary.id}][value]'][value='']"
+      assert_select "input[type=hidden][name='links[#{secondary.id}][value]'][value='']"
     end
   end
 
-  # C3: the behavior dataset re-derivation (D-REOPEN) for required —
+  # the behavior dataset re-derivation (D-REOPEN) for required —
   # strict-proportional stored percents -> rational; custom -> percent;
   # nil -> equal.
   test "required split: the dataset seed re-derives the behavior (C3)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      kurt_edge = IncomeAccountAllocation.create!(family: @family, income_series: kurt,
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      primary_edge = IncomeAccountAllocation.create!(family: @family, income_series: primary,
         account: @account, mode: "required")
-      sammi_edge = IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+      secondary_edge = IncomeAccountAllocation.create!(family: @family, income_series: secondary,
         account: @account, mode: "required")
       r30_required_base(20_000) # $200/mo over the average 2 paychecks -> $100.00 display (BUG-R30-1 divisor)
 
       # (a) 65.85 / 34.15 at 2700/1400 is the strict proportional split
       # (100 * 2700/4100 = 65.8536...) within 1c of both -> rational.
-      kurt_edge.update!(value: 65.85)
-      sammi_edge.update!(value: 34.15)
+      primary_edge.update!(value: 65.85)
+      secondary_edge.update!(value: 34.15)
       get "/plan/flow"
       assert_response :success
       assert_includes response.body, %(data-bank-pull-from-ratio="rational")
 
       # (b) 75 / 25 is custom -> percent.
-      kurt_edge.update!(value: 75.00)
-      sammi_edge.update!(value: 25.00)
+      primary_edge.update!(value: 75.00)
+      secondary_edge.update!(value: 25.00)
       get "/plan/flow"
       assert_response :success
       assert_includes response.body, %(data-bank-pull-from-ratio="percent")
 
       # (c) nil / nil -> equal.
-      kurt_edge.update!(value: nil)
-      sammi_edge.update!(value: nil)
+      primary_edge.update!(value: nil)
+      secondary_edge.update!(value: nil)
       get "/plan/flow"
       assert_response :success
       assert_includes response.body, %(data-bank-pull-from-ratio="equal")
     end
   end
 
-  # C4: the save contract — the required [value] carrier stores the
+  # the save contract — the required [value] carrier stores the
   # PERCENT (not dollars); blank stores nil (the equal split); an
   # out-of-range percent is a 422 with field-keyed errors and the stored
   # state is preserved.
   test "required split: save persists percents, blank is nil, 150 is a 422 (C4)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      kurt_edge = IncomeAccountAllocation.create!(family: @family, income_series: kurt,
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      primary_edge = IncomeAccountAllocation.create!(family: @family, income_series: primary,
         account: @account, mode: "required")
-      sammi_edge = IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+      secondary_edge = IncomeAccountAllocation.create!(family: @family, income_series: secondary,
         account: @account, mode: "required")
       r30_required_base(20_000) # $200/mo over the average 2 paychecks -> $100.00 display (BUG-R30-1 divisor)
 
       # The displayed required is 100.00, so 75.00 / 25.00 are PERCENTS of
-      # it (75.00 dollars would be the pre-Round-30 specific shape).
+      # it (75.00 dollars would be the original specific shape).
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "75.00" },
-        sammi.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "25.00" }
+        primary.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "75.00" },
+        secondary.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "25.00" }
       })
       assert_response :success
-      assert_in_delta 75.00, kurt_edge.reload.value.to_d, 0.0001
-      assert_in_delta 25.00, sammi_edge.reload.value.to_d, 0.0001
+      assert_in_delta 75.00, primary_edge.reload.value.to_d, 0.0001
+      assert_in_delta 25.00, secondary_edge.reload.value.to_d, 0.0001
 
       # Blank = nil = the equal split.
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" },
-        sammi.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "25.00" }
+        primary.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" },
+        secondary.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "25.00" }
       })
       assert_response :success
-      assert_nil kurt_edge.reload.value
-      assert_in_delta 25.00, sammi_edge.reload.value.to_d, 0.0001
+      assert_nil primary_edge.reload.value
+      assert_in_delta 25.00, secondary_edge.reload.value.to_d, 0.0001
 
       # 150.00 fails the model's <= 100 check: 422 with field-keyed errors,
       # the stored state preserved (no partial write).
       patch_bank_links(links: {
-        kurt.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "150.00" },
-        sammi.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "25.00" }
+        primary.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "150.00" },
+        secondary.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "25.00" }
       })
       assert_response :unprocessable_entity
       errors = JSON.parse(response.body)["errors"]
       assert errors["value"].any? { |message| message.include?("less than or equal to 100") }
-      assert_nil kurt_edge.reload.value
-      assert_in_delta 25.00, sammi_edge.reload.value.to_d, 0.0001
+      assert_nil primary_edge.reload.value
+      assert_in_delta 25.00, secondary_edge.reload.value.to_d, 0.0001
     end
   end
 
-  # --- Round 34 (spec 3): the Leftover guardrail — one account per
+  # --- The Leftover guardrail — one account per
   # member's paycheck may carry the leftover. The UI greys the "Leftover"
   # option for the member's other allocations; the server backstops a forced
   # second leftover with a 422 (the unit test the spec calls out). ---
@@ -2686,16 +2706,16 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   # written, the original leftover preserved.
   test "leftover guardrail: a second leftover account for the same paycheck 422s (spec 3)" do
     travel_to Date.new(2026, 11, 15) do
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      sammi.update!(plan_owner_user_id: @user.id)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      secondary.update!(plan_owner_user_id: @user.id)
       savings = @family.accounts.create!(name: "Savings Bucket", owner: @user,
         currency: "USD", balance: 0, accountable: Depository.new)
-      # Sammi's paycheck's leftover already lands in @account (Checking).
-      IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+      # Secondary's paycheck's leftover already lands in @account (Checking).
+      IncomeAccountAllocation.create!(family: @family, income_series: secondary,
         account: @account, mode: "leftover")
 
       # Force a second leftover (Savings) for the same paycheck -> 422.
-      patch_bank_links(links: { sammi.id.to_s => { "enabled" => "1", "mode" => "leftover" } },
+      patch_bank_links(links: { secondary.id.to_s => { "enabled" => "1", "mode" => "leftover" } },
         account: savings)
       assert_response :unprocessable_entity
       errors = JSON.parse(response.body)["errors"]
@@ -2705,7 +2725,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       # Nothing written: still exactly ONE leftover edge, and it is the
       # original (@account), never Savings.
       leftovers = @family.income_account_allocations.where(mode: "leftover",
-        income_series_id: sammi.id)
+        income_series_id: secondary.id)
       assert_equal 1, leftovers.count
       assert_equal @account.id, leftovers.first.account_id
       assert_equal 0, @family.income_account_allocations
@@ -2718,89 +2738,89 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   # taking its own leftover (one per member, not one per family).
   test "leftover guardrail: first leftover, same-account re-save, and a different member are allowed (spec 3)" do
     travel_to Date.new(2026, 11, 15) do
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      sammi.update!(plan_owner_user_id: @user.id)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      secondary.update!(plan_owner_user_id: @user.id)
 
-      # No existing leftover: setting @account as Sammi's leftover is allowed.
-      patch_bank_links(links: { sammi.id.to_s => { "enabled" => "1", "mode" => "leftover" } })
+      # No existing leftover: setting @account as Secondary's leftover is allowed.
+      patch_bank_links(links: { secondary.id.to_s => { "enabled" => "1", "mode" => "leftover" } })
       assert_response :success
       assert_equal 1, @family.income_account_allocations
-        .where(mode: "leftover", income_series_id: sammi.id).count
+        .where(mode: "leftover", income_series_id: secondary.id).count
 
       # Re-saving the SAME account as leftover is allowed (idempotent).
-      patch_bank_links(links: { sammi.id.to_s => { "enabled" => "1", "mode" => "leftover" } })
+      patch_bank_links(links: { secondary.id.to_s => { "enabled" => "1", "mode" => "leftover" } })
       assert_response :success
       assert_equal 1, @family.income_account_allocations
-        .where(mode: "leftover", income_series_id: sammi.id).count
+        .where(mode: "leftover", income_series_id: secondary.id).count
 
       # A different member's paycheck can take its own leftover (one per
       # member) on a different account.
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      kurt.update!(plan_owner_user_id: @other.id)
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      primary.update!(plan_owner_user_id: @other.id)
       savings = @family.accounts.create!(name: "Savings Bucket", owner: @user,
         currency: "USD", balance: 0, accountable: Depository.new)
-      patch_bank_links(links: { kurt.id.to_s => { "enabled" => "1", "mode" => "leftover" } },
+      patch_bank_links(links: { primary.id.to_s => { "enabled" => "1", "mode" => "leftover" } },
         account: savings)
       assert_response :success
       assert_equal 1, @family.income_account_allocations
-        .where(mode: "leftover", income_series_id: kurt.id, account_id: savings.id).count
+        .where(mode: "leftover", income_series_id: primary.id, account_id: savings.id).count
     end
   end
 
-  # spec 3 (UI half): when Sammi's paycheck already has a leftover edge to
+  # UI half: when Secondary's paycheck already has a leftover edge to
   # @account (Checking), the bank dialog opened on a DIFFERENT account greys
   # the "Leftover" radio for that paycheck (disabled + tooltip), while the
   # other three modes stay selectable. The same-account dialog keeps it
   # enabled (it is the current leftover).
   test "leftover guardrail: the bank dialog greys the Leftover option for the member's other accounts (spec 3)" do
     travel_to Date.new(2026, 11, 15) do
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      sammi.update!(plan_owner_user_id: @user.id)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      secondary.update!(plan_owner_user_id: @user.id)
       # plan_order puts Savings ON the plan so its bank dialog renders (the
       # bank dialogs only render for in-plan accounts).
       savings = @family.accounts.create!(name: "Savings Bucket", owner: @user,
         currency: "USD", balance: 0, accountable: Depository.new)
       savings.update!(plan_order: 99)
-      IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+      IncomeAccountAllocation.create!(family: @family, income_series: secondary,
         account: @account, mode: "leftover")
 
       get "/plan/flow"
       assert_response :success
 
-      # Opened on Savings (NOT Sammi's leftover account): the Leftover radio
+      # Opened on Savings (NOT Secondary's leftover account): the Leftover radio
       # is greyed out; the other three modes are still selectable.
       assert_select "dialog[data-node-id='bank:#{savings.id}']" do
-        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=leftover][disabled]", 1
-        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=required][disabled]", 0
-        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=specific][disabled]", 0
-        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=percent][disabled]", 0
+        assert_select "[data-bank-pull-panel-group='row-#{secondary.id}'] input[type=radio][value=leftover][disabled]", 1
+        assert_select "[data-bank-pull-panel-group='row-#{secondary.id}'] input[type=radio][value=required][disabled]", 0
+        assert_select "[data-bank-pull-panel-group='row-#{secondary.id}'] input[type=radio][value=specific][disabled]", 0
+        assert_select "[data-bank-pull-panel-group='row-#{secondary.id}'] input[type=radio][value=percent][disabled]", 0
       end
 
-      # Opened on @account (Sammi's leftover account): the Leftover radio
+      # Opened on @account (Secondary's leftover account): the Leftover radio
       # stays enabled (it is the current leftover).
       assert_select "dialog[data-node-id='bank:#{@account.id}']" do
-        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=leftover][disabled]", 0
-        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=leftover][checked]", 1
+        assert_select "[data-bank-pull-panel-group='row-#{secondary.id}'] input[type=radio][value=leftover][disabled]", 0
+        assert_select "[data-bank-pull-panel-group='row-#{secondary.id}'] input[type=radio][value=leftover][checked]", 1
       end
     end
   end
 
-  # spec 1: the Direct Deposit Review dialog is a STATIC READ-ONLY readout —
+  # The Direct Deposit Review dialog is a STATIC READ-ONLY readout —
   # no config form (gross / frequency / anchor / Save), one tab per member,
   # the header + max-direct-deposit-connections note server-rendered, and the
   # per-paycheck table shell (the rows fill client-side from the graph). The
   # family_paycheck_configs PATCH endpoint stays in place (unused by this UI).
   test "the DD review dialog is a static read-only readout, not a config form (spec 1)" do
     travel_to Date.new(2026, 11, 15) do
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      sammi.update!(plan_owner_user_id: @user.id, plan_max_account_links: 4)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      secondary.update!(plan_owner_user_id: @user.id, plan_max_account_links: 4)
 
       get "/plan/flow"
 
       assert_response :success
       assert_select "dialog[data-node-id='paycheck-config']", 1 do
-        # One tab per existing family member (spec 2: the names render as
-        # buttons; nowrap is verified at 1729x1178 via CDP).
+        # One tab per existing family member (the names render as
+        # buttons; nowrap verified at a wide desktop viewport via the browser harness).
         assert_select "button[role=tab]", @family.users.count
         # The static readout: the header line + the max-DD-connections note
         # (the member's series' plan_max_account_links = 4).
@@ -2826,7 +2846,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  # BUG-R30-1 regression (Round 30 fix-round): the paycheck-view required
+  # BUG- -1 regression ( fix-round): the paycheck-view required
   # display must divide by the AVERAGE occurrences per linked income (the
   # composite paycheck), not by the sum of occurrences across all required
   # edges. The pinned scenario (the SoFi Checking case): 2 required edges,
@@ -2838,11 +2858,11 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   # Test cycle's 2f/2g/leg5 failures).
   test "required display: the per-paycheck base is the average, not the edge sum (BUG-R30-1)" do
     travel_to Date.new(2026, 11, 15) do
-      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
-      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
-      IncomeAccountAllocation.create!(family: @family, income_series: kurt,
+      primary = create_income_series(account: @account, name: "Primary Payroll", amount: 2700)
+      secondary = create_income_series(account: @account, name: "Secondary Payroll", amount: 1400)
+      IncomeAccountAllocation.create!(family: @family, income_series: primary,
         account: @account, mode: "required", value: 60.00)
-      IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+      IncomeAccountAllocation.create!(family: @family, income_series: secondary,
         account: @account, mode: "required", value: 40.00)
       r30_required_base(10_000) # $100.00/mo -- the SoFi Checking base
 
@@ -2862,18 +2882,18 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_in_delta 60.00, BigDecimal("30.00") / display * 100, 0.0001
       # The readout direction of the same base: the stored 60/40 seeds
       # $30.00 / $20.00 of the displayed $50.00 (summing exactly to it).
-      assert_includes response.body, "Kurt Payroll: $30.00"
-      assert_includes response.body, "Sammi Payroll: $20.00"
+      assert_includes response.body, "Primary Payroll: $30.00"
+      assert_includes response.body, "Secondary Payroll: $20.00"
     end
   end
 
-  # --- Round 31A (Fun Money v2): the fun_money row's configuration ---
+  # --- (Fun Money v2): the fun_money row's configuration ---
   # The sanitizer passes ownership / distribution / matching / percents
   # through for kind "fun_money" ONLY (non-fun_money rows get them dropped,
-  # the byte-identical stop-rule), the C14 input snapshot is pinned on
+  # the byte-identical stop-rule), the input snapshot is pinned on
   # save, the graph payload echoes the config + the reconciliation, and
   # the red line renders for an un-allocated residual strictly above the
-  # 100-cent tolerance (R35c: in the toggle-row hover icon's popup, no
+  # 100-cent tolerance (in the toggle-row hover icon's popup, no
   # longer in the chrome-top swap).
   test "Round 31A: create a fun_money row with config; graph echoes it and pins the C14 snapshot" do
     travel_to Date.new(2026, 11, 15) do
@@ -2894,7 +2914,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_equal "equal", row.distribution
       assert_equal "equalize", row.matching
 
-      # C14: the input snapshot (per-income I/B/S cents) is pinned at save.
+      # the input snapshot (per-income I/B/S cents) is pinned at save.
       snapshot = row.distribution_params["inputs_snapshot"]
       assert snapshot.is_a?(Hash), "the C14 snapshot was not pinned"
       assert snapshot.any? { |_income_id, entry| entry.is_a?(Hash) && entry.key?("i") }
@@ -2983,12 +3003,15 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       get "/plan/flow"
       assert_response :success
       assert_match(/Bob Payroll \u2014 Un-Allocated/, response.body)
-      assert_match(/150\.00/, response.body)
+      # the unit-aware figure — the default
+      # Per Paycheck view shows the per-paycheck share of the monthly
+      # un-allocated residual (150.00 / 2 occurrences = 75.00).
+      assert_match(/75\.00/, response.body)
 
-      # R35c: the red line groups no longer ship in the chrome.top in-place
+      # The red line groups no longer ship in the chrome.top in-place
       # swap (they moved to the toggle-row hover icon in show.html.erb, fed
       # from the same @discrepancy_lines local; the swap now carries only
-      # the C14 prompt when present).
+      # the prompt when present).
       bills = @family.plan_allocations.find_by(name: "Bills")
       patch "/plan/flow/allocations/#{bills.id}",
         headers: { "Accept" => "application/json" }, params: {
@@ -3001,6 +3024,39 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "Round 36: the plan-issues icon re-renders in chrome.issues_icon on in-place saves (design doc section 5)" do
+    travel_to Date.new(2026, 11, 15) do
+      series = create_income_series(account: @account, name: "Bob Payroll", amount: 900)
+      IncomeAccountAllocation.create!(family: @family, income_series: series,
+        account: @account, mode: "required")
+      bill = PlanAllocation.create!(family: @family, account: @account, name: "Huge Bill",
+        kind: "bill", mode: "required", value_cents: 250_000, cadence: "monthly")
+
+      # Over-planned (2 x 900.00 in, 2500.00/mo required): the icon ships
+      # in chrome.issues_icon with the unit-aware red line — the default
+      # Per Paycheck view shows the per-paycheck share (700.00 / 2 = 350.00).
+      patch "/plan/flow/allocations/#{bill.id}",
+        headers: { "Accept" => "application/json" }, params: {
+          plan_allocation: { account_id: @account.id, name: "Huge Bill", kind: "bill",
+                             mode: "required", value: "2500.00" }
+        }
+      assert_response :success
+      icon = JSON.parse(response.body)["chrome"]["issues_icon"]
+      assert_match(/m21\.73 18-8-14/, icon) # the triangle-alert glyph
+      assert_match(/Over-planned by \$350\.00 on Bob Payroll/, icon)
+
+      # The bill is fixed (1800.00/mo = 900.00/paycheck, nothing over): the
+      # icon DISAPPEARS without a reload — an empty fragment.
+      patch "/plan/flow/allocations/#{bill.id}",
+        headers: { "Accept" => "application/json" }, params: {
+          plan_allocation: { account_id: @account.id, name: "Huge Bill", kind: "bill",
+                             mode: "required", value: "1800.00" }
+        }
+      assert_response :success
+      assert_equal "", JSON.parse(response.body)["chrome"]["issues_icon"]
+    end
+  end
+
   test "Round 31A: the fun_money dialog renders the four config fields with the owner labels" do
     PlanAllocation.create!(family: @family, account: @account, name: "Fun money",
       kind: "fun_money", mode: "leftover")
@@ -3008,26 +3064,26 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     get "/plan/flow"
     assert_response :success
     body = response.body
-    # The C2 distribution options (verbatim owner labels).
+    # The distribution options (verbatim labels).
     assert_includes body, I18n.t("plan_flows.allocation_dialog.distribution_equal")
     assert_includes body, I18n.t("plan_flows.allocation_dialog.distribution_rational")
     assert_includes body, I18n.t("plan_flows.allocation_dialog.distribution_percent")
     assert_includes body, I18n.t("plan_flows.allocation_dialog.distribution_individual_leftover")
-    # The C3 mode labels (verbatim owner list).
+    # The mode labels (verbatim list).
     assert_includes body, I18n.t("plan_flows.allocation_dialog.fm_mode_leftover")
     assert_includes body, I18n.t("plan_flows.allocation_dialog.fm_mode_percent")
     assert_includes body, I18n.t("plan_flows.allocation_dialog.fm_mode_specific")
     assert_includes body, I18n.t("plan_flows.allocation_dialog.fm_mode_required")
-    # The C2 label keys render for the fun_money kind only.
+    # The label keys render for the fun_money kind only.
     assert_includes body, I18n.t("plan_flows.allocation_dialog.ownership_label")
     assert_includes body, I18n.t("plan_flows.allocation_dialog.distribution_label")
     assert_includes body, I18n.t("plan_flows.allocation_dialog.matching_label")
   end
 
-  # Round 31B (Direct Deposit): PATCH /plan/flow/paycheck-config/:user_id —
+  # (Direct Deposit): PATCH /plan/flow/paycheck-config/:user_id —
   # the member's paycheck config, in-place (Accept: application/json).
   # Same shape as create_income_series but with an explicit plan_owner (the
-  # labeled-series lookup keys on plan_owner_user_id, no account-owner
+  # labeled-series lookup keys on plan_owner_user_id, no account-holder
   # fallback).
   def create_member_income_series(member:, name:, amount:)
     series = @family.recurring_transactions.create!(
@@ -3063,7 +3119,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_response :success
       body = JSON.parse(response.body)
 
-      # B6: the graph reflects the overlay (dates + gross replaced) while
+      # the graph reflects the overlay (dates + gross replaced) while
       # the allocation's wanted stays put.
       income = body.dig("graph", "incomes").find { |row| row["id"] == series.id }
       assert_equal [ "2026-11-15", "2026-11-30" ],
@@ -3161,7 +3217,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
 end
 
 # ---------------------------------------------------------------------------
-# R35 (Flow Scenarios, design §3 / §5 / §6): the scenario CRUD + reset API,
+# the scenario CRUD + reset API,
 # the ?scenario= graph contract, and the scenario-scoped writes (the
 # isolation invariant: every scenario-mode write touches ONLY the scenario
 # row's snapshot — the live plan census is byte-for-byte unchanged).
@@ -3200,15 +3256,15 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     series
   end
 
-  # The live plan the scenario snapshots: two incomes (Kurt + Sammi),
+  # The live plan the scenario snapshots: two incomes (Primary + Secondary),
   # leftover edges to the same bank, a $1000 rent bill.
   def seed_live_plan
     travel_to Date.new(2026, 11, 15) do
-      @kurt_series = create_income_series(account: @account, name: "Kurt Paycheck", amount: 400)
-      @sammi_series = create_income_series(account: @account, name: "Sammi Paycheck", amount: 900, owner: @other)
-      IncomeAccountAllocation.create!(family: @family, income_series: @kurt_series,
+      @primary_series = create_income_series(account: @account, name: "Primary Paycheck", amount: 400)
+      @secondary_series = create_income_series(account: @account, name: "Secondary Paycheck", amount: 900, owner: @other)
+      IncomeAccountAllocation.create!(family: @family, income_series: @primary_series,
         account: @account, mode: "leftover")
-      IncomeAccountAllocation.create!(family: @family, income_series: @sammi_series,
+      IncomeAccountAllocation.create!(family: @family, income_series: @secondary_series,
         account: @account, mode: "leftover")
       @rent = PlanAllocation.create!(family: @family, account: @account, name: "Rent",
         kind: "bill", mode: "specific", value_cents: 100_000, cadence: "monthly")
@@ -3224,7 +3280,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     }
   end
 
-  def create_scenario(name: "Wife quits", source: "current", params: { name: name, source: source })
+  def create_scenario(name: "Second income quits", source: "current", params: { name: name, source: source })
     post "/plan/flow/scenarios", headers: json, params: params
   end
 
@@ -3237,7 +3293,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     (snapshot[key] || []).map { |row| PaycheckFlowPlanner.scenario_row(row) }
   end
 
-  # --- index (design §3) ---
+  # --- index (the design) ---
 
   test "index lists scenarios with the snapshot count and active id" do
     seed_live_plan
@@ -3251,7 +3307,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     assert body["ok"]
     assert_equal 1, body["scenarios"].size
     row = body["scenarios"].first
-    assert_equal "Wife quits", row["name"]
+    assert_equal "Second income quits", row["name"]
     assert_equal "reuse_current", row["source"]
     assert_equal 1, row["snapshot_count"]["allocations"]
     assert_equal 2, row["snapshot_count"]["edges"]
@@ -3262,7 +3318,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     assert_equal first.id, response.parsed_body["active_id"]
   end
 
-  # --- create (design §3 + §1.1 snapshot identity) ---
+  # --- create (snapshot identity) ---
 
   test "create re-uses the live plan: the snapshot deep-equals the fresh builder" do
     seed_live_plan
@@ -3293,7 +3349,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     assert_empty scenario.snapshot["paycheck_configs"]
     assert_nil scenario.snapshotted_at
     # The income policy carries BOTH current series, all enabled.
-    assert_equal [ @kurt_series.id, @sammi_series.id ].sort,
+    assert_equal [ @primary_series.id, @secondary_series.id ].sort,
                  scenario.snapshot["incomes"].map { |row| row["series_id"] }.sort
     assert scenario.snapshot["incomes"].all? { |row| row["enabled"] == true && row["zeroed"] == false }
   end
@@ -3308,9 +3364,9 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     assert_response :unprocessable_entity
     assert response.parsed_body["errors"]["name"].to_a.any? { |m| m.include?("reserved") }
 
-    create_scenario # "Wife quits"
+    create_scenario # "Second income quits"
     assert_response :created
-    create_scenario(name: "wife quits")
+    create_scenario(name: "second income quits")
     assert_response :unprocessable_entity
     assert response.parsed_body["errors"]["name"].to_a.any? { |m| m.include?("taken") }
 
@@ -3321,7 +3377,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     assert_equal 1, PlanScenario.count
   end
 
-  # --- rename (design §3) ---
+  # --- rename (the design) ---
 
   test "rename updates the name; 404s on default/unknown; 422 on collision" do
     seed_live_plan
@@ -3345,7 +3401,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     assert response.parsed_body["errors"]["name"].to_a.any? { |m| m.include?("taken") }
   end
 
-  # --- delete (design §3) ---
+  # --- delete (the design) ---
 
   test "delete removes the row; 404s on default/unknown; 422 while active" do
     seed_live_plan
@@ -3367,7 +3423,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
   end
 
-  # --- reset (owner decision R35) ---
+  # --- reset (the design decision ) ---
 
   test "reset reuse_current re-snapshots the CURRENT live plan" do
     seed_live_plan
@@ -3418,7 +3474,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     assert_response :not_found
   end
 
-  # --- scenario bank-links save (Round 35d: the required-mode blank carrier) ---
+  # --- scenario bank-links save ( : the required-mode blank carrier) ---
 
   # The live plan behind the scenario: two incomes with required edges to
   # @account (nil value = the equal split) and a $500/month required base
@@ -3427,11 +3483,11 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
   # dialog's exact carrier must accept the blank.
   def seed_bank_links_plan
     travel_to Date.new(2026, 11, 15) do
-      @kurt_series = create_income_series(account: @account, name: "Kurt Paycheck", amount: 400)
-      @sammi_series = create_income_series(account: @account, name: "Sammi Paycheck", amount: 900, owner: @other)
-      IncomeAccountAllocation.create!(family: @family, income_series: @kurt_series,
+      @primary_series = create_income_series(account: @account, name: "Primary Paycheck", amount: 400)
+      @secondary_series = create_income_series(account: @account, name: "Secondary Paycheck", amount: 900, owner: @other)
+      IncomeAccountAllocation.create!(family: @family, income_series: @primary_series,
         account: @account, mode: "required")
-      IncomeAccountAllocation.create!(family: @family, income_series: @sammi_series,
+      IncomeAccountAllocation.create!(family: @family, income_series: @secondary_series,
         account: @account, mode: "required")
       PlanAllocation.create!(family: @family, account: @account, name: "SoFi Savings",
         kind: "bill", mode: "required", value_cents: 50_000, cadence: "monthly")
@@ -3444,7 +3500,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
   def patch_bank_links_scenario(scenario, links)
     patch "/plan/flow/accounts/#{@account.id}", headers: json, params: {
       account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
-                 parent_account_id: "", auto_transfer_target_ids: ["0"] },
+                 parent_account_id: "", auto_transfer_target_ids: [ "0" ] },
       links: links,
       scenario: scenario.id
     }
@@ -3455,12 +3511,12 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     create_scenario(name: "R35d repro", source: "current")
     scenario = PlanScenario.last
 
-    # The owner's exact shape: Kurt checked + Required (the blank carrier),
-    # Sammi unchecked. Pre-fix the blank carrier became 0 -> the model's
+    # the exact shape: Primary checked + Required (the blank carrier),
+    # Secondary unchecked. Pre-fix the blank carrier became 0 -> the model's
     # required range check 422'd with "must be greater than 0".
     patch_bank_links_scenario(scenario, {
-      @kurt_series.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" },
-      @sammi_series.id.to_s => { "mode" => "required", "value" => "" }
+      @primary_series.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" },
+      @secondary_series.id.to_s => { "mode" => "required", "value" => "" }
     })
     assert_response :success, "the blank required carrier must not 422"
     assert response.parsed_body.key?("graph"),
@@ -3468,15 +3524,15 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
 
     # The snapshot row: nil required_percent = the equal split (not 0).
     rows = scenario_rows(scenario.reload.snapshot, "allocations")
-    kurt_row = rows.find { |r| r[:income_id] == @kurt_series.id && r[:account_id] == @account.id }
-    assert kurt_row, "the Kurt edge row must be in the scenario snapshot"
-    assert_equal "required", kurt_row[:mode]
-    assert_nil kurt_row[:required_percent], "blank carrier -> nil (equal split), not 0"
-    assert rows.none? { |r| r[:income_id] == @sammi_series.id },
-      "the unchecked Sammi row leaves the snapshot edge set"
+    primary_row = rows.find { |r| r[:income_id] == @primary_series.id && r[:account_id] == @account.id }
+    assert primary_row, "the Primary edge row must be in the scenario snapshot"
+    assert_equal "required", primary_row[:mode]
+    assert_nil primary_row[:required_percent], "blank carrier -> nil (equal split), not 0"
+    assert rows.none? { |r| r[:income_id] == @secondary_series.id },
+      "the unchecked Secondary row leaves the snapshot edge set"
 
     # The live plan is untouched: the live edge still carries nil.
-    assert_nil IncomeAccountAllocation.find_by(income_series_id: @kurt_series.id,
+    assert_nil IncomeAccountAllocation.find_by(income_series_id: @primary_series.id,
       account_id: @account.id).value
 
     # The scenario graph settles the equal split: the single funder's 2
@@ -3484,10 +3540,10 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     get "/plan/flow/graph?scenario=#{scenario.id}", headers: json
     assert_response :success
     bank = response.parsed_body["banks"].find { |b| b["id"] == @account.id }
-    kurt_inflow = bank["inflow"].select { |row| row["income_id"] == @kurt_series.id }
-    assert_equal 2, kurt_inflow.size
-    assert kurt_inflow.all? { |row| row["mode"] == "required" }
-    assert_equal ["250.00", "250.00"], kurt_inflow.map { |row| row["amount"] }
+    primary_inflow = bank["inflow"].select { |row| row["income_id"] == @primary_series.id }
+    assert_equal 2, primary_inflow.size
+    assert primary_inflow.all? { |row| row["mode"] == "required" }
+    assert_equal [ "250.00", "250.00" ], primary_inflow.map { |row| row["amount"] }
     assert_equal "500.00", bank["inflow_month"], "the bank's full required base lands"
   end
 
@@ -3497,8 +3553,8 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     scenario = PlanScenario.last
 
     patch_bank_links_scenario(scenario, {
-      @kurt_series.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "19.91" },
-      @sammi_series.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" }
+      @primary_series.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "19.91" },
+      @secondary_series.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" }
     })
     assert_response :success
     assert response.parsed_body.key?("graph"),
@@ -3507,20 +3563,20 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     # The snapshot row carries the stored 2-dp percent (the jsonb round-trip
     # stringifies it; scenario_rows normalizes it back to a BigDecimal).
     rows = scenario_rows(scenario.reload.snapshot, "allocations")
-    kurt_row = rows.find { |r| r[:income_id] == @kurt_series.id && r[:account_id] == @account.id }
-    assert_equal BigDecimal("19.91"), kurt_row[:required_percent]
+    primary_row = rows.find { |r| r[:income_id] == @primary_series.id && r[:account_id] == @account.id }
+    assert_equal BigDecimal("19.91"), primary_row[:required_percent]
 
     # The scenario graph settles the stored split: 19.91% of the $500.00
-    # base = 99.55 over Kurt's two paychecks (49.78 + 49.77, last absorbs).
+    # base = 99.55 over Primary's two paychecks (49.78 + 49.77, last absorbs).
     get "/plan/flow/graph?scenario=#{scenario.id}", headers: json
     assert_response :success
     bank = response.parsed_body["banks"].find { |b| b["id"] == @account.id }
-    kurt_inflow = bank["inflow"].select { |row| row["income_id"] == @kurt_series.id }
-    assert_equal 2, kurt_inflow.size
-    assert_equal BigDecimal("99.55"), kurt_inflow.map { |row| BigDecimal(row["amount"]) }.sum
+    primary_inflow = bank["inflow"].select { |row| row["income_id"] == @primary_series.id }
+    assert_equal 2, primary_inflow.size
+    assert_equal BigDecimal("99.55"), primary_inflow.map { |row| BigDecimal(row["amount"]) }.sum
   end
 
-  # --- graph contract (design §2.2 / §3) ---
+  # --- graph contract (the design) ---
 
   test "graph without a scenario carries NO scenario key and the live plan" do
     seed_live_plan
@@ -3537,10 +3593,10 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     create_scenario
     scenario = PlanScenario.last
 
-    # Sammi quits inside the scenario.
+    # Secondary quits inside the scenario.
     snapshot = scenario.snapshot
     snapshot["incomes"] = snapshot["incomes"].map do |row|
-      row["series_id"] == @sammi_series.id ? row.merge("enabled" => false) : row
+      row["series_id"] == @secondary_series.id ? row.merge("enabled" => false) : row
     end
     scenario.update_column(:snapshot, snapshot)
 
@@ -3553,9 +3609,9 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     body = response.parsed_body
     assert_equal({ "id" => scenario.id, "name" => scenario.name }, body["scenario"])
     scenario_incomes = body["incomes"]
-    assert scenario_incomes.none? { |i| i["id"] == @sammi_series.id },
+    assert scenario_incomes.none? { |i| i["id"] == @secondary_series.id },
       "the disabled series must be absent from the scenario graph"
-    assert default_incomes.any? { |i| i["id"] == @sammi_series.id },
+    assert default_incomes.any? { |i| i["id"] == @secondary_series.id },
       "and present in the Default graph (the live plan is untouched)"
     # Same keys otherwise (the additive-key invariant).
     assert_equal default_body.keys - [ "scenario" ], body.keys - [ "scenario" ]
@@ -3585,7 +3641,7 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     get "/plan/flow?scenario=#{scenario.id}"
     assert_response :success
     assert_includes response.body, "data-plan-flow-sankey-graph-url-value=\"/plan/flow/graph?scenario=#{scenario.id}\""
-    assert_includes response.body, "Wife quits"
+    assert_includes response.body, "Second income quits"
     assert_includes response.body, "not your live plan"
     # The picker lists the scenario row with its rename/delete affordances.
     assert_includes response.body, "flow/scenarios/#{scenario.id}"
@@ -3678,26 +3734,26 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     scenario = PlanScenario.last
     before = census
 
-    # Kurt's leftover moves to a percent split inside the scenario.
+    # Primary's leftover moves to a percent split inside the scenario.
     patch "/plan/flow/accounts/#{@account.id}?scenario=#{scenario.id}", headers: json, params: {
       account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
-                 parent_account_id: "", auto_transfer_target_ids: ["0"] },
+                 parent_account_id: "", auto_transfer_target_ids: [ "0" ] },
       links: {
-        @kurt_series.id => { enabled: "1", mode: "percent", value: "50" },
-        @sammi_series.id => { enabled: "1", mode: "leftover", value: "" }
+        @primary_series.id => { enabled: "1", mode: "percent", value: "50" },
+        @secondary_series.id => { enabled: "1", mode: "leftover", value: "" }
       }
     }
     assert_response :success
 
     rows = scenario.reload.snapshot["allocations"]
-    kurt = rows.find { |r| r["income_id"] == @kurt_series.id }
-    assert_equal "percent", kurt["mode"]
-    assert_equal 0.5, kurt["value_percent"].to_f
-    sammi = rows.find { |r| r["income_id"] == @sammi_series.id }
-    assert_equal "leftover", sammi["mode"]
+    primary = rows.find { |r| r["income_id"] == @primary_series.id }
+    assert_equal "percent", primary["mode"]
+    assert_equal 0.5, primary["value_percent"].to_f
+    secondary = rows.find { |r| r["income_id"] == @secondary_series.id }
+    assert_equal "leftover", secondary["mode"]
     assert_equal before, census
     assert_equal "leftover", @family.income_account_allocations
-      .find_by(income_series_id: @kurt_series.id, account_id: @account.id).mode,
+      .find_by(income_series_id: @primary_series.id, account_id: @account.id).mode,
       "the live edge is untouched"
   end
 
@@ -3710,28 +3766,28 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     # The scenario income dialog posts the flat income_policy params
     # (enabled / zeroed / gross) — the controller's scenario branch reads
     # params[:income_policy].
-    patch "/plan/flow/incomes/#{@sammi_series.id}?scenario=#{scenario.id}", headers: json, params: {
+    patch "/plan/flow/incomes/#{@secondary_series.id}?scenario=#{scenario.id}", headers: json, params: {
       income_policy: { enabled: "0" }
     }
     assert_response :success
-    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @sammi_series.id }
+    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @secondary_series.id }
     assert_equal false, row["enabled"]
     assert_equal before, census
-    assert @sammi_series.reload.status == "active", "the live series is untouched"
+    assert @secondary_series.reload.status == "active", "the live series is untouched"
 
     # Zeroed + gross levers.
-    patch "/plan/flow/incomes/#{@sammi_series.id}?scenario=#{scenario.id}", headers: json, params: {
+    patch "/plan/flow/incomes/#{@secondary_series.id}?scenario=#{scenario.id}", headers: json, params: {
       income_policy: { enabled: "1", zeroed: "1" }
     }
     assert_response :success
-    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @sammi_series.id }
+    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @secondary_series.id }
     assert_equal true, row["zeroed"]
 
-    patch "/plan/flow/incomes/#{@sammi_series.id}?scenario=#{scenario.id}", headers: json, params: {
+    patch "/plan/flow/incomes/#{@secondary_series.id}?scenario=#{scenario.id}", headers: json, params: {
       income_policy: { enabled: "1", zeroed: "0", gross: "750.00" }
     }
     assert_response :success
-    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @sammi_series.id }
+    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @secondary_series.id }
     assert_equal false, row["zeroed"]
     assert_equal 75_000, row["gross_per_paycheck_cents"].to_i
 
@@ -3740,18 +3796,18 @@ class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
     # array) and only the hidden "false" when unchecked. The array form
     # must read ENABLED (the original .to_s bug read "false" for a checked
     # box) and the hidden-only form must read DISABLED.
-    patch "/plan/flow/incomes/#{@sammi_series.id}?scenario=#{scenario.id}", headers: json, params: {
+    patch "/plan/flow/incomes/#{@secondary_series.id}?scenario=#{scenario.id}", headers: json, params: {
       income_policy: { enabled: [ "false", "true" ] }
     }
     assert_response :success
-    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @sammi_series.id }
+    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @secondary_series.id }
     assert_equal true, row["enabled"], "checked box (array form) = enabled"
 
-    patch "/plan/flow/incomes/#{@sammi_series.id}?scenario=#{scenario.id}", headers: json, params: {
+    patch "/plan/flow/incomes/#{@secondary_series.id}?scenario=#{scenario.id}", headers: json, params: {
       income_policy: { enabled: "false" }
     }
     assert_response :success
-    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @sammi_series.id }
+    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @secondary_series.id }
     assert_equal false, row["enabled"], "unchecked box (hidden-only form) = disabled"
   end
 

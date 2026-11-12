@@ -1,7 +1,7 @@
-# Round 31B (Direct Deposit): paycheck-date derivation. REUSES the house
+# (Direct Deposit): paycheck-date derivation. REUSES the house
 # RecurringTransaction::Schedule + RecurrenceRule engine — no new math:
 #
-#   semi_monthly (default, B5) = two monthly rules: the 15th + the last
+# semi_monthly (default) = two monthly rules: the 15th + the last
 #     calendar day (RecurrenceRule::LAST) — 24x/yr.
 #   biweekly = a weekly rule interval 2 on the anchor's weekday, anchored
 #     at the anchor date — 26 dates/yr, exact 14-day stride, clipped to

@@ -1,9 +1,9 @@
-# Round 16: bank-logo auto-match (owner note 3b).
+# bank-logo auto-match.
 #
 # Rails 8.1 config_for only resolves env-keyed values, so both maps live
 # under the shared: key (applies to every environment).
 #
-# labels:   slug -> display name. A slug is USABLE only when BOTH a vendored
+# labels: slug -> display name. A slug is USABLE only when BOTH a vendored
 #           file (app/assets/images/bank-logos/<slug>.svg) and a label exist;
 #           that intersection is the dialog picker list and the validation set.
 #
@@ -14,7 +14,7 @@
 #           wins. A slug whose file is missing simply never resolves.
 #
 # One-time vendoring only (app/assets/images/bank-logos/ + COPYRIGHTS.md);
-# the app NEVER fetches logos at runtime (owner policy: 100% local).
+# the app NEVER fetches logos at runtime (100% local operation only).
 shared:
   labels:
     sofi: SoFi

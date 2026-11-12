@@ -1,6 +1,6 @@
 import { Controller } from "@hotwired/stimulus";
 
-// Round 16 (owner note 3b): the bank config dialog's logo picker. The usable
+// the bank config dialog's logo picker. The usable
 // logo list (vendored file + label) arrives as a value — no endpoint; the
 // search box filters it CLIENT-SIDE, a click writes the slug into the hidden
 // account[bank_logo_slug] input (the in-place PATCH flow_account save
@@ -57,7 +57,10 @@ export default class extends Controller {
     const logo = this.logosValue.find((item) => item.slug === slug);
     this.currentTarget.textContent = logo ? logo.label : this._noneLabel;
     this.choiceTargets.forEach((choice) => {
-      choice.classList.toggle("bg-subdued/60", slug !== "" && choice.dataset.slug === slug);
+      choice.classList.toggle(
+        "bg-subdued/60",
+        slug !== "" && choice.dataset.slug === slug,
+      );
     });
   }
 }

@@ -1500,7 +1500,7 @@ class AccountTest < ActiveSupport::TestCase
     end
   end
 
-  # M2 PR#2b: the plan-role label and the auto-transfer link.
+  # the plan-role label and the auto-transfer link.
   test "plan_role accepts only the known roles (nil = ordinary bank)" do
     depository = accounts(:depository)
     assert depository.valid?
@@ -1524,7 +1524,7 @@ class AccountTest < ActiveSupport::TestCase
     assert_equal credit, depository.auto_transfer_to
   end
 
-  # Round 11 issue 8: the sub-account link (parent_account_id) and the
+  # the sub-account link (parent_account_id) and the
   # ordered auto-transfer fan-out targets (auto_transfer_target_ids).
   def create_depository(name)
     @family.accounts.create!(
@@ -1595,7 +1595,7 @@ class AccountTest < ActiveSupport::TestCase
     parent.errors[:auto_transfer_target_ids].any? { |m| m.include?("same family") }
 
     # A same-family account that is NOT a sub-account of the source is
-    # rejected (the round-11 strict rule: the source only fans out to its
+    # rejected (the strict rule: the source only fans out to its
     # own sub-accounts).
     parent.auto_transfer_target_ids = [ stranger.id ]
     assert_not parent.valid?
@@ -1620,7 +1620,7 @@ class AccountTest < ActiveSupport::TestCase
     parent.errors[:auto_transfer_target_ids].any? { |m| m.include?("sub-accounts of this account") }
   end
 
-  # Round 16 (owner note 3b): the explicit per-account logo slug is optional
+  # the explicit per-account logo slug is optional
   # and must name a VENDORED file (no runtime fetching, no fabricated slug).
   test "bank_logo_slug is optional and must be a vendored slug" do
     depository = accounts(:depository)

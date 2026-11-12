@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { restackManageRows } from "../../../app/javascript/utils/plan_flow_sankey_layout.mjs";
 
-// R32 regression surface: the manage-mode row re-stack must keep every node
-// label vertically centered on its band (the drawn rect) — the owner's
+// regression surface: the manage-mode row re-stack must keep every node
+// label vertically centered on its band (the drawn rect) — the
 // "drift" screenshot showed the middle bank-column labels up to ~185px below
-// their bands because a pre-R24 label tiling pass placed labels at their own
+// their bands because a legacy label tiling pass placed labels at their own
 // pitch while the bands sat at the row-gap pitch. The invariant:
 //   expected label-center == band-center, for every row, at every scale.
 
@@ -52,7 +52,7 @@ test("every label is centered on its own band (expected label-center == band-cen
 test("label pitch equals band pitch down the whole column (no accumulated drift)", () => {
   // The legacy drift: labels marched at their own (~30px) pitch while the
   // bands sat at the row-gap pitch (~22px) — the offset grew down the
-  // column (+39.5 ... +185px in the owner's screenshot). The restack must
+  // column (+39.5 ... +185px in the screenshot). The restack must
   // keep the two pitches identical, so the offset cannot accumulate.
   const rows = column([
     [10, 100, 10, 100],

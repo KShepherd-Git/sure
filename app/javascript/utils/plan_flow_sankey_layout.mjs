@@ -1,6 +1,6 @@
-// Pure manage-mode row re-stack math for the plan-flow sankey (R32).
+// Pure manage-mode row re-stack math for the plan-flow sankey.
 //
-// The R24 restack (#manageRowGapsAndExtent in the plan-flow sankey controller)
+// The restack (#manageRowGapsAndExtent in the plan-flow sankey controller)
 // re-anchors every drawn bank / allocation-surplus row to
 // [top, top + hDrawn) with exactly rowGap between adjacent DRAWN rows, then
 // re-centers the layout rect (y0/y1, which the flow anchors derive from) on
@@ -8,8 +8,8 @@
 // (controller #applyGeometry: d._y0 = d._fy0 ?? d.y0; #setLabelGeoms: label
 // y = (d._y0 + d._y1) / 2 + _labelDy), so the label center and the band
 // center are the same number by construction. That coupling is the invariant
-// the pre-R24 label-only tiling pass broke (labels tiled at their own pitch
-// while the bands sat at the row-gap pitch — the owner's "drift" screenshot:
+// the legacy label-only tiling pass broke (labels tiled at their own pitch
+// while the bands sat at the row-gap pitch — the "drift" screenshot:
 // middle bank-column labels up to ~185px below their bands), and this module
 // exists so the math is unit-testable: expected label-center == band-center
 // for every row, and label pitch == band pitch down the whole column.

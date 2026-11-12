@@ -1,5 +1,5 @@
-<%# Allocation dialog (round 26 R4 re-org — owner items 6/7/8/9; supersedes
-    the round 20 two-disclosure-stack layout). ALL three instances share
+<%# Allocation dialog (reorganized from the two-disclosure-stack layout). ALL
+    three instances share
     this partial (allocation:new with the known list + CTA,
     allocation:selected, the per-allocation edit), so the layout is
     identical for new + edit: NO collapsibles. The form is a flat grid:
@@ -16,7 +16,7 @@
         plan_allocation[account_id] input is the submit carrier, synced by
         JS (#applyBankSelection). The panel stays a DOM descendant of the
         dialog's content target, so a click inside it never looks like a
-        backdrop click (round 26 R3 clickOutside lesson).
+        backdrop click (the clickOutside lesson).
       Row 4: Category — the floating DS::Popover trigger IS the labeled
         row (item 7b: the trigger carries the same colored icon chip the
         popup rows do); category auto-fill (item 7a): a linked bill's own
@@ -35,7 +35,7 @@
     #setAllocationMode), unchanged.
     The open paths (Known Allocations list, New Allocation, Recommended
     prefills) and the in-place submit are unchanged.
-    Round 21 T3/T4: the CTA rides the dialog header (new allocation only)
+    The CTA rides the dialog header (new allocation only)
     and the partial renders a SECOND time as the "selected allocation"
     window (node_id "allocation:selected", show_known: false) — the known
     list + CTA live ONLY in the allocation:new instance so the in-place
@@ -43,7 +43,7 @@
     holder.
     locals: (allocation, known_allocations = [], known_hidden = false, node_id: nil, show_known: true) %>
 <% is_new = allocation.nil? %>
-<%# Round 21 T3/T4: the dialog node id + the known-section visibility are
+<%# The dialog node id + the known-section visibility are
     OPTIONAL locals (read via local_assigns — ActionView does not apply the
     comment defaults, and the edit-dialog render passes only allocation:).
     Defaults: allocation:new for a blank form, the allocation's id otherwise;
@@ -55,7 +55,7 @@
     linked: the allocation is a pre-determined bill (a real detected bill
     record behind it) -> name / amount / cadence are read-only context,
     Mode does not appear, and the type options are Bill / Debt only. %>
-<%# Round 26 R4 (item 7c): the kind is a HIDDEN input (the visible kind
+<%# the kind is a HIDDEN input (the visible kind
     select is gone — all JS consumers query [name="plan_allocation[kind]"]
     by name; syncAllocationKind is now dead but harmless). The local is the
     hidden input's value. %>
@@ -65,12 +65,12 @@
 <%# The initial hidden class for the bill-only groups, mirroring what the
     JS (#applyAllocationVisibility) computes from the kind on change. %>
 <% bucket_kind = %w[savings fun_money].include?(kind) %>
-<%# Round 31A (Fun Money v2): the fun_money kind's config locals. The
+<%# (Fun Money v2): the fun_money kind's config locals. The
     Ownership / Distribution / Mode / Matching fields render ONLY in the
     kind == "fun_money" branch (kind-conditional blocks — every other kind's
-    dialog stays byte-identical, stop-rule). C11 defaults: a fresh row reads
+    dialog stays byte-identical, stop-rule). Defaults: a fresh row reads
     Household (legacy-safe — per-user matching is opt-in); Matching defaults
-    to Equalize for member ownership (C11b). C12: the Name field is replaced
+    to Equalize for member ownership. The Name field is replaced
     by the Ownership select, but plan_allocation[name] still submits the
     constant kind label so the dialog title, the over-plan item label, and
     the graph allocations[].name stay stable. %>
@@ -83,15 +83,15 @@
                    ((fm_raw_params["percents"] || fm_raw_params[:percents] || {}).to_h) : {} %>
 <%# Same member order as the planner's partners kwarg (created_at, id). %>
 <% fm_members = @family_users || Current.family.users.order(:created_at, :id).to_a %>
-<%# C15: several Fun Money rows — the FIRST one (sort order) drives the
+<%# several Fun Money rows — the FIRST one (sort order) drives the
     reconciliation; the dialog documents that here. %>
 <% fm_rows_count = fm_kind ? Current.family.plan_allocations.where(kind: "fun_money").count : 0 %>
-<%# Round 10 issue 4 / round 20 U: savings + fun_money labels for the
+<%# / U: savings + fun_money labels for the
     account hint and the amount label (the bill label is the default). %>
 <% account_hint = kind == "savings" ? t(".savings_account_hint") : (kind == "fun_money" ? t(".fun_account_hint") : t(".source_bank_hint")) %>
 <% amount_label = kind == "savings" ? t(".savings_value_label") : (kind == "fun_money" ? t(".fun_value_label") : t(".value_label")) %>
 <% amount_hint = kind == "savings" ? t(".savings_value_hint") : (kind == "fun_money" ? t(".fun_value_hint") : t(".required_hint")) %>
-<%# Round 26 R4 (item 7a): the categories ONCE for the picker loop and the
+<%# the categories ONCE for the picker loop and the
     trigger's current-selection text + chip (server-side: No category / the
     category's display_name). Category auto-fill: a linked bill's own
     category is preselected when the allocation carries none (recurring
@@ -110,7 +110,7 @@
   <% off_plan = allocation.account %>
   <% bank_rows << off_plan if off_plan %>
 <% end %>
-<%# Round 21 T7: the header class override pins the header inside the
+<%# the header class override pins the header inside the
     dialog's OWN scroll container (the base classes below are duplicated
     verbatim from the DS::Dialog header slot — keep them in sync there).
     Scoped to the allocation dialogs only; every other dialog keeps the
@@ -120,8 +120,8 @@
   <% dialog.with_header(class: "px-4 flex flex-col gap-2 sticky top-0 z-10 bg-container",
                         title: is_new ? t(".title_new") : t(".title_edit", name: allocation.name),
                         subtitle: t(".subtitle")) do %>
-    <%# Round 21 T3: the CTA (new allocation only) moved from the footer row
-        into the header, right-aligned. Round 25 R3: it now opens the
+    <%# the CTA (new allocation only) moved from the footer row
+        into the header, right-aligned. It now opens the
         4-kind picker (Bill / Debt / Savings / Fun Money) — picking a kind
         opens the blank form pre-set to it (the plan-flow#openAllocationKind
         action on the menu items; see _allocation_kind_picker.erb).
@@ -137,15 +137,15 @@
     <% end %>
   <% end %>
   <% dialog.with_body do %>
-    <%# In-place validation errors (owner round 3, R1/R7): the 422 response
+    <%# In-place validation errors: the 422 response
         renders them here — no full-reload flash for in-place submits. %>
     <div data-in-place-errors class="hidden space-y-1"></div>
     <% if is_new && show_known %>
-      <%# Known Allocations (F3; round 8): Sure's detected bills /
+      <%# Known Allocations: Sure's detected bills /
           subscriptions not already in the diagram — rows open the selected
-          allocation window (round 21 T4). The partial is also re-rendered
+          allocation window. The partial is also re-rendered
           by the in-place JSON chrome so the list tracks allocation changes
-          without a reload. Round 21 T3: the list sits in a darker, shorter
+          without a reload. The list sits in a darker, shorter
           sub-section; the footer CTA row is gone (button in the header). %>
       <div class="rounded-lg bg-surface-inset p-3 space-y-2">
         <%= render "plan_flows/known_allocations",
@@ -154,7 +154,7 @@
       </div>
     <% end %>
 
-    <%# In-place submit (owner round 3, R1/R7): data-turbo off + the
+    <%# In-place submit: data-turbo off + the
         in-place submit handler — the diagram tweens to the new graph
         instead of a full reload destroying it. family_currency feeds the
         JS currency formatting of the read-only amount rows. %>
@@ -164,15 +164,15 @@
                   class: "space-y-5" + (is_new && show_known ? " hidden" : ""),
                   data: { plan_flow_target: "allocationForm", turbo: "false", plan_flow_inplace: "true",
                           family_currency: Current.family.currency,
-                          # Round 31A (C12): the constant Name for a
+                          # The constant Name for a
                           # fun_money row created via the kind picker (the
                           # blank form presets it client-side).
                           fun_money_default_name: t(".kind_fun_money") } do |form| %>
-      <%# R35 (Flow Scenarios, design §4.4): scope the in-place write to the
+      <%# scope the in-place write to the
           active scenario — the controller's load_scenario reads
           params[:scenario]. Absent on the Default (live) path. %>
       <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
-      <%# Round 25 (Item 2): a target row (the bank dialog's "Make Allocated
+      <%# a target row (the bank dialog's "Make Allocated
           Sub-Account") keeps its dressed account through an allocation-
           dialog save — the hidden input carries the current target id; a
           plain row submits blank and stays plain (the sanitizer's
@@ -180,7 +180,7 @@
           path that clears it. %>
       <input type="hidden" name="plan_allocation[target_account_id]"
              value="<%= allocation&.target_account_id %>">
-      <%# Round 26 R4 (item 6): the bank-source hidden input — the submit
+      <%# the bank-source hidden input — the submit
           carrier. The visible dropdown panel (rendered after the form,
           below) keeps the radio group plan_allocation[account_id] as the
           UI source of truth; JS syncs it here on every radio change
@@ -189,12 +189,12 @@
           sanitize_plan_allocation_row (find_by(id: array)). %>
       <input type="hidden" name="plan_allocation[account_id]"
              value="<%= allocation&.account_id %>">
-      <%# Round 26 R4 (item 7c): the kind — a HIDDEN input on the current
+      <%# the kind — a HIDDEN input on the current
           kind (the visible select is gone). Every JS consumer queries
           [name="plan_allocation[kind]"] by name; linked rows keep the
           server-fixed kind so there is no client leak. %>
       <input type="hidden" name="plan_allocation[kind]" value="<%= kind %>">
-      <%# Round 26 R4 (item 7d): the layout — no collapsibles. The two
+      <%# the layout — no collapsibles. The two
           disclosure stacks + the "More options" disclosure are dissolved:
           the linked-context hint (when linked), then Row 1 Name | Linked
           bill, Row 2 Amount (+ Mode sub-row) | Cadence, Row 3 Bank source
@@ -203,7 +203,7 @@
           unchanged. %>
       <% if linked %>
         <%# Disabled-state hint: explains why the bill details below are
-            read-only (owner round 20: progressive disclosure). %>
+            read-only (progressive disclosure). %>
         <p class="text-xs text-secondary bg-surface-inset border border-subdued rounded-lg px-3 py-2">
           <%= t(".linked_context_hint") %>
         </p>
@@ -211,8 +211,8 @@
 
       <%# Row 1: Name | Linked bill. %>
       <% if fm_kind %>
-        <%# Row 1 (fun_money): Ownership | Distribution (C13 order 1+2). The
-            Name field is replaced by the Ownership select (C12) — the
+        <%# Row 1 (fun_money): Ownership | Distribution ( order 1+2). The
+            Name field is replaced by the Ownership select — the
             hidden input keeps the save contract (the constant kind label;
             ownership is never written into name). The Distribution trigger
             opens the floating panel after the form (mirrors the bank
@@ -231,13 +231,13 @@
                 <option value="<%= member.id %>" <%= "selected" if fm_ownership.to_s == member.id.to_s %>"><%= member.display_name %></option>
               <% end %>
             </select>
-            <%# C12: the Name stays the constant kind label on save. %>
+            <%# the Name stays the constant kind label on save. %>
             <input type="hidden" name="plan_allocation[name]" value="<%= t(".kind_fun_money") %>">
             <%# Submit carrier for the Distribution radio panel (which
                 renders after the form — a same-name radio group in the
                 form would serialize as an array). %>
             <input type="hidden" name="plan_allocation[distribution]" value="<%= fm_distribution %>">
-            <%# C9: the per-member percent carriers — one hidden input per
+            <%# the per-member percent carriers — one hidden input per
                 family member, filled/cleared by JS as the panel's percent
                 inputs change. Disabled + blank when the distribution is
                 not "percent" (stale percents never submit; the sanitizer
@@ -268,7 +268,7 @@
       <div class="grid grid-cols-2 gap-3">
         <%# Name: editable for a custom allocation; read-only context for
             a linked bill (the hidden input keeps the save contract).
-            Round 26 R4 (item 8): the pencil tooltip sits INSIDE the value
+            the pencil tooltip sits INSIDE the value
             box (hover-only), not in the label row. %>
         <div class="space-y-1" data-allocation-field="name">
           <% if linked %>
@@ -303,7 +303,7 @@
         </div>
         <% if linked %>
           <%# Row 1 right: the linked bill as read-only context — grey
-              (text-secondary, round 26 R4 item 7d) so it reads as context,
+            styled (text-secondary) so it reads as context,
               not an actionable control. The hidden input keeps the link on
               save. %>
           <div class="space-y-1">
@@ -335,11 +335,11 @@
       <% end %>
 
       <%# Row 2: Amount (+ Mode sub-row) | Cadence (moved out of the old
-          "More options" disclosure — round 26 R4 item 7d). %>
+          "More options" disclosure). %>
       <% if fm_kind %>
-        <%# Row 2 (fun_money): Mode | Amount (left cell, C13 order 3+4) and
+        <%# Row 2 (fun_money): Mode | Amount (left cell, order 3+4) and
             Matching (right cell, order 5). Mode offers the four EXISTING
-            values with the owner's labels (C3 = (a): no new enum value);
+            values with the labels (option (a): no new enum value);
             the Amount input reuses the existing value control's contract
             (the mode-driven plan_allocation[value] vs [value_percent]
             rename is untouched — this is the form's only value control, so
@@ -381,10 +381,10 @@
             </div>
           </div>
           <div class="space-y-1">
-            <%# Matching (C1): Equalize | Per Income — disabled when
-                Ownership is Household (M2: per-user matching off; the field
+            <%# Matching: Equalize | Per Income — disabled when
+                Ownership is Household (per-user matching off; the field
                 reads "— Household") and when the Distribution is
-                "Individual Leftover by Allocations" (C10: it forces Per
+                "Individual Leftover by Allocations" (it forces Per
                 Income). %>
             <label class="block text-xs text-secondary" for="fm_matching_<%= node_id %>"><%= t(".matching_label") %></label>
             <select id="fm_matching_<%= node_id %>"
@@ -409,7 +409,7 @@
           <%# Amount: editable (mode-driven, the plan-flow controller renames
               it plan_allocation[value] vs [value_percent]) for a custom
               allocation; read-only monthly context for a linked bill.
-              Round 26 R4 (item 8): the pencil rides INSIDE the value box. %>
+            the pencil rides INSIDE the value box. %>
           <div class="space-y-1" data-allocation-field="value">
             <% if linked %>
               <p class="text-xs text-secondary"><%= t(".amount_monthly_label") %></p>
@@ -458,14 +458,14 @@
               </div>
             <% end %>
           </div>
-          <%# Mode: valid for ALL FOUR kinds (round 25 R2: the Mode selector
+          <%# Mode: valid for ALL FOUR kinds ( : the Mode selector
               is visible + functional for Bill / Debt / Savings / Fun Money);
               a linked bill is always a required (monthly) figure, so the
               hidden input keeps the contract there (the group is hidden
               client-side for linked rows via #applyAllocationVisibility).
-              The sub-row sits under the Amount (round 26 R4 item 7d). The
+              The sub-row sits under the Amount ( item 7d). The
               group deliberately carries NO data-allocation-kinds attribute
-              — the kind loop must never touch it. %>
+              the kind loop must never touch it. %>
           <% if linked %>
             <input type="hidden" name="plan_allocation[mode]" value="required">
           <% else %>
@@ -482,7 +482,7 @@
         <%# Cadence: editable for a custom Bill / Debt allocation;
             read-only context for a linked bill; not applicable to a bucket
             kind (the gate hides it for savings / fun money).
-            Round 26 R4 (item 8): the pencil rides INSIDE the value box. %>
+            the pencil rides INSIDE the value box. %>
         <div class="space-y-1" data-allocation-field="cadence">
           <% if linked %>
             <p class="text-xs text-secondary"><%= t(".cadence_label") %></p>
@@ -517,7 +517,7 @@
       </div>
       <% end %>
 
-      <%# Row 3: Bank source — the labeled row (round 26 R4 item 6): the
+      <%# Row 3: Bank source — the labeled row ( item 6): the
           trigger shows ONLY the active selection (avatar + name +
           ****last4, or the profile icon + "None Selected"); clicking
           opens the floating dropdown panel rendered after the form.
@@ -571,7 +571,7 @@
         </p>
       </div>
 
-      <%# Row 4: Category — the trigger IS the labeled row (round 26 R4
+      <%# Row 4: Category — the trigger IS the labeled row (
           item 7b: the colored icon chip mirrors the popup rows; the old
           disclosure wrapper is gone). The radio list + the floating panel
           are the DS::Popover verbatim (same change action, same max-h-64
@@ -602,7 +602,7 @@
                     </span>
                   <% end %>
                 <% else %>
-                  <%# Round 31A (C7, §4.1): the category-less fun_money row's
+                  <%# The category-less fun_money row's
                       band renders with the app's income green (the sankey
                       kind fallback, #10A861) — the trigger chip matches it;
                       the neutral "?" chip stays for every other kind. %>
@@ -667,7 +667,7 @@
           <%# The delete form is a sibling (below), not a nested form —
               HTML forbids nested <form>, and the browser would hoist the
               Delete button into this form. The form= attribute points the
-              button at its own form. In-place delete (owner round 3, R1):
+              button at its own form. In-place delete:
               the sibling form's in-place submit handler fetches the
               destroy and the node shrinks out — no reload. %>
           <button type="submit"
@@ -676,19 +676,19 @@
             <%= t(".delete") %>
           </button>
         <% end %>
-        <%# In-place save (owner round 3, R1/R7): see the form's data-action. %>
+        <%# In-place save: see the form's data-action. %>
         <button type="submit"
                 class="text-sm bg-primary text-on-primary rounded-lg px-3 py-1.5 hover:opacity-90">
           <%= t(".save") %>
         </button>
       </div>
     <% end %>
-    <%# Round 26 R4 (item 6): the BANK SOURCE floating dropdown panel —
+    <%# the BANK SOURCE floating dropdown panel —
         OUTSIDE the form (a same-name radio group + the form's hidden
         plan_allocation[account_id] input in one <form> would serialize as
         an array), but still a DOM descendant of the dialog's content
         target, so a click inside it never looks like a backdrop click
-        (round 26 R3 clickOutside lesson — the panel rendered OUTSIDE the
+        (the clickOutside lesson — the panel rendered OUTSIDE the
         content target is what closed the dialog on every panel click).
         Hidden by default; plan_flow_controller positions it under the
         trigger on open (position:fixed z-50, viewport-clamped — a
@@ -705,7 +705,7 @@
               account_last4s: @account_last4s %>
       </div>
     </div>
-    <%# Round 31A (C2): the Distribution floating radio panel — same
+    <%# the Distribution floating radio panel — same
         pattern as the Split Behavior panel in the bank config dialog: OUTSIDE
         the form (a same-name radio group + the form's hidden
         plan_allocation[distribution] input in one <form> would serialize as
@@ -713,7 +713,7 @@
         click lesson), hidden by default; plan_flow_controller#toggleFun
         Distribution positions it under the trigger on open (position:fixed
         z-50, viewport-clamped). "Percentage of Pooled" reveals the
-        per-member percent inputs (C9) below the radio list. %>
+        per-member percent inputs below the radio list. %>
     <div data-allocation-fm-distribution-panel class="hidden fixed z-50 w-72">
       <div class="rounded-lg border border-subdued bg-container p-1.5 space-y-1"
            data-action="change->plan-flow#syncFunDistribution">

@@ -1,9 +1,9 @@
-# Round 16: the vendored bank-logo catalog. The set of usable logos is the
+# the vendored bank-logo catalog. The set of usable logos is the
 # INTERSECTION of the vendored files (app/assets/images/bank-logos/<slug>.svg)
 # and the label map (config/bank_logo_slugs.yml); the keyword map there
 # auto-matches an account name to a slug.
 #
-# Pure reads: no runtime fetching (owner policy: 100% local), no writes. The
+# Pure reads: no runtime fetching (100% local operation only), no writes. The
 # plan-flow planner receives the same maps as plain inputs (graph_shadow) and
 # resolves bank rows itself so the pure-core unit tests cover the resolution
 # order (explicit override -> keyword match -> nil).
@@ -35,7 +35,7 @@ class BankLogoSlugs
                    .freeze
     end
 
-    # The resolution order the owner specified: an explicit per-account slug
+    # The resolution order: an explicit per-account slug
     # (accounts.bank_logo_slug) wins if usable; then the first keyword hit on
     # the account name; otherwise nil (no fabricated logo).
     def resolve(name, explicit: nil)

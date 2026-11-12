@@ -1,22 +1,22 @@
 import { Controller } from "@hotwired/stimulus";
 
-// Round 20 (owner: condense the bank config dialog): the kebab + popups
+// the kebab + popups
 // (Make a Sub-Account / Configure Auto-Transfer) and the top-left avatar
 // (logo popup: Upload Custom / Remove custom / built-in list).
 //
 // The popups live in the dialog HEADER, outside the main form, so their
 // widgets live-sync the form's hidden inputs:
-//   - sub-account select  -> account[parent_account_id]
-//   - auto-transfer rows  -> the data-auto-transfer-tid hidden inputs
+// - sub-account select -> account[parent_account_id]
+// - auto-transfer rows -> the data-auto-transfer-tid hidden inputs
 //     (the "0" sentinel stays, so all-unchecked clears server-side)
-//   - logo pick           -> account[bank_logo_slug]
+// - logo pick -> account[bank_logo_slug]
 // and their Save buttons submit the form via the HTML `form=` attribute
 // (one shared save path, in-place, as the rest of the page).
 //
 // The dialog re-renders fully on every save (#inPlaceSubmit), so all of
 // this is DOM-only state: nothing survives a round trip.
 //
-// Round 26 R3 (owner item 1): the five header popups render INSIDE the
+// the five header popups render INSIDE the
 // dialog's single overflow-auto scroll surface, so a tall popup (the
 // 644px allocatedSubPopup measured 411.5px clipped on the 297px
 // Bills-dialog surface) is trapped + clipped. On open, each popup is
@@ -31,22 +31,32 @@ import { Controller } from "@hotwired/stimulus";
 // parent and hidden, so a close/reopen round trip starts clean.
 export default class extends Controller {
   static targets = [
-    "avatar", "avatarImg", "neutral",
-    "logoPopup", "fileInput", "removeCustom", "uploadError",
-    "kebab", "kebabMenu", "subAccountPopup", "subAccountSelect",
-    "autoTransferPopup", "autoTransferBox",
-    // Round 25 (Item 2): the "Make Allocated Sub-Account" popup (a
+    "avatar",
+    "avatarImg",
+    "neutral",
+    "logoPopup",
+    "fileInput",
+    "removeCustom",
+    "uploadError",
+    "kebab",
+    "kebabMenu",
+    "subAccountPopup",
+    "subAccountSelect",
+    "autoTransferPopup",
+    "autoTransferBox",
+    // the "Make Allocated Sub-Account" popup (a
     // self-contained form — see the ERB) and the value input its mode
     // select renames.
-    "allocatedSubPopup", "allocatedValue",
-    // Round 26 R2 (owner item 3): the main-section "Parent Account" picker
+    "allocatedSubPopup",
+    "allocatedValue",
+    // the main-section "Parent Account" picker
     // (ABSENT for an account without a parent link — guard accesses with
     // the has* predicate, same as allocatedSubPopup).
     "mainParentSelect",
-    // Round 27 (owner items 3+4): the "Pull From Incomes" section (the
+    // the "Pull From Incomes" section (the
     // mode/ratio trigger panels + the shared two-income control set live
     // inside it — everything is queried off this element).
-    "pullFrom"
+    "pullFrom",
   ];
 
   static values = {
@@ -58,23 +68,25 @@ export default class extends Controller {
     avatarUrl: String,
     uploadUrl: String,
     removeUrl: String,
-    // Round 27 (owner item 4): the read-only per-income amounts —
+    // the read-only per-income amounts —
     // { seriesId: { paycheck: "2700.00", occurrences: 2 } } — for the
     // dialog's client-side auto-fill and ratio re-derivation.
-    incomeAmounts: Object
+    incomeAmounts: Object,
   };
 
   connect() {
     this._outsideClick = (event) => this.#onOutsideClick(event);
-    this._escapeKey = (event) => { if (event.key === "Escape") this.closePopups(); };
-    // Round 26 R3: every close path (X / backdrop / Escape / Save) fires
+    this._escapeKey = (event) => {
+      if (event.key === "Escape") this.closePopups();
+    };
+    // every close path (X / backdrop / Escape / Save) fires
     // the dialog's `close` event — start the next open from a clean
     // header (a popup left open must not survive the round trip).
     this._dialogClose = () => this.closePopups();
     this.element.addEventListener("close", this._dialogClose);
     document.addEventListener("mousedown", this._outsideClick, true);
     document.addEventListener("keydown", this._escapeKey);
-    // Round 27: start from the server-rendered state (locked inputs,
+    // start from the server-rendered state (locked inputs,
     // readouts, ratio label, single-vs-split visibility) — the ERB's
     // initial text is the source of truth; this only normalizes the
     // disabled/hidden state from it.
@@ -102,13 +114,19 @@ export default class extends Controller {
   }
 
   openAutoTransfer() {
-    this.#onlyPopup(this.autoTransferPopupTarget, this.kebabTarget.parentElement);
+    this.#onlyPopup(
+      this.autoTransferPopupTarget,
+      this.kebabTarget.parentElement,
+    );
   }
 
-  // Round 25 (Item 2): the "Make Allocated Sub-Account" popup — the
+  // the "Make Allocated Sub-Account" popup — the
   // self-contained allocation form (its own POST; no hidden-input sync).
   openAllocatedSub() {
-    this.#onlyPopup(this.allocatedSubPopupTarget, this.kebabTarget.parentElement);
+    this.#onlyPopup(
+      this.allocatedSubPopupTarget,
+      this.kebabTarget.parentElement,
+    );
   }
 
   openLogo() {
@@ -116,31 +134,36 @@ export default class extends Controller {
   }
 
   closePopups() {
-    for (const target of ["kebabMenu", "subAccountPopup", "autoTransferPopup", "logoPopup"]) {
-      const popup = this[target + "Target"];
+    for (const target of [
+      "kebabMenu",
+      "subAccountPopup",
+      "autoTransferPopup",
+      "logoPopup",
+    ]) {
+      const popup = this[`${target}Target`];
       popup.classList.add("hidden");
       this.#unfloat(popup);
     }
-    // Round 25 (Item 2): the allocated-sub popup target is ABSENT for a
+    // the allocated-sub popup target is ABSENT for a
     // dressed account (the dialog renders the REVERSE instead) — a missing
     // target throws on access, so guard with the has* predicate.
     if (this.hasAllocatedSubPopupTarget) {
       this.allocatedSubPopupTarget.classList.add("hidden");
       this.#unfloat(this.allocatedSubPopupTarget);
     }
-    // Round 27: the mode/ratio trigger panels (same floatLayer machinery).
+    // the mode/ratio trigger panels (same floatLayer machinery).
     this.#closePullPanels();
     this.kebabTarget.setAttribute("aria-expanded", "false");
   }
 
   // Show exactly one popup, hide the rest, and float the survivor above
-  // the window (Round 26 R3 — see #floatPopup).
+  // the window ( — see #floatPopup).
   #onlyPopup(popup, trigger) {
     this.closePopups();
     this.#floatPopup(popup, trigger);
   }
 
-  // ---- floating layer (Round 26 R3, owner item 1) ----------------------
+  // ---- floating layer ---------------------------------------
 
   // The one shared layer per dialog element: a direct child of the
   // <dialog> (top-layer box == the viewport) that sits OUTSIDE the
@@ -179,18 +202,21 @@ export default class extends Controller {
     // Remember the in-header home once — restored by #unfloat on
     // closePopups. The dialog re-renders fully on every save, so no state
     // leaks across round trips.
-    if (!popup.__bankHome) popup.__bankHome = [popup.parentElement, popup.nextSibling];
+    if (!popup.__bankHome)
+      popup.__bankHome = [popup.parentElement, popup.nextSibling];
     layer.appendChild(popup);
     const rect = trigger.getBoundingClientRect();
-    const gap = parseFloat(getComputedStyle(popup).marginTop) || 0;
+    const gap = Number.parseFloat(getComputedStyle(popup).marginTop) || 0;
     const width = popup.offsetWidth;
     const height = popup.offsetHeight;
-    // Round 27: the mode/ratio trigger panels carry their own `left-0`
+    // the mode/ratio trigger panels carry their own `left-0`
     // anchor (data-bank-pull-panel) and left-align like the logo popup;
     // the header popups keep the right-aligned `right-0` anchor.
-    const left0 = (popup === this.logoPopupTarget || popup.dataset.bankPullPanel !== undefined)
-      ? rect.left
-      : rect.right - width;
+    const left0 =
+      popup === this.logoPopupTarget ||
+      popup.dataset.bankPullPanel !== undefined
+        ? rect.left
+        : rect.right - width;
     const left = Math.max(8, Math.min(left0, innerWidth - 8 - width));
     const bottom = innerHeight - 8;
     let top = Math.max(8, rect.bottom + gap);
@@ -208,8 +234,9 @@ export default class extends Controller {
       ["left", `${left}px`],
       ["right", "auto"],
       ["margin-top", "0"],
-      ["pointer-events", "auto"]
-    ]) popup.style.setProperty(prop, value);
+      ["pointer-events", "auto"],
+    ])
+      popup.style.setProperty(prop, value);
     if (height > maxHeight) {
       popup.style.setProperty("max-height", `${maxHeight}px`);
       popup.style.setProperty("overflow-y", "auto");
@@ -221,35 +248,49 @@ export default class extends Controller {
   #unfloat(popup) {
     if (popup.__bankHome) {
       const [parent, sibling] = popup.__bankHome;
-      if (parent && parent.isConnected) parent.insertBefore(popup, sibling || null);
+      if (parent?.isConnected) parent.insertBefore(popup, sibling || null);
       popup.__bankHome = null;
     }
-    for (const prop of ["top", "left", "right", "max-height", "overflow-y",
-                        "pointer-events", "margin-top"]) {
+    for (const prop of [
+      "top",
+      "left",
+      "right",
+      "max-height",
+      "overflow-y",
+      "pointer-events",
+      "margin-top",
+    ]) {
       popup.style.removeProperty(prop);
     }
   }
 
   #onOutsideClick(event) {
-    // Round 25: the vendored Stimulus build (stimulus-rails 1.3.4) exposes
+    // the vendored Stimulus build (stimulus-rails 1.3.4) exposes
     // only the `element` getter — the old `el` property was undefined, so
     // every path touching it threw a TypeError ("Make a Sub-Account" no-op).
     const root = this.element;
-    // Round 25 (Item 2): allocatedSubPopup is ABSENT for a dressed account
+    // allocatedSubPopup is ABSENT for a dressed account
     // (REVERSE dialog) — guard the access (a missing target throws).
-    const open = ["kebabMenu", "subAccountPopup", "autoTransferPopup", "logoPopup"]
-        .some((target) => !this[target + "Target"].classList.contains("hidden")) ||
+    const open =
+      ["kebabMenu", "subAccountPopup", "autoTransferPopup", "logoPopup"].some(
+        (target) => !this[`${target}Target`].classList.contains("hidden"),
+      ) ||
       (this.hasAllocatedSubPopupTarget &&
         !this.allocatedSubPopupTarget.classList.contains("hidden"));
     if (open) {
       // A mousedown inside an open header popup is a popup interaction —
       // never preempt the popup's own click (the pre-round
-      // root.contains() early-return gave this for free).
-      const insidePopup = ["kebabMenu", "subAccountPopup", "autoTransferPopup", "logoPopup"]
-          .some((target) => {
-            const popup = this[target + "Target"];
-            return !popup.classList.contains("hidden") && popup.contains(event.target);
-          }) ||
+      // root.contains early-return gave this for free).
+      const insidePopup =
+        ["kebabMenu", "subAccountPopup", "autoTransferPopup", "logoPopup"].some(
+          (target) => {
+            const popup = this[`${target}Target`];
+            return (
+              !popup.classList.contains("hidden") &&
+              popup.contains(event.target)
+            );
+          },
+        ) ||
         (this.hasAllocatedSubPopupTarget &&
           !this.allocatedSubPopupTarget.classList.contains("hidden") &&
           this.allocatedSubPopupTarget.contains(event.target));
@@ -257,22 +298,27 @@ export default class extends Controller {
       if (!root.contains(event.target)) this.closePopups();
       return;
     }
-    // Round 28 (R28-2): the mode/behavior trigger panels dismiss on a
+    // ( -2): the mode/behavior trigger panels dismiss on a
     // mousedown OUTSIDE the panel + its trigger (the plan_flow bank-panel
     // exemplar) — a click on blank dialog space dismisses, not only a
     // click outside the whole dialog. #floatPopup re-parents an open panel
     // into the dialog's float layer (outside the pullFrom section), so the
-    // open check must be dialog-scoped to see it at all (the R6 BUG-8
+    // open check must be dialog-scoped to see it at all (the
     // pattern) — the pre-round section-scoped query found nothing while a
     // panel was open, so the panel never closed.
     if (!this.hasPullFromTarget) return;
-    for (const panel of Array.from(this.element.querySelectorAll("[data-bank-pull-panel]"))) {
+    for (const panel of Array.from(
+      this.element.querySelectorAll("[data-bank-pull-panel]"),
+    )) {
       if (panel.classList.contains("hidden")) continue;
       const group = panel.dataset.bankPullPanelGroup;
       const trigger = group
-        ? this.element.querySelector(`button[data-bank-pull-panel-group="${group}"]`)
+        ? this.element.querySelector(
+            `button[data-bank-pull-panel-group="${group}"]`,
+          )
         : null;
-      if (panel.contains(event.target) || (trigger && trigger.contains(event.target))) continue;
+      if (panel.contains(event.target) || trigger?.contains(event.target))
+        continue;
       this.#closePullPanels();
       return;
     }
@@ -288,7 +334,7 @@ export default class extends Controller {
     if (input) input.value = this.subAccountSelectTarget.value;
   }
 
-  // Round 26 R2 (owner item 3): the main-section "Parent Account" picker —
+  // the main-section "Parent Account" picker —
   // the SAME hidden-input sync as the sub-account popup's select (both
   // write account[parent_account_id]; the dialog's Save submits it through
   // the validate_parent_change 422 contract). The target is ABSENT for an
@@ -300,13 +346,15 @@ export default class extends Controller {
     if (input) input.value = this.mainParentSelectTarget.value;
   }
 
-  // Round 25 (Item 2): the "Make Allocated Sub-Account" popup is its OWN
+  // the "Make Allocated Sub-Account" popup is its OWN
   // form (not the main bank form), so its mode select renames the value
   // input within that form — the same plan_allocation[value] /
   // [value_percent] swap as the allocation dialog's #setAllocationMode,
   // scoped to this popup's form (no hidden-input sync to the main form).
   syncAllocatedMode(event) {
-    const input = this.hasAllocatedValueTarget ? this.allocatedValueTarget : null;
+    const input = this.hasAllocatedValueTarget
+      ? this.allocatedValueTarget
+      : null;
     if (!input) return;
     const mode = event.target.value;
     if (mode === "percent") {
@@ -331,40 +379,44 @@ export default class extends Controller {
   syncAutoTransfer() {
     const form = this.#form();
     if (!form) return;
-    form.querySelectorAll("input[data-auto-transfer-tid]").forEach((input) => input.remove());
-    this.autoTransferBoxTarget.querySelectorAll("input[type='checkbox']").forEach((checkbox) => {
-      if (!checkbox.checked || checkbox.disabled) return;
-      const input = document.createElement("input");
-      input.type = "hidden";
-      input.name = "account[auto_transfer_target_ids][]";
-      input.value = checkbox.dataset.otherId;
-      input.dataset.autoTransferTid = "1";
-      form.appendChild(input);
-    });
+    form
+      .querySelectorAll("input[data-auto-transfer-tid]")
+      .forEach((input) => input.remove());
+    this.autoTransferBoxTarget
+      .querySelectorAll("input[type='checkbox']")
+      .forEach((checkbox) => {
+        if (!checkbox.checked || checkbox.disabled) return;
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "account[auto_transfer_target_ids][]";
+        input.value = checkbox.dataset.otherId;
+        input.dataset.autoTransferTid = "1";
+        form.appendChild(input);
+      });
   }
 
-  // ---- Pull From Incomes (Round 27, owner items 3+4) --------------------
-  // The R26 trigger pattern applied to the income rows: the visible
+  // ---- Pull From Incomes -------------------------------------
+  // The trigger pattern applied to the income rows: the visible
   // controls (mode/ratio trigger buttons, the value inputs) are NAMELESS;
   // the per-income hidden inputs
-  //   links[<series.id>][mode]   (required|specific|percent|leftover)
-  //   links[<series.id>][value]  (specific: per-paycheck dollars,
+  // links[<series.id>][mode] (required|specific|percent|leftover)
+  // links[<series.id>][value] (specific: per-paycheck dollars,
   //                               percent: 0-100, else "")
   // are what submits — the save_bank_links param contract is
   // byte-identical. This controller live-syncs them from the visible
   // controls and derives the greyed readouts/labels/locked states. With
   // 2+ incomes checked the per-row details collapse into the shared
   // control set (mode trigger, then the Ratio trigger, then the amount
-  // input — the owner's exact placement). The Ratio is NEVER submitted:
+  // input — the exact placement). The Ratio is NEVER submitted:
   // it is derived client-side (re-derived server-side from the stored
-  // values on every render) — design R27-T3 §3 decision (a).
+  // values on every render) — decision (a).
   // Stored units: specific = per-paycheck major units; percent = 0-100
-  // (view-independent). Display unit = the active view (Q7): paycheck ->
+  // (view-independent). Display unit = the active view: paycheck ->
   // as stored, monthly -> x the income's occurrence count.
 
   // The row enable checkbox: toggles the row details + the shared block
   // (recalc reads the DOM; the sentinel hidden input submits the
-  // uncheck and destroys the edge on save — round-20 behavior kept).
+  // uncheck and destroys the edge on save — behavior kept).
   syncBankRow(event) {
     if (event.target.type !== "checkbox") return;
     this.#recalcPullFrom();
@@ -376,7 +428,9 @@ export default class extends Controller {
     const section = this.pullFromTarget;
     const group = event.currentTarget.dataset.bankPullPanelGroup;
     if (!section || !group) return;
-    const panel = section.querySelector(`[data-bank-pull-panel][data-bank-pull-panel-group="${group}"]`);
+    const panel = section.querySelector(
+      `[data-bank-pull-panel][data-bank-pull-panel-group="${group}"]`,
+    );
     if (!panel) return;
     const wasOpen = !panel.classList.contains("hidden");
     this.#closePullPanels();
@@ -385,8 +439,8 @@ export default class extends Controller {
 
   // A mode radio changed (a row panel or the shared-mode panel). Shared:
   // unify every checked row (picking a mode resolves the mixed state);
-  // specific/percent default the ratio to Rational (the owner's Q1
-  // default). Per-row: just the row's hidden mode input.
+  // specific/percent default the ratio to Rational (the default).
+  // Per-row: just the row's hidden mode input.
   setPullMode(event) {
     const section = this.pullFromTarget;
     const panel = event.target.closest("[data-bank-pull-panel]");
@@ -395,21 +449,26 @@ export default class extends Controller {
     const mode = event.target.value;
     if (group === "shared-mode") {
       section.querySelectorAll("[data-bank-row]").forEach((row) => {
-        if (row.querySelector('input[type="checkbox"]').checked) this.#setRowMode(row, mode);
+        if (row.querySelector('input[type="checkbox"]').checked)
+          this.#setRowMode(row, mode);
       });
       if (mode === "specific" || mode === "percent") {
         section.dataset.bankPullFromRatio = "rational";
-        // Round 28 (R28-2): dialog-scoped — the ratio panel may sit in
-        // the float layer while another panel was open (BUG-8 pattern).
-        const radio = this.element.querySelector('[data-bank-pull-panel-group="shared-ratio"] input[value="rational"]');
+        // ( -2): dialog-scoped — the ratio panel may sit in
+        // the float layer while another panel was open ( pattern).
+        const radio = this.element.querySelector(
+          '[data-bank-pull-panel-group="shared-ratio"] input[value="rational"]',
+        );
         if (radio) radio.checked = true;
       }
     } else if (group.startsWith("row-")) {
-      const row = section.querySelector(`[data-bank-row][data-bank-series-id="${group.slice(4)}"]`);
+      const row = section.querySelector(
+        `[data-bank-row][data-bank-series-id="${group.slice(4)}"]`,
+      );
       if (row) this.#setRowMode(row, mode);
     }
     this.#recalcPullFrom();
-    // Round 28 (R28-2): close-on-selection — the selected radio's visual
+    // ( -2): close-on-selection — the selected radio's visual
     // state (checked + has-[:checked]:bg-surface-inset) is final; the
     // panel un-floats back to its home position (hidden).
     this.#closePullPanels();
@@ -419,26 +478,34 @@ export default class extends Controller {
   setSharedRatio(event) {
     const section = this.pullFromTarget;
     if (!section) return;
-    // R28C (GAP-2): a LIVE behavior transition INTO Fixed Amounts is the
+    // A LIVE behavior transition INTO Fixed Amounts is the
     // one path that must prefill the per-row split inputs from the
-    // derivation the user is leaving (owner-signed §8.1 — overwriting
+    // derivation the user is leaving (required: overwriting
     // the stale server-seeded values). Remember the previous ratio as a
     // one-shot flag consumed by #recalcPullFrom; value edits, income
     // toggles and the initial render never set it, so they never
-    // clobber inputs. Round 30: the persisted required split (Fixed
+    // clobber inputs.: the persisted required split (Fixed
     // Amounts / Percent under Required) prefills from the SAME leaving
     // percents — the carriers already hold them.
     const entering = event.target.value;
     const rowModes = Array.from(section.querySelectorAll("[data-bank-row]"))
       .filter((row) => row.querySelector('input[type="checkbox"]').checked)
-      .map((row) => { const h = row.querySelector('input[type="hidden"][name$="[mode]"]'); return h ? h.value : "required"; });
-    const sharedMode = rowModes.length >= 2 && new Set(rowModes).size === 1 ? rowModes[0] : null;
-    if (entering === "fixed_amounts" || (sharedMode === "required" && entering === "percent")) {
-      section.dataset.bankSplitPrefillFrom = section.dataset.bankPullFromRatio || "hidden";
+      .map((row) => {
+        const h = row.querySelector('input[type="hidden"][name$="[mode]"]');
+        return h ? h.value : "required";
+      });
+    const sharedMode =
+      rowModes.length >= 2 && new Set(rowModes).size === 1 ? rowModes[0] : null;
+    if (
+      entering === "fixed_amounts" ||
+      (sharedMode === "required" && entering === "percent")
+    ) {
+      section.dataset.bankSplitPrefillFrom =
+        section.dataset.bankPullFromRatio || "hidden";
     }
     section.dataset.bankPullFromRatio = event.target.value;
     this.#recalcPullFrom();
-    // Round 28 (R28-2): close-on-selection (same as setPullMode).
+    // ( -2): close-on-selection (same as setPullMode).
     this.#closePullPanels();
   }
 
@@ -450,9 +517,11 @@ export default class extends Controller {
   }
 
   #setRowMode(row, mode) {
-    const hiddenMode = row.querySelector('input[type="hidden"][name$="[mode]"]');
+    const hiddenMode = row.querySelector(
+      'input[type="hidden"][name$="[mode]"]',
+    );
     if (hiddenMode) hiddenMode.value = mode;
-    // R28B (BUG-A): dialog-scoped (the BUG-8 pattern) — the row panel is
+    // Dialog-scoped (the pattern) — the row panel is
     // re-parented into the dialog's float layer by #floatPopup when open,
     // so a row-scoped option query is null once floated and the label
     // write is silently skipped (the selection only happens from the
@@ -461,10 +530,12 @@ export default class extends Controller {
     // input, so this cannot false-match.
     const groupId = row.dataset.bankSeriesId;
     const option = groupId
-      ? this.element.querySelector(`[data-bank-pull-panel][data-bank-pull-panel-group="row-${groupId}"] input[value="${mode}"]`)
+      ? this.element.querySelector(
+          `[data-bank-pull-panel][data-bank-pull-panel-group="row-${groupId}"] input[value="${mode}"]`,
+        )
       : null;
     const label = row.querySelector("[data-bank-pull-mode-label]");
-    const span = option && option.closest("label") && option.closest("label").querySelector("span");
+    const span = option?.closest("label")?.querySelector("span");
     if (label && span) label.textContent = span.textContent;
     const valueInput = row.querySelector("[data-bank-pull-row-value]");
     if (valueInput) {
@@ -478,16 +549,18 @@ export default class extends Controller {
   }
 
   #rowMode(row) {
-    const hiddenMode = row.querySelector('input[type="hidden"][name$="[mode]"]');
+    const hiddenMode = row.querySelector(
+      'input[type="hidden"][name$="[mode]"]',
+    );
     return hiddenMode ? hiddenMode.value : "required";
   }
 
   #closePullPanels() {
-    // Round 28 (R28-2): dialog-scoped, not section-scoped — #floatPopup
+    // ( -2): dialog-scoped, not section-scoped — #floatPopup
     // re-parents an OPEN panel into the dialog's float layer (outside
     // the section), so a section query never saw the panel it had to
     // close (and #unfloat was never called, leaking the panel in the
-    // float layer). Same reason as the BUG-8 dialog-scoped queries in
+    // float layer). Same reason as the dialog-scoped queries in
     // #recalcPullFrom.
     this.element.querySelectorAll("[data-bank-pull-panel]").forEach((panel) => {
       panel.classList.add("hidden");
@@ -500,15 +573,18 @@ export default class extends Controller {
     return Math.round(x * 100) / 100;
   }
 
-  // R5 fix (BUG-1): dollar formatting for the GREY LABELS ONLY. The
+  // fix: dollar formatting for the GREY LABELS ONLY. The
   // stored required display (data-bank-required-display) and the value
   // inputs stay plain numbers — the server and the JS math parse those —
   // while the labels get the "$" + thousands separator the design wants
   // ("$1,250.00", never the raw cents "12500.00").
   #money(value) {
-    const x = parseFloat(value);
+    const x = Number.parseFloat(value);
     if (Number.isNaN(x)) return String(value);
-    return x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return x.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
   }
 
   #recalcPullFrom() {
@@ -516,15 +592,17 @@ export default class extends Controller {
     if (!section) return;
     const view = section.dataset.bankView || "paycheck";
     const reqDisplay = section.dataset.bankRequiredDisplay || "";
-    const reqPositive = parseFloat(reqDisplay) > 0;
-    // R28C (GAP-2): one-shot flag set by setSharedRatio on a live
+    const reqPositive = Number.parseFloat(reqDisplay) > 0;
+    // One-shot flag set by setSharedRatio on a live
     // transition into Fixed Amounts — the ratio the user was leaving
     // (the prefill source derivation). Consumed unconditionally here.
     const splitPrefillFrom = section.dataset.bankSplitPrefillFrom || "";
     delete section.dataset.bankSplitPrefillFrom;
     const amounts = this.incomeAmountsValue || {};
     const rows = Array.from(section.querySelectorAll("[data-bank-row]"));
-    const checked = rows.filter((row) => row.querySelector('input[type="checkbox"]').checked);
+    const checked = rows.filter(
+      (row) => row.querySelector('input[type="checkbox"]').checked,
+    );
     const n = checked.length;
     const shared = n >= 2;
 
@@ -535,8 +613,8 @@ export default class extends Controller {
       return {
         row,
         id: row.dataset.bankSeriesId,
-        pp: parseFloat(entry.paycheck) || 0,
-        count: parseInt(entry.occurrences, 10) || 0
+        pp: Number.parseFloat(entry.paycheck) || 0,
+        count: Number.parseInt(entry.occurrences, 10) || 0,
       };
     });
     const ppSum = I.reduce((sum, e) => sum + e.pp, 0);
@@ -548,7 +626,7 @@ export default class extends Controller {
     rows.forEach((row) => {
       const cb = row.querySelector('input[type="checkbox"]');
       const details = row.querySelector("[data-bank-row-details]");
-      // Round 28 (R28-3): in the shared (2+ checked) state the per-row
+      // ( -3): in the shared (2+ checked) state the per-row
       // details are hidden — the between-row shared block replaces the
       // per-row mode triggers (the hidden mode/value carriers inside
       // still submit: type=hidden ignores the class).
@@ -581,21 +659,27 @@ export default class extends Controller {
         }
         const label = row.querySelector("[data-bank-required-label]");
         if (label) {
-          const show = reqPositive && (mode === "specific" || mode === "percent");
+          const show =
+            reqPositive && (mode === "specific" || mode === "percent");
           label.classList.toggle("hidden", !show);
-          if (show) label.textContent = (section.dataset.bankRequiredAmountLabel || "")
-            .replace("%{amount}", `$${this.#money(reqDisplay)}`);
+          if (show)
+            label.textContent = (
+              section.dataset.bankRequiredAmountLabel || ""
+            ).replace("%{amount}", `$${this.#money(reqDisplay)}`);
         }
-        // R5 fix (latent gap): the hidden submit carrier
+        // fix (latent gap): the hidden submit carrier
         // links[<id>][value] was never synced in State A, so edits made
         // in the single-income view never reached the server. Mirror the
         // State B sync: specific/percent echo the visible input;
         // required/leftover store nothing.
-        const hiddenValue = row.querySelector('input[type="hidden"][name$="[value]"]');
+        const hiddenValue = row.querySelector(
+          'input[type="hidden"][name$="[value]"]',
+        );
         if (hiddenValue) {
-          hiddenValue.value = (mode === "specific" || mode === "percent") && valueInput
-            ? valueInput.value.trim()
-            : "";
+          hiddenValue.value =
+            (mode === "specific" || mode === "percent") && valueInput
+              ? valueInput.value.trim()
+              : "";
         }
       });
       return;
@@ -606,37 +690,46 @@ export default class extends Controller {
     const mixed = new Set(modes).size > 1;
     const mode = mixed ? "mixed" : modes[0];
     if (mixed) section.dataset.bankPullFromRatio = "fixed_amounts";
-    const ratio = mixed ? "fixed_amounts" : (section.dataset.bankPullFromRatio || "hidden");
+    const ratio = mixed
+      ? "fixed_amounts"
+      : section.dataset.bankPullFromRatio || "hidden";
 
-    // Round 28 (§8.1): the behavior trigger is greyed (visible,
+    // The behavior trigger is greyed (visible,
     // non-interactive) under Required / Leftover / mixed, showing the
     // LAST-selected behavior — a fresh required/leftover render holds
     // "hidden" in the dataset (the ratio is never submitted), so the
     // greyed label falls back to the default behavior (rational — the
     // same default setPullMode applies when switching into Fixed/
-    // Percent). Round 30: the Percent behavior is a Required-mode-only
+    // Percent).: the Percent behavior is a Required-mode-only
     // option — a dataset holding "percent" under any other mode (stale
     // state) is treated as Fixed Amounts (mirrors the hidden -> rational
     // display fallback).
-    const effRatio = ratio === "percent" && mode !== "required" ? "fixed_amounts" : ratio;
+    const effRatio =
+      ratio === "percent" && mode !== "required" ? "fixed_amounts" : ratio;
     const displayRatio = effRatio === "hidden" ? "rational" : effRatio;
-    // R5 fix (BUG-6): restore the dataset<->radio invariant. Without it a
+    // fix: restore the dataset<->radio invariant. Without it a
     // stale checked radio (e.g. "Equal" left checked while the stored
     // state forces "Fixed Amounts") swallowed the next click as a no-op —
     // a native radio group fires no change event when the click does not
     // move the checked state. With the invariant, the checked radio
     // always matches the effective ratio, so any different click lands.
-    // Round 28 (R28-2): dialog-scoped (the panel may sit in the float
-    // layer — the BUG-8 pattern).
+    // ( -2): dialog-scoped (the panel may sit in the float
+    // layer — the pattern).
     this.element
-      .querySelectorAll('[data-bank-pull-panel-group="shared-ratio"] input[type="radio"]')
-      .forEach((r) => { r.checked = r.value === displayRatio; });
-    // Round 30: the 4th behavior option (Percent of the required amount)
+      .querySelectorAll(
+        '[data-bank-pull-panel-group="shared-ratio"] input[type="radio"]',
+      )
+      .forEach((r) => {
+        r.checked = r.value === displayRatio;
+      });
+    // the 4th behavior option (Percent of the required amount)
     // is a Required-mode-only control — the radio is disabled + its
     // wrapper hidden whenever the effective mode is not required (the
     // ERB seeds the same state; the recalc mirrors it on every live
     // mode change, the same invariant discipline as the block above).
-    const percentOption = this.element.querySelector('[data-bank-pull-panel-group="shared-ratio"] input[value="percent"]');
+    const percentOption = this.element.querySelector(
+      '[data-bank-pull-panel-group="shared-ratio"] input[value="percent"]',
+    );
     if (percentOption) {
       const showPercent = mode === "required" && !mixed;
       percentOption.disabled = !showPercent;
@@ -644,37 +737,45 @@ export default class extends Controller {
       if (percentWrap) percentWrap.classList.toggle("hidden", !showPercent);
     }
 
-    // R6 fix (BUG-8): restore the shared-mode radio invariant over the
+    // fix: restore the shared-mode radio invariant over the
     // DIALOG, not the section. When the shared-mode panel is open it is
     // re-parented into the dialog's float layer (outside the section, by
     // #floatPopup), so a section-scoped query cannot see its radios — the
     // checked radio then desyncs from the effective mode. Same pattern as
-    // the BUG-6 block above: the checked radio always matches the
+    // the block above: the checked radio always matches the
     // effective mode, and the mixed state checks none (the label reads
     // "Mixed"). Programmatic .checked sets fire no change event, so this
     // cannot recurse or swallow a user click.
     this.element
-      .querySelectorAll('[data-bank-pull-panel-group="shared-mode"] input[type="radio"]')
-      .forEach((r) => { r.checked = !mixed && r.value === mode; });
+      .querySelectorAll(
+        '[data-bank-pull-panel-group="shared-mode"] input[type="radio"]',
+      )
+      .forEach((r) => {
+        r.checked = !mixed && r.value === mode;
+      });
 
     // Shared mode label (greyed "Mixed" for the mixed stored-modes state).
-    // R6 fix (BUG-8): dialog-scoped — the label's source (the checked
+    // fix: dialog-scoped — the label's source (the checked
     // radio's <span> text) lives in the panel, which #floatPopup re-parents
     // into the dialog's float layer when the panel is open; section-scoped
     // it returned null while floated and the label update was skipped.
-    const sharedLabel = this.element.querySelector("[data-bank-pull-shared-mode-label]");
+    const sharedLabel = this.element.querySelector(
+      "[data-bank-pull-shared-mode-label]",
+    );
     if (sharedLabel) {
       if (mixed) {
         sharedLabel.textContent = section.dataset.bankMixedLabel || "Mixed";
         sharedLabel.classList.remove("text-primary");
         sharedLabel.classList.add("text-secondary");
       } else {
-        // R6 fix (BUG-8): dialog-scoped — the radio inputs live in the
+        // fix: dialog-scoped — the radio inputs live in the
         // panel, which is re-parented into the dialog's float layer when
         // the panel is open (the button itself carries the group attr but
         // contains no input, so this cannot false-match).
-        const option = this.element.querySelector(`[data-bank-pull-panel-group="shared-mode"] input[value="${mode}"]`);
-        const span = option && option.closest("label") && option.closest("label").querySelector("span");
+        const option = this.element.querySelector(
+          `[data-bank-pull-panel-group="shared-mode"] input[value="${mode}"]`,
+        );
+        const span = option?.closest("label")?.querySelector("span");
         if (span) sharedLabel.textContent = span.textContent;
         sharedLabel.classList.remove("text-secondary");
         sharedLabel.classList.add("text-primary");
@@ -682,29 +783,37 @@ export default class extends Controller {
     }
 
     // Ratio wrap (the Split Behavior trigger): visible for EVERY mode in
-    // the shared state (Round 28 §8.1). Round 30: the trigger is
+    // the shared state. The trigger is
     // ENABLED under Required (the split is persisted — percents of the
-    // required amount) and under Leftover (C1: clickable, display-only —
+    // required amount) and under Leftover (clickable, display-only —
     // the panel opens, the label updates, nothing is persisted); only the
     // mixed state disables it (invariant preserved).
     const ratioWrap = section.querySelector("[data-bank-pull-ratio-wrap]");
     if (ratioWrap) ratioWrap.classList.remove("hidden");
-    const ratioTrigger = ratioWrap && ratioWrap.querySelector("button");
+    const ratioTrigger = ratioWrap?.querySelector("button");
     if (ratioTrigger) ratioTrigger.disabled = mixed;
-    const ratioLabel = ratioWrap && ratioWrap.querySelector("[data-bank-pull-ratio-label]");
+    const ratioLabel = ratioWrap?.querySelector("[data-bank-pull-ratio-label]");
     if (ratioLabel) {
-      const text = displayRatio === "equal" ? section.dataset.bankRatioEqual
-        : displayRatio === "rational" ? section.dataset.bankRatioRational
-        : displayRatio === "percent" ? section.dataset.bankRatioPercent
-        : section.dataset.bankRatioFixedAmounts;
+      const text =
+        displayRatio === "equal"
+          ? section.dataset.bankRatioEqual
+          : displayRatio === "rational"
+            ? section.dataset.bankRatioRational
+            : displayRatio === "percent"
+              ? section.dataset.bankRatioPercent
+              : section.dataset.bankRatioFixedAmounts;
       ratioLabel.textContent = text;
     }
 
     // Note line (the required/leftover explanations; absent otherwise).
     const note = section.querySelector("[data-bank-pull-mode-note]");
     if (note) {
-      const text = mode === "required" ? section.dataset.bankRequiredNote
-        : mode === "leftover" ? section.dataset.bankLeftoverNote : "";
+      const text =
+        mode === "required"
+          ? section.dataset.bankRequiredNote
+          : mode === "leftover"
+            ? section.dataset.bankLeftoverNote
+            : "";
       note.textContent = text || "";
       note.classList.toggle("hidden", !text);
     }
@@ -716,35 +825,50 @@ export default class extends Controller {
       const show = reqPositive && (mode === "specific" || mode === "percent");
       reqLabel.classList.toggle("hidden", !show);
       if (show) {
-        const tpl = mode === "specific" ? section.dataset.bankRequiredAmountTotalLabel : section.dataset.bankRequiredAmountLabel;
-        reqLabel.textContent = (tpl || "").replace("%{amount}", `$${this.#money(reqDisplay)}`);
+        const tpl =
+          mode === "specific"
+            ? section.dataset.bankRequiredAmountTotalLabel
+            : section.dataset.bankRequiredAmountLabel;
+        reqLabel.textContent = (tpl || "").replace(
+          "%{amount}",
+          `$${this.#money(reqDisplay)}`,
+        );
       }
     }
 
-    // Single input vs the per-row split inputs (Round 28 §8.1: the split
+    // Single input vs the per-row split inputs (the split
     // inputs replace the single input ONLY under Fixed Amount + Fixed
     // Amounts and the mixed state — Percent keeps the single total-%
     // input for every behavior, with no per-row % inputs; impl note 2).
-    // Round 30: under Required the split inputs show for the Fixed
+    // under Required the split inputs show for the Fixed
     // Amounts / Percent behaviors (the required split is PERSISTED —
     // percents of the required amount); the locked required display
     // input stays visible (its wrap is never hidden for required).
-    const useSplit = mixed || (mode === "specific" && ratio === "fixed_amounts");
-    const requiredSplit = mode === "required" && (effRatio === "fixed_amounts" || effRatio === "percent");
+    const useSplit =
+      mixed || (mode === "specific" && ratio === "fixed_amounts");
+    const requiredSplit =
+      mode === "required" &&
+      (effRatio === "fixed_amounts" || effRatio === "percent");
     const singleWrap = section.querySelector("[data-bank-pull-single-wrap]");
-    if (singleWrap) singleWrap.classList.toggle("hidden", useSplit && mode !== "required");
+    if (singleWrap)
+      singleWrap.classList.toggle("hidden", useSplit && mode !== "required");
 
-    const sharedValue = singleWrap && singleWrap.querySelector("[data-bank-pull-shared-value]");
+    const sharedValue = singleWrap?.querySelector(
+      "[data-bank-pull-shared-value]",
+    );
     if (sharedValue) {
       if (mode === "required") {
         sharedValue.disabled = true;
         sharedValue.value = reqDisplay || "—";
-        // R28C (GAP-1): mirror the State A row sync (L565-566) — the
+        // Mirror the State A row sync (L565-566) — the
         // per-row value inputs are hidden in shared state but must not
         // hold stale single-income values; State A re-runs on uncheck.
         I.forEach((e) => {
           const rv = e.row.querySelector("[data-bank-pull-row-value]");
-          if (rv) { rv.disabled = true; rv.value = reqDisplay || "—"; }
+          if (rv) {
+            rv.disabled = true;
+            rv.value = reqDisplay || "—";
+          }
         });
       } else if (mode === "leftover") {
         sharedValue.disabled = true;
@@ -767,8 +891,10 @@ export default class extends Controller {
       if (!tag) return;
       if (mixed) {
         const m = this.#rowMode(e.row);
-        const option = e.row.querySelector(`[data-bank-pull-panel] input[value="${m}"]`);
-        const span = option && option.closest("label") && option.closest("label").querySelector("span");
+        const option = e.row.querySelector(
+          `[data-bank-pull-panel] input[value="${m}"]`,
+        );
+        const span = option?.closest("label")?.querySelector("span");
         tag.textContent = span ? span.textContent : m;
         tag.classList.remove("hidden");
       } else {
@@ -777,14 +903,14 @@ export default class extends Controller {
       }
     });
 
-    // R28C (GAP-2, superseding the R28B allEmpty gate): a LIVE behavior
+    // Superseding the allEmpty gate: a LIVE behavior
     // transition into Fixed Amounts (specific + fixed_amounts, non-mixed)
     // must prefill the per-row split inputs from the CURRENT derivation —
     // the split the greyed readouts showed under the ratio the user is
     // leaving (equal → /n; rational or hidden → proportional to income,
     // the last income absorbing the cents remainder so the values sum
-    // exactly). The owner-signed §8.1 acceptance criterion overrides the
-    // R28B "never overwrite" guard (edge case 9): at this moment the
+    // exactly). The acceptance criterion overrides the
+    // "never overwrite" guard (edge case 9): at this moment the
     // inputs hold the stale server-seeded stored values, and a live
     // transition must replace them. Fire ONLY on that transition path —
     // the one-shot setSharedRatio flag: value edits, income toggles and
@@ -793,23 +919,37 @@ export default class extends Controller {
     // its server-seeded inputs. The prefilled values ride in the
     // carriers via the read below, so the save lands 200 with the
     // derived values.
-    if (splitPrefillFrom && (useSplit || requiredSplit) && !mixed && sharedValue) {
-      const splitInputs = I.map((e) => e.row.querySelector(`[data-bank-split-input="${e.id}"]`));
+    if (
+      splitPrefillFrom &&
+      (useSplit || requiredSplit) &&
+      !mixed &&
+      sharedValue
+    ) {
+      const splitInputs = I.map((e) =>
+        e.row.querySelector(`[data-bank-split-input="${e.id}"]`),
+      );
       if (requiredSplit) {
-        // Round 30: a live transition into the persisted required split —
+        // a live transition into the persisted required split —
         // the per-row inputs take dollars (Fixed Amounts) or percents
         // (Percent) from the percents the carriers already hold (the
         // leaving behavior's stored/derived percents; the values block
         // never clears them for required), the last income absorbing so
         // the values sum exactly (dollars to the required display,
         // percents to 100.00).
-        const req = parseFloat(reqDisplay) || 0;
+        const req = Number.parseFloat(reqDisplay) || 0;
         let acc = 0;
         I.forEach((e, i) => {
-          const carrier = e.row.querySelector('input[type="hidden"][name$="[value]"]');
-          const stored = carrier ? parseFloat(carrier.value) : NaN;
+          const carrier = e.row.querySelector(
+            'input[type="hidden"][name$="[value]"]',
+          );
+          const stored = carrier
+            ? Number.parseFloat(carrier.value)
+            : Number.NaN;
           const pct = Number.isNaN(stored) ? this.#cents(100 / n) : stored;
-          const dollars = effRatio === "fixed_amounts" ? this.#cents((pct / 100) * req) : this.#cents(pct);
+          const dollars =
+            effRatio === "fixed_amounts"
+              ? this.#cents((pct / 100) * req)
+              : this.#cents(pct);
           const scale = effRatio === "fixed_amounts" ? req : 100;
           const v = i < n - 1 ? dollars : this.#cents(scale - acc);
           if (i < n - 1) acc += v;
@@ -817,13 +957,22 @@ export default class extends Controller {
           if (input) input.value = v.toFixed(2);
         });
       } else {
-        const totalValue = parseFloat(sharedValue.value);
+        const totalValue = Number.parseFloat(sharedValue.value);
         if (!Number.isNaN(totalValue)) {
-          const totalStored = view === "monthly" ? totalValue / combined : totalValue;
+          const totalStored =
+            view === "monthly" ? totalValue / combined : totalValue;
           let acc = 0;
           I.forEach((e, i) => {
-            const w = splitPrefillFrom === "equal" ? 1 / n : (ppSum > 0 ? e.pp / ppSum : 1 / n);
-            const v = i < n - 1 ? this.#cents(totalStored * w) : this.#cents(totalStored - acc);
+            const w =
+              splitPrefillFrom === "equal"
+                ? 1 / n
+                : ppSum > 0
+                  ? e.pp / ppSum
+                  : 1 / n;
+            const v =
+              i < n - 1
+                ? this.#cents(totalStored * w)
+                : this.#cents(totalStored - acc);
             if (i < n - 1) acc += v;
             const input = splitInputs[i];
             if (input) input.value = v.toFixed(2);
@@ -833,8 +982,8 @@ export default class extends Controller {
     }
 
     // The per-income stored values (the hidden submit inputs).
-    //   mixed / split          -> the split inputs' own text
-    //   required (Round 30)    -> the percents of the bank's required
+    // mixed / split -> the split inputs' own text
+    // required -> the percents of the bank's required
     //                             amount (2 dp major units; blank = nil =
     //                             the equal split): the live split inputs
     //                             when shown (Fixed Amounts / Percent),
@@ -842,31 +991,31 @@ export default class extends Controller {
     //                             (equal/hidden: 100/n; rational: strict
     //                             income-proportional), the last income
     //                             absorbing so the sum is exactly 100.00
-    //   leftover               -> "" (C1: display-only; the planner
+    // leftover -> "" ( : display-only; the planner
     //                             derives)
-    //   specific single        -> the ratio split of the entered total
+    // specific single -> the ratio split of the entered total
     //                             (equal: /n; rational: x the income share;
     //                             the last income absorbs the cents
     //                             remainder so the stored values sum
     //                             exactly)
-    //   percent single         -> rational: P for both (each income pays
+    // percent single -> rational: P for both (each income pays
     //                             P% of its own paycheck); equal: the
     //                             equal-DOLLAR per-paycheck share, the
     //                             per-income % derived
     const values = I.map(() => "");
-    // R5 fix (BUG-4): the UNROUNDED equal-dollar per-paycheck share per
+    // fix: the UNROUNDED equal-dollar per-paycheck share per
     // income (percent-Equal only). The readout displays this; the
     // STORED percent still comes from the 2-dp rounded value.
     const equalShare = I.map(() => null);
     if (mixed || useSplit) {
       I.forEach((e, i) => {
-        // Round 28: the split inputs live inline in the income rows (the
+        // the split inputs live inline in the income rows (the
         // old bottom-center split wrap is gone).
         const input = e.row.querySelector(`[data-bank-split-input="${e.id}"]`);
         values[i] = input ? input.value.trim() : "";
       });
     } else if (mode === "required" && sharedValue) {
-      // Round 30: the required split is PERSISTED — the carriers carry the
+      // the required split is PERSISTED — the carriers carry the
       // percents of the required amount (blank = nil = the equal split).
       // Live split inputs win when shown (Fixed Amounts: typed dollars ->
       // dollars/required*100; Percent: typed percents); otherwise the
@@ -877,25 +1026,33 @@ export default class extends Controller {
       // the carriers even with an empty required display (base 0: the
       // split is inert until the base becomes non-zero — survival).
       if (requiredSplit) {
-        const req = parseFloat(reqDisplay) || 0;
+        const req = Number.parseFloat(reqDisplay) || 0;
         I.forEach((e, i) => {
-          const input = e.row.querySelector(`[data-bank-split-input="${e.id}"]`);
+          const input = e.row.querySelector(
+            `[data-bank-split-input="${e.id}"]`,
+          );
           const text = input ? input.value.trim() : "";
-          const v = parseFloat(text);
-          if (text === "" || Number.isNaN(v)) { values[i] = ""; return; }
+          const v = Number.parseFloat(text);
+          if (text === "" || Number.isNaN(v)) {
+            values[i] = "";
+            return;
+          }
           // The carrier stores the PERCENT of the required amount:
           // Fixed Amounts converts typed dollars (dollars / required *
           // 100 — view-unit invariant; a zero base cannot be converted
           // -> nil = the equal split); Percent takes the typed percents.
-          const pct = effRatio === "fixed_amounts"
-            ? (req > 0 ? this.#cents((v / req) * 100) : "")
-            : this.#cents(v);
+          const pct =
+            effRatio === "fixed_amounts"
+              ? req > 0
+                ? this.#cents((v / req) * 100)
+                : ""
+              : this.#cents(v);
           values[i] = pct === "" ? "" : pct.toFixed(2);
         });
       } else {
         let acc = 0;
         I.forEach((e, i) => {
-          const w = (effRatio === "rational" && ppSum > 0) ? e.pp / ppSum : 1 / n;
+          const w = effRatio === "rational" && ppSum > 0 ? e.pp / ppSum : 1 / n;
           const pct = i < n - 1 ? this.#cents(100 * w) : this.#cents(100 - acc);
           if (i < n - 1) acc += pct;
           values[i] = pct.toFixed(2);
@@ -903,7 +1060,7 @@ export default class extends Controller {
       }
     } else if (mode !== "required" && mode !== "leftover" && sharedValue) {
       if (mode === "specific") {
-        const V = parseFloat(sharedValue.value);
+        const V = Number.parseFloat(sharedValue.value);
         if (!Number.isNaN(V)) {
           // The input is the total in VIEW units; stored values are per
           // paycheck: V_pp = V / combined paychecks per month (monthly)
@@ -911,7 +1068,7 @@ export default class extends Controller {
           const totalStored = view === "monthly" ? V / combined : V;
           let acc = 0;
           I.forEach((e, i) => {
-            const w = (ratio === "rational" && ppSum > 0) ? e.pp / ppSum : 1 / n;
+            const w = ratio === "rational" && ppSum > 0 ? e.pp / ppSum : 1 / n;
             if (i < n - 1) {
               const v = this.#cents(totalStored * w);
               acc += v;
@@ -923,11 +1080,13 @@ export default class extends Controller {
           });
         }
       } else {
-        const P = parseFloat(sharedValue.value);
+        const P = Number.parseFloat(sharedValue.value);
         if (!Number.isNaN(P)) {
           if (ratio === "rational") {
             // Each income stores the same percent (P% of its own paycheck).
-            I.forEach((e, i) => { values[i] = this.#cents(P).toFixed(2); });
+            I.forEach((e, i) => {
+              values[i] = this.#cents(P).toFixed(2);
+            });
           } else {
             // Equal: equal dollar contributions. T_pp = P% of the combined
             // paycheck (the sum of the per-paycheck amounts); each income
@@ -945,32 +1104,45 @@ export default class extends Controller {
       }
     }
     I.forEach((e, i) => {
-      const hidden = e.row.querySelector('input[type="hidden"][name$="[value]"]');
+      const hidden = e.row.querySelector(
+        'input[type="hidden"][name$="[value]"]',
+      );
       if (hidden) hidden.value = values[i];
     });
 
-    // Per-income readouts (view unit). Round 28 §8.1: the readout and the
+    // Per-income readouts (view unit). The readout and the
     // inline split input are mutually exclusive per row:
-    //   Leftover            -> nothing (the block's greyed note explains)
-    //   split input shown   -> the editable input is the source; the
+    // Leftover -> nothing (the block's greyed note explains)
+    // split input shown -> the editable input is the source; the
     //                          readout stays hidden
-    //   Required            -> the greyed proration share = the required
-    //                          per-paycheck amount, each (Q6)
+    // Required -> the greyed proration share = the required
+    //                          per-paycheck amount, each
     //   Fixed/Percent other -> the greyed computed share; Percent shows
     //                          the derived per-income % for ALL three
-    //                          behaviors (impl note 2: the R27 greyed
+    // behaviors (impl note 2: the greyed
     //                          derived readouts kept).
     I.forEach((e, i) => {
       const readout = e.row.querySelector("[data-bank-per-income-readout]");
-      const splitInput = e.row.querySelector(`[data-bank-split-input="${e.id}"]`);
+      const splitInput = e.row.querySelector(
+        `[data-bank-split-input="${e.id}"]`,
+      );
       const rowMode = this.#rowMode(e.row);
-      if (splitInput) splitInput.classList.toggle("hidden", !(mixed || useSplit || requiredSplit));
+      if (splitInput)
+        splitInput.classList.toggle(
+          "hidden",
+          !(mixed || useSplit || requiredSplit),
+        );
       if (!readout) return;
-      // Round 30: under Required the $ readouts stay visible for the 50/50,
-      // Proportional and Percent behaviors (W2: $ readouts next to the %
+      // under Required the $ readouts stay visible for the 50/50,
+      // Proportional and Percent behaviors ($ readouts next to the %
       // inputs); only Fixed Amounts hides them (its $ inputs are the
       // source there).
-      if (rowMode === "leftover" || mixed || useSplit || (requiredSplit && effRatio === "fixed_amounts")) {
+      if (
+        rowMode === "leftover" ||
+        mixed ||
+        useSplit ||
+        (requiredSplit && effRatio === "fixed_amounts")
+      ) {
         readout.textContent = "";
         readout.classList.add("hidden");
         return;
@@ -978,36 +1150,42 @@ export default class extends Controller {
       const nameEl = e.row.querySelector("[data-bank-row-name]");
       const name = nameEl ? nameEl.textContent : e.id;
       if (rowMode === "required") {
-        // Round 30: the greyed split of the displayed required (percents
+        // the greyed split of the displayed required (percents
         // of the required amount, view unit — reqDisplay is already
-        // view-scaled, so no disp()): the percents from the carriers (the
+        // view-scaled, so no disp): the percents from the carriers (the
         // values block above always carries a concrete split for
         // required), the last income absorbing so the readouts sum
         // exactly to the displayed required (the UI invariant). No
         // absorb when a carrier is blank (D-UNDER: the shortfall stays
         // visible).
-        const req = parseFloat(reqDisplay) || 0;
+        const req = Number.parseFloat(reqDisplay) || 0;
         const pcts = I.map((ee) => {
-          const hidden = ee.row.querySelector('input[type="hidden"][name$="[value]"]');
-          const v = hidden ? parseFloat(hidden.value) : NaN;
+          const hidden = ee.row.querySelector(
+            'input[type="hidden"][name$="[value]"]',
+          );
+          const v = hidden ? Number.parseFloat(hidden.value) : Number.NaN;
           return Number.isNaN(v) ? 0 : v;
         });
         const sumPct = pcts.reduce((s, p) => s + p, 0);
         const full = pcts.every((p) => p > 0) && Math.abs(sumPct - 100) < 0.005;
         let acc = 0;
         const dollars = pcts.map((p, j) => {
-          const d = full && j === pcts.length - 1 ? req - acc : this.#cents((p / 100) * req);
+          const d =
+            full && j === pcts.length - 1
+              ? req - acc
+              : this.#cents((p / 100) * req);
           if (j < pcts.length - 1) acc += d;
           return d;
         });
         readout.textContent = (section.dataset.bankPerIncomeReadout || "")
-          .replace("%{name}", name).replace("%{amount}", `$${dollars[i].toFixed(2)}`);
+          .replace("%{name}", name)
+          .replace("%{amount}", `$${dollars[i].toFixed(2)}`);
         readout.classList.remove("hidden");
         return;
       }
-      const v = parseFloat(values[i]);
+      const v = Number.parseFloat(values[i]);
       if (Number.isNaN(v)) return;
-      // R5 fix (BUG-4): the percent-Equal readout shows the UNROUNDED
+      // fix: the percent-Equal readout shows the UNROUNDED
       // equal dollar share (the design's 205.00 / 205.00 for the 410.00
       // total), not the dollars back-derived from the 2-dp rounded
       // stored percent (which gave 204.93 / 204.96, total 409.89).
@@ -1015,12 +1193,16 @@ export default class extends Controller {
       if (rowMode === "percent" && ratio === "equal" && equalShare[i] != null) {
         dollars = disp(e, equalShare[i]);
       } else {
-        dollars = rowMode === "percent" ? disp(e, (v / 100) * e.pp) : disp(e, v);
+        dollars =
+          rowMode === "percent" ? disp(e, (v / 100) * e.pp) : disp(e, v);
       }
-      const tpl = rowMode === "percent"
-        ? section.dataset.bankPerIncomeReadoutPercent
-        : section.dataset.bankPerIncomeReadout;
-      let text = (tpl || "").replace("%{name}", name).replace("%{amount}", `$${dollars.toFixed(2)}`);
+      const tpl =
+        rowMode === "percent"
+          ? section.dataset.bankPerIncomeReadoutPercent
+          : section.dataset.bankPerIncomeReadout;
+      let text = (tpl || "")
+        .replace("%{name}", name)
+        .replace("%{amount}", `$${dollars.toFixed(2)}`);
       if (rowMode === "percent") {
         text = text.replace("%{percent}", `${v.toFixed(2)}%`);
       }
@@ -1029,7 +1211,7 @@ export default class extends Controller {
     });
 
     // The split running total (view unit; per-income $ or % by the row's
-    // own mode — matters for the mixed state). Round 28: the total moved
+    // own mode — matters for the mixed state).: the total moved
     // into the between-row control row (the old split wrap is gone) — the
     // section-scoped query is position-independent.
     const totalEl = section.querySelector("[data-bank-split-total]");
@@ -1038,19 +1220,19 @@ export default class extends Controller {
         totalEl.textContent = "";
         totalEl.classList.add("hidden");
       } else if (requiredSplit) {
-        // Round 30: the required split's running total — Percent behavior:
+        // the required split's running total — Percent behavior:
         // the sum of the typed percents (vs 100%); Fixed Amounts: the
         // running $ against the required display (view unit).
         if (mode === "required" && effRatio === "percent") {
           const sumPct = I.reduce((s, e, i) => {
-            const v = parseFloat(values[i]);
+            const v = Number.parseFloat(values[i]);
             return Number.isNaN(v) ? s : s + v;
           }, 0);
           totalEl.textContent = `${section.dataset.bankTotalLabel || "Total"}: ${sumPct.toFixed(2)}%`;
         } else {
-          const req = parseFloat(reqDisplay) || 0;
+          const req = Number.parseFloat(reqDisplay) || 0;
           const sum = I.reduce((s, e, i) => {
-            const v = parseFloat(values[i]);
+            const v = Number.parseFloat(values[i]);
             if (Number.isNaN(v)) return s;
             return s + this.#cents((v / 100) * req);
           }, 0);
@@ -1059,7 +1241,7 @@ export default class extends Controller {
         totalEl.classList.remove("hidden");
       } else {
         const sum = I.reduce((s, e, i) => {
-          const v = parseFloat(values[i]);
+          const v = Number.parseFloat(values[i]);
           if (Number.isNaN(v)) return s;
           const rowMode = this.#rowMode(e.row);
           const dollars = rowMode === "percent" ? (v / 100) * e.pp : v;
@@ -1081,14 +1263,16 @@ export default class extends Controller {
     if (this.customUrlValue) {
       // A custom upload wins in the avatar; picking a built-in (or None)
       // removes it so the pick is actually what the avatar shows.
-      this.#fetchJson(this.removeUrlValue, { method: "DELETE" }).then((response) => {
-        if (!response.ok) throw new Error("remove failed");
-        this.customUrlValue = "";
-        this.#setAvatar(logoUrl);
-        this.removeCustomTarget.classList.add("hidden");
-      }).catch(() => {
-        this.#showUploadError("Couldn't remove the custom logo. Try again.");
-      });
+      this.#fetchJson(this.removeUrlValue, { method: "DELETE" })
+        .then((response) => {
+          if (!response.ok) throw new Error("remove failed");
+          this.customUrlValue = "";
+          this.#setAvatar(logoUrl);
+          this.removeCustomTarget.classList.add("hidden");
+        })
+        .catch(() => {
+          this.#showUploadError("Couldn't remove the custom logo. Try again.");
+        });
     } else {
       this.#setAvatar(logoUrl);
     }
@@ -1101,10 +1285,16 @@ export default class extends Controller {
     const body = new FormData();
     body.append("image", file);
     this.#fetchJson(this.uploadUrlValue, { method: "POST", body })
-      .then((response) => response.json().then((data) => ({ ok: response.ok, data })))
+      .then((response) =>
+        response.json().then((data) => ({ ok: response.ok, data })),
+      )
       .then(({ ok, data }) => {
         if (!ok) {
-          this.#showUploadError(Array.isArray(data.errors) ? data.errors.join(" ") : "Upload failed. Try again.");
+          this.#showUploadError(
+            Array.isArray(data.errors)
+              ? data.errors.join(" ")
+              : "Upload failed. Try again.",
+          );
           return;
         }
         this.customUrlValue = data.logo_url;
@@ -1124,13 +1314,18 @@ export default class extends Controller {
         this.#setAvatar(this.#logoUrl(this.slugValue));
         this.removeCustomTarget.classList.add("hidden");
       })
-      .catch(() => this.#showUploadError("Couldn't remove the custom logo. Try again."));
+      .catch(() =>
+        this.#showUploadError("Couldn't remove the custom logo. Try again."),
+      );
   }
 
   // ---- helpers ------------------------------------------------------------
 
   #fetchJson(url, init) {
-    const headers = Object.assign({ Accept: "application/json" }, init.headers || {});
+    const headers = Object.assign(
+      { Accept: "application/json" },
+      init.headers || {},
+    );
     return fetch(url, Object.assign({}, init, { headers }));
   }
 
@@ -1152,14 +1347,16 @@ export default class extends Controller {
   }
 
   #form() {
-    // Round 25: switched to `this.element` (the vendored Stimulus build has
+    // switched to `this.element` (the vendored Stimulus build has
     // no `el` alias); the anchor input keeps the original name.
-    const anchor = this.element.querySelector("input[name='account[parent_account_id]']");
+    const anchor = this.element.querySelector(
+      "input[name='account[parent_account_id]']",
+    );
     return anchor ? anchor.closest("form") : null;
   }
 
   #hiddenInput(name) {
-    // Round 25: switched to `this.element` (no `el` alias in this build).
+    // switched to `this.element` (no `el` alias in this build).
     return this.element.querySelector(`input[name='${name}']`);
   }
 }

@@ -1,30 +1,28 @@
 # Bank logo provenance
 
-One-time vendor from Wikimedia Commons (dev-only scripts in
-/data/workspaces/kernel/staging/sure-dev/round16-bank-logo-vendor/: vendor.rb
-for in-container runs, vendor_host.py for host-egress runs; shared manifest.json).
+One-time vendor from Wikimedia Commons (one-off scripts: vendor.rb for
+in-container runs, vendor_host.py for host-egress runs; shared manifest.json).
 License gate: LicenseShortName "Public domain" or a CC0 1.0 Universal Public
 Domain Dedication long name ONLY. Every Commons logo file carries a trademark
 disclaimer; use here is nominative (a personal, non-commercial app
-identifying the bank of the owner's own accounts). Served same-origin by
+identifying the bank of the user's own accounts). Served same-origin by
 Rails; the app never fetches logos at runtime.
 
-2026-11-02 (P3-f): lockups replaced with icon-only marks for sankey chips (14px draw size).
+2026-11-02: lockups replaced with icon-only marks for sankey chips (14px draw size).
 Originals recoverable at git HEAD 1ef7aac. "Icon" column records how each file was produced.
 
-2026-11-06 (R27 R2): two P3-f monogram fallbacks replaced with the REAL vendored
+2026-11-06: two monogram fallbacks replaced with the REAL vendored
 lockups (same PD Commons sources, no new fetch needed — files recovered from git
 1ef7aac): navy-federal (no separate icon mark exists for this brand; the full
 wordmark is the mark, centered on a square 48x48 canvas so the circular chip and
 32px avatars render it uncropped) and american-express (the original 300x300
 blue-box logo, restored byte-identical). Remaining monogram fallbacks stay as-is:
-no live account resolves to them (owner's family banks are Navy Federal / SoFi /
-USAA / Amex / DELL 401K / personal buckets).
+no live account resolves to them.
 
-| File | Bank | License | Commons file | Fetched | Icon (P3-f) |
+| File | Bank | License | Commons file | Fetched | Icon |
 |---|---|---|---|---| --- |
 | `sofi.svg` | SoFi | Public domain (PD) | [File:SoFi logo.svg](https://commons.wikimedia.org/wiki/SoFi_logo.svg) | 2026-11-01 19:42 UTC | icon extracted from lockup |
-| `navy-federal.svg` | Navy Federal Credit Union | Public domain (PD) | [File:Navy Federal Credit Union Logo.svg](https://commons.wikimedia.org/wiki/Navy_Federal_Credit_Union_Logo.svg) | 2026-11-01 19:42 UTC | real wordmark lockup centered on 48x48 square (R27 R2 2026-11-06; no separate icon mark for this brand) |
+| `navy-federal.svg` | Navy Federal Credit Union | Public domain (PD) | [File:Navy Federal Credit Union Logo.svg](https://commons.wikimedia.org/wiki/Navy_Federal_Credit_Union_Logo.svg) | 2026-11-01 19:42 UTC | real wordmark lockup centered on 48x48 square (2026-11-06; no separate icon mark for this brand) |
 | `jpmorgan-chase.svg` | JPMorgan Chase | Public domain (PD) | [File:Logo of JPMorganChase 2024.svg](https://commons.wikimedia.org/wiki/Logo_of_JPMorganChase_2024.svg) | 2026-11-01 19:42 UTC | monogram fallback (brand color #334155) |
 | `bank-of-america.svg` | Bank of America | Public domain (PD) | [File:Bank of America logo.svg](https://commons.wikimedia.org/wiki/Bank_of_America_logo.svg) | 2026-11-01 19:42 UTC | icon extracted from lockup |
 | `wells-fargo.svg` | Wells Fargo | Public domain (PD) | [File:Wells Fargo Logo (2020).svg](https://commons.wikimedia.org/wiki/Wells_Fargo_Logo_(2020).svg) | 2026-11-01 19:42 UTC | icon extracted from lockup |
@@ -34,7 +32,7 @@ USAA / Amex / DELL 401K / personal buckets).
 | `ally.svg` | Ally Financial | Public domain (PD) | [File:Ally Financial.svg](https://commons.wikimedia.org/wiki/Ally_Financial.svg) | 2026-11-01 19:42 UTC | monogram fallback (brand color #481149) |
 | `fidelity.svg` | Fidelity Investments | Public domain (PD) | [File:Logo Fidelity 2011-09-12.svg](https://commons.wikimedia.org/wiki/Logo_Fidelity_2011-09-12.svg) | 2026-11-01 19:42 UTC | icon extracted from lockup |
 | `td-bank.svg` | TD Bank | Public domain (PD) | [File:TD Bank.svg](https://commons.wikimedia.org/wiki/TD_Bank.svg) | 2026-11-01 19:42 UTC | monogram fallback (brand color #003f2d) |
-| `american-express.svg` | American Express | Public domain (PD) | [File:American Express logo.svg](https://commons.wikimedia.org/wiki/American_Express_logo.svg) | 2026-11-01 19:42 UTC | original 300x300 PD logo restored byte-identical (R27 R2 2026-11-06) |
+| `american-express.svg` | American Express | Public domain (PD) | [File:American Express logo.svg](https://commons.wikimedia.org/wiki/American_Express_logo.svg) | 2026-11-01 19:42 UTC | original 300x300 PD logo restored byte-identical (2026-11-06) |
 | `capital-one.svg` | Capital One | Public domain (PD) | [File:Capital One logo.svg](https://commons.wikimedia.org/wiki/Capital_One_logo.svg) | 2026-11-01 19:42 UTC | monogram fallback (brand color #cc2427) |
 | `chime.svg` | Chime | Public domain (PD) | [File:Chime logo.svg](https://commons.wikimedia.org/wiki/Chime_logo.svg) | 2026-11-01 19:42 UTC | monogram fallback (brand color #343b57) |
 | `varo.svg` | Varo | Public domain (PD) | [File:Varo logo.svg](https://commons.wikimedia.org/wiki/Varo_logo.svg) | 2026-11-01 19:42 UTC | icon extracted from lockup |
