@@ -113,8 +113,13 @@ class PaycheckFlowPlanner
   # (edge_rows), which are IMMUTABLE to this overlay — income amount/dates
   # flow only via @incomes -> resolve_edges -> bank_inflow. T3 asserts the
   # wanted-immutable + inflow-delta behavior.
-  def self.overlay_paycheck_configs(family:, month:, incomes:)
-    configs = family.family_paycheck_configs.to_a
+  # configs: nil (default) reads the family's saved configs — the live
+  # path, byte-identical to the pre-R35 body. A prebuilt array of
+  # (possibly unsaved) FamilyPaycheckConfig instances lets a Flow Scenario
+  # re-derive pay dates from its snapshot copy without touching the live
+  # table (design §2.2, R35).
+  def self.overlay_paycheck_configs(family:, month:, incomes:, configs: nil)
+    configs = family.family_paycheck_configs.to_a if configs.nil?
     return incomes if configs.empty?
 
     window = month.beginning_of_month..month.end_of_month
@@ -147,6 +152,93 @@ class PaycheckFlowPlanner
     # entries keep their (due_on, created_at, id) order ahead of them.
     appends.sort_by! { |entry| entry[:id] }
     incomes + appends
+  end
+
+  # R35 (Flow Scenarios, design §2.2): the scenario's :incomes base.
+  # Composes the LIVE inputs_for incomes (zero-config S0 path untouched)
+  # re-overlaid with the scenario's paycheck-config snapshot copy as
+  # UNSAVED instances (nothing is persisted), then the per-series income
+  # policy. The policy is an override map, not a whitelist — a series
+  # missing from it passes through unchanged (live-derived), so series the
+  # user adds after the snapshot still appear in the scenario.
+  #
+  # Policy rows ({ series_id, enabled, zeroed, gross_per_paycheck_cents }):
+  #   enabled == false            -> the series is dropped from the base
+  #   zeroed                      -> its occurrence amounts become 0
+  #   gross_per_paycheck_cents    -> its occurrence amounts become that value
+  #   (any other row)             -> untouched
+  #
+  # Names are display-only and stay LIVE (design §1.3: "readouts/logos/
+  # names" are non-snapshotted, nil-safe): the inputs_for base carries no
+  # :name, but the sankey labels income nodes by series display_name, so a
+  # re-used scenario must render identical to the Default view. Deleted
+  # series stay nil (nil-safe).
+  def self.scenario_incomes(family:, month:, snapshot:)
+    incomes = inputs_for(family: family, month: month)[:incomes]
+
+    config_rows = Array(snapshot["paycheck_configs"])
+    configs = config_rows.reject { |row| row["anchor_date"].blank? }.map do |row|
+      FamilyPaycheckConfig.new(
+        user_id: row["user_id"],
+        recurring_transaction_id: row["recurring_transaction_id"],
+        gross_per_paycheck_cents: row["gross_per_paycheck_cents"],
+        frequency: row["frequency"],
+        anchor_date: Date.parse(row["anchor_date"])
+      )
+    end
+    incomes = overlay_paycheck_configs(family: family, month: month, incomes: incomes, configs: configs)
+
+    series_names = family.recurring_transactions
+                         .where(id: incomes.map { |entry| entry[:id] }, status: :active, bill_type: :income, manual: true)
+                         .index_by(&:id)
+    policy = (Array(snapshot["incomes"]) || []).to_h { |row| [ row["series_id"], row ] }
+    incomes.map do |entry|
+      row = policy[entry[:id]]
+      next nil if row && row["enabled"] == false # series switched off inside the scenario
+
+      base = entry
+      if row && row["zeroed"]
+        base = entry.merge(occurrences: entry[:occurrences].map { |o| o.merge(amount_cents: BigDecimal(0)) })
+      elsif row && row["gross_per_paycheck_cents"]
+        base = entry.merge(occurrences: entry[:occurrences].map { |o| o.merge(amount_cents: BigDecimal(row["gross_per_paycheck_cents"])) })
+      end
+      base.merge(name: series_names[entry[:id]]&.display_name)
+    end.compact
+  end
+
+  # R35: the snapshot's numeric fields, normalized for the planner's
+  # BigDecimal arithmetic. The jsonb round-trip stringifies BigDecimals
+  # (ActiveSupport's BigDecimal#as_json -> to_s), and required-mode edge
+  # percents are stored as the form's major-unit string — so a scenario row
+  # read back from the column can carry String numerics. The live draft
+  # paths (inputs_for / the controller's form merge) carry real Ruby values,
+  # which this also normalizes (idempotent on BigDecimal/Integer/Float).
+  SCENARIO_NUMERIC_FIELDS = %i[value_cents value_percent required_percent].freeze
+
+  def self.scenario_row(row)
+    normalized = row.symbolize_keys
+    SCENARIO_NUMERIC_FIELDS.each do |key|
+      normalized[key] = BigDecimal(normalized[key].to_s) if normalized[key]
+    end
+    normalized
+  end
+
+  # R35 (Flow Scenarios, design §2.2): the full draft payload for a
+  # scenario — the snapshot's stored rows (string-keyed in the jsonb
+  # column) symbolized + numerically normalized to the planner's key shape,
+  # plus the live scenario_incomes base. linked_bank_counts is derived from
+  # the snapshot edge rows exactly like graph_shadow does from the live
+  # table, so the per-income limit warnings stay consistent with what the
+  # scenario plans. Callers merge the form's unsaved dialog rows on top
+  # (the controller's graph_draft / render_flow_json path) before plan_graph.
+  def self.scenario_draft(family:, month:, snapshot:)
+    snapshot_allocations = Array(snapshot["allocations"])
+    {
+      incomes: scenario_incomes(family: family, month: month, snapshot: snapshot),
+      allocations: snapshot_allocations.map { |row| scenario_row(row) },
+      plan_allocations: Array(snapshot["plan_allocations"]).map { |row| scenario_row(row) },
+      linked_bank_counts: snapshot_allocations.group_by { |row| row["income_id"] }.transform_values(&:size)
+    }
   end
 
   # The family's income -> bank edge rows in the planner's key shape (the
@@ -557,12 +649,17 @@ class PaycheckFlowPlanner
   # Draft merge (PR#2 preview pattern): each key present replaces the saved
   # input set WHOLESALE. The controller composes the shadow set (saved rows
   # overlaid with the unsaved dialog rows); the planner just applies it.
+  # R35 (Flow Scenarios): :linked_bank_counts is the one display-only
+  # shadow input that the scenario's edge rows must drive (per-income limit
+  # warnings). Absent key = untouched @linked_bank_counts = byte-identical
+  # planner output (the S0 no-op invariant, same shape as the overlay's).
   def apply_draft(draft)
     @incomes = draft[:incomes] if draft.key?(:incomes)
     @allocations = draft[:allocations] if draft.key?(:allocations)
     @plan_allocations = draft[:plan_allocations] if draft.key?(:plan_allocations)
     @plan_max_links = draft[:plan_max_links] if draft.key?(:plan_max_links)
     @plan_roles = draft[:plan_roles] if draft.key?(:plan_roles)
+    @linked_bank_counts = draft[:linked_bank_counts] if draft.key?(:linked_bank_counts)
   end
 
   def plan

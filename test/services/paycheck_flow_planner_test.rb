@@ -462,3 +462,322 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
       "the legacy plan output must be byte-identical with or without required percents"
   end
 end
+
+# ---------------------------------------------------------------------------
+# R35 (Flow Scenarios): the planner seam. Scenario mode is "a preview whose
+# base set is the snapshot instead of the live tables" (design §2.1). The
+# seam is three edits, each with an S0 invariant:
+#   * apply_draft :linked_bank_counts — absent key = byte-identical no-op,
+#     present key = wholesale replace (build_graph_report's per-income
+#     limit warnings must follow the SCENARIO's edge set);
+#   * overlay_paycheck_configs configs: kwarg — nil/empty = the SAME incomes
+#     array (the R31B S0 gate, now also for the explicit empty array);
+#   * scenario_incomes / scenario_draft — the snapshot policy over the live
+#     base (design §1.4): disabled drops the series, zeroed zeroes amounts,
+#     gross replaces them, absent policy rows pass through (override map,
+#     not a whitelist), the snapshot paycheck-config copy re-derives dates
+#     from the copy (PaycheckDates on unsaved instances).
+class PaycheckFlowPlannerScenarioTest < ActiveSupport::TestCase
+  def setup
+    @family = families(:dylan_family)
+    @kurt = users(:family_admin)
+    @sammi = users(:family_member)
+    @bank_a = accounts(:depository)
+    travel_to Date.new(2026, 11, 15)
+
+    # Kurt: $400 x 2 (Nov 6 / Nov 20) = 80_000 cents/month.
+    # Sammi: $900 x 2 = 180_000 cents/month.
+    # Rent: $1000/month demand on bank A — covered by both incomes, SHORT
+    # when Sammi's paycheck disappears (the wife-quits shortfall).
+    @kurt_series = make_series(@kurt, "Kurt Paycheck", 400)
+    @sammi_series = make_series(@sammi, "Sammi Paycheck", 900)
+    [ @kurt_series, @sammi_series ].each do |series|
+      series.recurring_occurrences.destroy_all
+      [ Date.new(2026, 11, 6), Date.new(2026, 11, 20) ].each do |due_on|
+        @family.recurring_occurrences.create!(
+          recurring_transaction: series, due_on: due_on,
+          original_due_on: due_on, currency: "USD",
+          expected_amount: series.amount.to_d, status: "scheduled"
+        )
+      end
+      @family.income_account_allocations.create!(
+        income_series: series, account: @bank_a, mode: "leftover"
+      )
+    end
+    @family.plan_allocations.create!(
+      account: @bank_a, name: "Rent", cadence: "monthly",
+      kind: "bill", mode: "specific", value_cents: 100_000
+    )
+  end
+
+  def teardown
+    travel_back
+  end
+
+  def make_series(owner, name, amount)
+    @family.recurring_transactions.create!(
+      name: name, account: @bank_a, amount: amount, currency: "USD",
+      expected_day_of_month: 6, last_occurrence_date: Date.new(2026, 9, 6),
+      next_expected_date: Date.new(2026, 12, 20), status: "active",
+      bill_type: "income", manual: true, plan_owner: owner
+    )
+  end
+
+  def month
+    Date.new(2026, 11, 15)
+  end
+
+  def snapshot_with(sammi_policy: { "enabled" => true })
+    base = PlanScenarioSnapshot.reuse_current(@family)
+    incomes = base["incomes"].map do |row|
+      row["series_id"] == @sammi_series.id ?
+        row.merge("enabled" => sammi_policy["enabled"],
+                  "zeroed" => sammi_policy["zeroed"] || false,
+                  "gross_per_paycheck_cents" => sammi_policy["gross_per_paycheck_cents"]) : row
+    end
+    base.merge("incomes" => incomes)
+  end
+
+  # --- overlay_paycheck_configs configs: kwarg (S0 + unsaved parity) ---
+
+  test "configs: [] returns the SAME incomes array (explicit-empty S0 no-op)" do
+    assert_empty @family.family_paycheck_configs
+    incomes = PaycheckFlowPlanner.inputs_for(family: @family, month: month)[:incomes]
+    out = PaycheckFlowPlanner.overlay_paycheck_configs(
+      family: @family, month: month, incomes: incomes, configs: []
+    )
+    assert_same incomes, out, "zero configs must be a byte-identical no-op (same object)"
+  end
+
+  test "an unsaved config instance overlays identically to its saved twin" do
+    saved = @family.family_paycheck_configs.create!(
+      user: @kurt, recurring_transaction: @kurt_series,
+      gross_per_paycheck_cents: 60_000, frequency: "biweekly",
+      anchor_date: Date.new(2026, 11, 2)
+    )
+    live_base = PaycheckFlowPlanner.inputs_for(family: @family, month: month)[:incomes]
+    live = PaycheckFlowPlanner.overlay_paycheck_configs(
+      family: @family, month: month, incomes: live_base
+    )
+
+    unsaved = FamilyPaycheckConfig.new(
+      user_id: saved.user_id, recurring_transaction_id: saved.recurring_transaction_id,
+      gross_per_paycheck_cents: saved.gross_per_paycheck_cents,
+      frequency: saved.frequency, anchor_date: saved.anchor_date
+    )
+    scenario_base = PaycheckFlowPlanner.inputs_for(family: @family, month: month)[:incomes]
+    scenario = PaycheckFlowPlanner.overlay_paycheck_configs(
+      family: @family, month: month, incomes: scenario_base, configs: [ unsaved ]
+    )
+    assert_equal live.to_json, scenario.to_json,
+      "the unsaved config copy must re-derive identical occurrences"
+  end
+
+  # --- apply_draft :linked_bank_counts ---
+
+  test "apply_draft without :linked_bank_counts is a byte-identical no-op" do
+    @kurt_series.update!(plan_max_account_links: 1)
+    bank_b = Account.create!(name: "R35 Bank B", family: @family, owner: @kurt,
+      currency: "USD", balance: 0, status: "active",
+      accountable_type: "Depository", accountable: Depository.new)
+    # A second live edge on Kurt's series -> live count 2 > limit 1.
+    @family.income_account_allocations.create!(
+      income_series: @kurt_series, account: bank_b, mode: "specific", value: 1.0
+    )
+
+    live = PaycheckFlowPlanner.plan_graph(family: @family, month: month)
+    assert live[:limit_warnings].any? { |w| w[:income_id] == @kurt_series.id },
+      "the live graph must carry the limit warning for the fixture"
+
+    inputs = PaycheckFlowPlanner.graph_inputs_for(family: @family, month: month)
+    draft = {
+      incomes: inputs[:incomes],
+      allocations: inputs[:allocations],
+      plan_allocations: inputs[:plan_allocations]
+    }
+    no_key = PaycheckFlowPlanner.new(**inputs, draft: draft).plan_graph
+    assert_equal live.to_json, no_key.to_json,
+      "an absent :linked_bank_counts key must leave the fetched value untouched"
+  end
+
+  test "apply_draft with :linked_bank_counts replaces it wholesale" do
+    @kurt_series.update!(plan_max_account_links: 1)
+    bank_b = Account.create!(name: "R35 Bank B", family: @family, owner: @kurt,
+      currency: "USD", balance: 0, status: "active",
+      accountable_type: "Depository", accountable: Depository.new)
+    @family.income_account_allocations.create!(
+      income_series: @kurt_series, account: bank_b, mode: "specific", value: 1.0
+    )
+
+    live = PaycheckFlowPlanner.plan_graph(family: @family, month: month)
+    assert live[:limit_warnings].any? { |w| w[:income_id] == @kurt_series.id }
+
+    inputs = PaycheckFlowPlanner.graph_inputs_for(family: @family, month: month)
+    draft = {
+      incomes: inputs[:incomes],
+      allocations: inputs[:allocations],
+      plan_allocations: inputs[:plan_allocations],
+      linked_bank_counts: {} # the scenario's (empty) edge set
+    }
+    replaced = PaycheckFlowPlanner.new(**inputs, draft: draft).plan_graph
+    assert_empty replaced[:limit_warnings],
+      "a wholesale-replaced (empty) count must clear the limit warning"
+  end
+
+  # --- scenario_incomes policy (design §1.4) ---
+
+  test "reuse policy all-enabled: scenario incomes match the live base" do
+    snapshot = PlanScenarioSnapshot.reuse_current(@family)
+    scenario = PaycheckFlowPlanner.scenario_incomes(family: @family, month: month, snapshot: snapshot)
+    live = PaycheckFlowPlanner.inputs_for(family: @family, month: month)[:incomes]
+
+    assert_equal live.map { |e| [ e[:id], e[:occurrences].map { |o| [ o[:date], o[:amount_cents] ] } ] },
+                 scenario.map { |e| [ e[:id], e[:occurrences].map { |o| [ o[:date], o[:amount_cents] ] } ] },
+      "an untouched re-use snapshot must carry the live occurrence base"
+    scenario.each do |entry|
+      refute_nil entry[:name], "income node names stay live (display-only)"
+    end
+  end
+
+  test "enabled == false drops the series entirely" do
+    scenario = PaycheckFlowPlanner.scenario_incomes(
+      family: @family, month: month, snapshot: snapshot_with(sammi_policy: { "enabled" => false })
+    )
+    assert scenario.map { |e| e[:id] }.exclude?(@sammi_series.id),
+      "a disabled series must be absent from the scenario base"
+    assert_equal [ @kurt_series.id ], scenario.map { |e| e[:id] }
+  end
+
+  test "zeroed zeroes the amounts (occurrences remain)" do
+    scenario = PaycheckFlowPlanner.scenario_incomes(
+      family: @family, month: month, snapshot: snapshot_with(sammi_policy: { "zeroed" => true })
+    )
+    sammi = scenario.find { |e| e[:id] == @sammi_series.id }
+    refute_nil sammi
+    assert sammi[:occurrences].all? { |o| o[:amount_cents].zero? }
+    assert_equal 2, sammi[:occurrences].size, "dates stay; only the amounts zero"
+  end
+
+  test "gross_per_paycheck_cents replaces the amounts" do
+    scenario = PaycheckFlowPlanner.scenario_incomes(
+      family: @family, month: month,
+      snapshot: snapshot_with(sammi_policy: { "gross_per_paycheck_cents" => 70_000 })
+    )
+    sammi = scenario.find { |e| e[:id] == @sammi_series.id }
+    assert sammi[:occurrences].all? { |o| o[:amount_cents] == BigDecimal(70_000) }
+  end
+
+  test "a series absent from the policy passes through (override map, not a whitelist)" do
+    snapshot = PlanScenarioSnapshot.reuse_current(@family)
+    late = make_series(@kurt, "Late Freelance", 250)
+    late.recurring_occurrences.destroy_all
+    late.recurring_occurrences.create!(
+      family: @family, recurring_transaction: late, due_on: Date.new(2026, 11, 9),
+      original_due_on: Date.new(2026, 11, 9), currency: "USD",
+      expected_amount: 250, status: "scheduled"
+    )
+    # The snapshot (taken earlier) has no policy row for the late series.
+    scenario = PaycheckFlowPlanner.scenario_incomes(family: @family, month: month, snapshot: snapshot)
+    late_entry = scenario.find { |e| e[:id] == late.id }
+    refute_nil late_entry, "a post-snapshot series must still appear"
+    assert_equal BigDecimal(25_000), late_entry[:occurrences].first[:amount_cents]
+  end
+
+  test "the snapshot paycheck-config copy re-derives dates from the copy" do
+    # Live config on Kurt's series (biweekly, 60_000 gross).
+    @family.family_paycheck_configs.create!(
+      user: @kurt, recurring_transaction: @kurt_series,
+      gross_per_paycheck_cents: 60_000, frequency: "biweekly",
+      anchor_date: Date.new(2026, 11, 2)
+    )
+    snapshot = PlanScenarioSnapshot.reuse_current(@family)
+    # The scenario edits the copy: semi_monthly, 55_000 gross.
+    row = snapshot["paycheck_configs"].find { |c| c["recurring_transaction_id"] == @kurt_series.id }
+    refute_nil row
+    row["gross_per_paycheck_cents"] = 55_000
+    row["frequency"] = "semi_monthly"
+
+    scenario = PaycheckFlowPlanner.scenario_incomes(family: @family, month: month, snapshot: snapshot)
+    kurt = scenario.find { |e| e[:id] == @kurt_series.id }
+    assert_equal [ Date.new(2026, 11, 15), Date.new(2026, 11, 30) ],
+                 kurt[:occurrences].map { |o| o[:date] },
+      "semi_monthly = 15th + last day (the house Schedule engine)"
+    assert kurt[:occurrences].all? { |o| o[:amount_cents] == BigDecimal(55_000) }
+
+    # The LIVE path is untouched by the scenario edit.
+    live = PaycheckFlowPlanner.inputs_for(family: @family, month: month)[:incomes]
+    kurt_live = live.find { |e| e[:id] == @kurt_series.id }
+    assert kurt_live[:occurrences].all? { |o| o[:amount_cents] == BigDecimal(60_000) }
+  end
+
+  # --- scenario_draft shape ---
+
+  test "scenario_draft symbolizes the snapshot rows and derives linked_bank_counts" do
+    snapshot = PlanScenarioSnapshot.reuse_current(@family)
+    draft = PaycheckFlowPlanner.scenario_draft(family: @family, month: month, snapshot: snapshot)
+
+    assert_equal PaycheckFlowPlanner.edge_rows(@family), draft[:allocations]
+    assert_equal PaycheckFlowPlanner.plan_allocation_rows(@family), draft[:plan_allocations]
+    assert_equal(
+      @family.income_account_allocations.group(:income_series_id).count,
+      draft[:linked_bank_counts]
+    )
+    assert draft[:allocations].all? { |row| row.keys.all? { |k| k.is_a?(Symbol) } }
+  end
+
+  test "a fresh (empty) scenario draft: live income base, zero rows" do
+    snapshot = PlanScenarioSnapshot.fresh(@family)
+    draft = PaycheckFlowPlanner.scenario_draft(family: @family, month: month, snapshot: snapshot)
+
+    assert_empty draft[:allocations]
+    assert_empty draft[:plan_allocations]
+    assert_equal({}, draft[:linked_bank_counts])
+    live = PaycheckFlowPlanner.inputs_for(family: @family, month: month)[:incomes]
+    assert_equal live.map { |e| e[:id] }, draft[:incomes].map { |e| e[:id] },
+      "Start Fresh = empty plan over the family's CURRENT incomes"
+  end
+
+  # --- wife-quits end-to-end (design §1.4 / §6) ---
+
+  test "wife-quits: the re-use snapshot with Sammi disabled plans Kurt-only" do
+    live = PaycheckFlowPlanner.plan_graph(family: @family, month: month)
+    assert_empty live[:over_plans], "both incomes cover the rent — no live shortfall"
+
+    scenario = PaycheckFlowPlanner.plan_graph(
+      family: @family, month: month,
+      draft: PaycheckFlowPlanner.scenario_draft(
+        family: @family, month: month, snapshot: snapshot_with(sammi_policy: { "enabled" => false })
+      )
+    )
+
+    # Sammi's income node is GONE; Kurt's stays on the live occurrence base.
+    income_ids = scenario[:incomes].map { |i| i[:id] }
+    assert income_ids.exclude?(@sammi_series.id)
+    assert_equal [ @kurt_series.id ], income_ids
+    kurt = scenario[:incomes].first
+    assert_equal "400.00", kurt[:occurrences].first[:amount]
+    assert_equal "800.00", kurt[:total_month]
+
+    # Kurt-only funding is short of the $1000 rent: the over-plan line
+    # surfaces. A specific-mode rent demands its FULL value_cents on every
+    # funded date (the demand math prorates only required-mode bills), so
+    # the gap is 2 x (100_000 demanded - 40_000 funded) = 120_000 cents.
+    assert_equal 1, scenario[:over_plans].size
+    over = scenario[:over_plans].first
+    assert_equal @kurt_series.id, over[:income_id]
+    assert_equal "surplus", over[:target]
+    assert_equal "1200.00", over[:shortfall_month]
+
+    # Graph JSON valid: no nil node ids anywhere, and the rent row keeps
+    # its bank assignment + wanted amount in the scenario plan.
+    scenario[:incomes].each { |i| refute_nil i[:id] }
+    scenario[:banks].each { |b| refute_nil b[:id] }
+    scenario[:allocations].each { |a| refute_nil a[:id] }
+    rent = scenario[:allocations].find { |a| a[:name] == "Rent" }
+    refute_nil rent
+    assert_equal @bank_a.id, rent[:account_id]
+    # wanted is per-paycheck (specific demand is the full value on every
+    # funded date): 2 dates x 100_000 cents.
+    assert_equal "2000.00", rent[:wanted_month]
+  end
+end

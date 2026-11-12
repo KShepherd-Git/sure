@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_11_080000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_11_100000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -2053,6 +2053,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_080000) do
     t.check_constraint "mode::text = ANY (ARRAY['required'::text, 'specific'::text, 'percent'::text, 'leftover'::text])", name: "chk_plan_allocations_mode"
   end
 
+  create_table "plan_scenarios", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "family_id", null: false
+    t.string "name", limit: 40, null: false
+    t.jsonb "snapshot", default: {}, null: false
+    t.string "source", default: "reuse_current", null: false
+    t.datetime "snapshotted_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["family_id", "name"], name: "index_plan_scenarios_on_family_id_and_name", unique: true
+    t.index ["family_id"], name: "index_plan_scenarios_on_family_id"
+    t.check_constraint "source::text = ANY (ARRAY['reuse_current'::character varying, 'fresh'::character varying]::text[])", name: "chk_plan_scenarios_source"
+  end
+
   create_table "properties", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.string "area_unit"
     t.integer "area_value"
@@ -3323,6 +3336,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_080000) do
   add_foreign_key "plaid_items", "families"
   add_foreign_key "plaid_items", "users", column: "owner_id", on_delete: :nullify
   add_foreign_key "plan_allocations", "categories", on_delete: :nullify
+  add_foreign_key "plan_scenarios", "families"
   add_foreign_key "push_subscriptions", "users"
   add_foreign_key "questrade_accounts", "questrade_items"
   add_foreign_key "questrade_items", "families"

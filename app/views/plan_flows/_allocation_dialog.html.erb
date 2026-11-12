@@ -168,6 +168,10 @@
                           # fun_money row created via the kind picker (the
                           # blank form presets it client-side).
                           fun_money_default_name: t(".kind_fun_money") } do |form| %>
+      <%# R35 (Flow Scenarios, design §4.4): scope the in-place write to the
+          active scenario — the controller's load_scenario reads
+          params[:scenario]. Absent on the Default (live) path. %>
+      <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
       <%# Round 25 (Item 2): a target row (the bank dialog's "Make Allocated
           Sub-Account") keeps its dressed account through an allocation-
           dialog save — the hidden input carries the current target id; a
@@ -744,6 +748,7 @@
                     id: "allocation_delete_#{allocation.id}",
                     class: "sr-only",
                     data: { turbo: "false", plan_flow_inplace: "true" } do %>
+      <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
       <% end %>
     <% end %>
   <% end %>

@@ -63,6 +63,46 @@ en:
       recommended_empty: Nothing recommended yet.
       chart_error: Couldn't draw the diagram — refresh the page.
       chart_empty: Nothing to plan this month yet.
+      # R35 (Flow Scenarios, design §4.6): the scenario picker + create
+      # dialog + banner strings (the picker, the amber banner and the page
+      # shell all lazy-lookup under the show scope).
+      scenario_aria: Flow scenario picker
+      # R35b: default (no active scenario) = the live plan, labeled
+      # "Flow Scenario: Default" (the segmented pill's resting state).
+      flow_scenario: "Flow Scenario: Default"
+      scenario_default: "Default"
+      scenario_live_badge: "live plan"
+      scenario_picker_active: "Flow Scenario: %{name}"
+      scenario_new: "Create New Scenario…"
+      scenario_banner: "Scenario: %{name} — not your live plan"
+      scenario_back: "Back to live plan"
+      # R35c: aria-labels for the two compact hover icons in the toggle row
+      # (the banner message + back link now live in the yellow icon's
+      # popup, the red line texts in the red icon's popup — both reuse the
+      # exact keys above; only the labels are new).
+      aria_scenario: Scenario info
+      aria_discrepancies: Plan issues
+      scenario_missing: "Scenario not found — showing your live plan."
+      scenario_rename: "Rename scenario"
+      scenario_delete_confirm: "Delete “%{name}”? Its plan is removed. The live plan is not affected."
+      scenario_delete: "Delete"
+      # R35 (owner decision): the per-scenario Reset affordance — rebuilds
+      # the snapshot from the scenario's source, discarding in-scenario edits.
+      scenario_reset: "Reset scenario"
+      scenario_reset_confirm: "Reset “%{name}”? Its plan is rebuilt from your current live plan. Scenario edits are removed."
+      scenario_dialog_title: "Create New Scenario"
+      scenario_name_label: "Scenario name"
+      scenario_name_placeholder: "e.g. Wife quits"
+      scenario_source_label: "Start Fresh? or Re-Use Current"
+      scenario_source_reuse: "Re-Use Current"
+      scenario_source_reuse_hint: "Snapshot the current plan (allocations, links, Fun Money, paycheck configs) into the new scenario."
+      scenario_source_fresh: "Start Fresh"
+      scenario_source_fresh_hint: "Begin with an empty plan over your current incomes — no allocations, no links."
+      errors:
+        scenario_name_taken: "has already been taken"
+        scenario_name_reserved: "is reserved"
+        scenario_source_invalid: "is invalid"
+        scenario_active_delete: "switch away from this scenario before deleting it"
     bank_config_dialog:
       title: "Configure %{name}"
       subtitle: Pull From Incomes, ownership, and role.
@@ -199,6 +239,14 @@ en:
       max_links_hint: Blank = unlimited. A warning (not an error) shows when the limit is exceeded.
       add_family_member: Add a Family Member
       save: Save
+      # R35 (Flow Scenarios): the scenario-mode income levers (the snapshot's
+      # per-series income policy — enabled / zeroed / gross override).
+      enabled_label: In the plan
+      zeroed_label: Zero this paycheck
+      gross_label: Gross per paycheck (override)
+      gross_placeholder: e.g. 3500
+      gross_hint: Overrides the occurrence amounts for this series inside the scenario.
+      gross_override_invalid: "Enter a positive amount."
     # Round 31B (Direct Deposit): the Direct Deposit Review dialog — one
     # tab per existing family member (B3). The form saves the member's
     # paycheck config (gross / frequency / anchor); the pay dates are

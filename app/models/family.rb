@@ -57,6 +57,9 @@ class Family < ApplicationRecord
   has_one :family_plan_settings, dependent: :destroy
   # Paycheck Flow Planner (M2 PR#2b): the bank -> item allocations.
   has_many :plan_allocations, dependent: :destroy
+  # Round 35 (Flow Scenarios): the scenario-owned plan snapshots (the
+  # Default plan is the absence of an active scenario — it has no row).
+  has_many :plan_scenarios, dependent: :destroy
 
   has_many :imports, dependent: :destroy
   has_many :import_sessions, dependent: :destroy

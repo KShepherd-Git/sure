@@ -18,6 +18,43 @@
     <%= form_with url: flow_income_plan_path(series.id), method: :patch, scope: :series,
                   class: "space-y-5",
                   data: { turbo: "false", plan_flow_inplace: "true" } do |form| %>
+      <%# R35 (Flow Scenarios, design §2.2): the hidden scenario field —
+          rendered when a scenario is active so the in-place PATCH stays
+          scoped (load_scenario reads params[:scenario]); absent = the
+          live path, byte-identical Default DOM. %>
+      <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
+      <% if @scenario %>
+        <%# Scenario mode (design §4.5): the income-policy override — enabled /
+            zeroed / gross — writes the snapshot's income-policy row. The live
+            structural fields (owner / max links) are NOT scenario-editable
+            (they stay live, design §1.3). %>
+        <% policy_row = (@scenario.snapshot["incomes"] || []).find { |r| r["series_id"] == series.id } %>
+        <% enabled = policy_row ? policy_row["enabled"] != false : true %>
+        <% zeroed  = policy_row ? policy_row["zeroed"] == true : false %>
+        <% gross   = policy_row && policy_row["gross_per_paycheck_cents"] ? (policy_row["gross_per_paycheck_cents"] / 100.0) : nil %>
+        <div class="space-y-1">
+          <label class="flex items-center gap-2 text-sm">
+            <input type="hidden" name="income_policy[enabled]" value="false">
+            <input type="checkbox" name="income_policy[enabled]" value="true"
+                   <%= "checked" if enabled %> class="h-4 w-4 accent-primary">
+            <%= t(".enabled_label") %>
+          </label>
+        </div>
+        <div class="space-y-1">
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="income_policy[zeroed]" value="true"
+                   <%= "checked" if zeroed %> class="h-4 w-4 accent-primary">
+            <%= t(".zeroed_label") %>
+          </label>
+        </div>
+        <div class="space-y-1">
+          <label class="block text-xs text-secondary" for="income_policy_gross"><%= t(".gross_label") %></label>
+          <input type="text" id="income_policy_gross" name="income_policy[gross]"
+                 value="<%= gross %>" placeholder="<%= t('.gross_placeholder') %>"
+                 class="text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full tabular-nums">
+          <p class="text-xs text-secondary"><%= t(".gross_hint") %></p>
+        </div>
+      <% else %>
       <div class="space-y-1">
         <%= form.label :plan_owner_user_id, t(".owner_label"), class: "block text-xs text-secondary" %>
         <%= form.select :plan_owner_user_id,
@@ -42,6 +79,7 @@
           <%= t(".add_family_member") %>
         <% end %>
       </div>
+      <% end %>
 
       <div class="flex justify-end pt-1">
         <%# In-place save (owner round 3, R1/R7): see the form's data-action. %>

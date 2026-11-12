@@ -279,6 +279,8 @@
                         plan_flow_inplace: "true",
                         bank_config_dialog_target: "allocatedSubPopup"
                       } do %>
+          <%# R35 (Flow Scenarios): scope the write to the active scenario. %>
+          <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
           <p class="text-sm font-medium text-primary"><%= t(".allocated_sub_title") %></p>
           <p class="text-xs text-secondary"><%= t(".allocated_sub_hint") %></p>
           <%# Name: prefilled with the opened account name, editable. %>
@@ -417,6 +419,8 @@
                   class: "space-y-5",
                   html: { id: "bank_config_form_#{account.id}" },
                   data: { turbo: "false", plan_flow_inplace: "true" } do |form| %>
+      <%# R35 (Flow Scenarios): scope the write to the active scenario. %>
+      <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
       <%# Hidden state the header popups sync (the popups are outside the
           form): the logo slug (the logo popup writes it), the sub-account
           parent (the sub-account popup writes it), and the auto-transfer
@@ -868,11 +872,18 @@
           unassigned with the "No Assignment" marker (never deleted).
           The in-place submit handler confirm()s when allocations
           are attached (data-remove-confirm + data-allocated-count). %>
-      <button type="submit"
-              form="bank_remove_<%= account.id %>"
-              class="text-sm text-destructive hover:underline">
-        <%= t(".remove") %>
-      </button>
+      <%# R35 (Flow Scenarios): "Remove from plan" is a LIVE family-structure
+          op (plan_order / plan_role / fan-outs are not snapshotted — design
+          §1.3), so it is not offered inside a scenario. The (untriggerable)
+          sibling form below stays rendered — the in-place handler re-renders
+          this partial on every save, so the gate persists across saves. %>
+      <% unless @scenario %>
+        <button type="submit"
+                form="bank_remove_<%= account.id %>"
+                class="text-sm text-destructive hover:underline">
+          <%= t(".remove") %>
+        </button>
+      <% end %>
       <button type="submit"
               class="text-sm bg-primary text-on-primary rounded-lg px-3 py-1.5 hover:opacity-90">
         <%= t(".save") %>
@@ -894,6 +905,7 @@
                   allocated_count: Current.family.plan_allocations.where(account_id: account.id).count,
                   remove_message: t(".remove_confirm", count: Current.family.plan_allocations.where(account_id: account.id).count)
                 } do %>
+    <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
   <% end %>
   <%# Round 25 (Item 2): the REVERSE sibling form (only when the account is
       dressed): the kebab item submits it (type=submit + form=). The
@@ -907,6 +919,7 @@
                   id: "allocated_reverse_#{account.id}",
                   class: "sr-only",
                   data: { turbo: "false", plan_flow_inplace: "true" } do %>
+      <%= hidden_field_tag :scenario, @scenario.id if @scenario %>
     <% end %>
   <% end %>
 <% end %>

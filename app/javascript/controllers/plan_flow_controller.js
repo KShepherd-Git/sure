@@ -1079,4 +1079,104 @@ export default class extends Controller {
   // to the bank_config_dialog controller with the R27 trigger-button
   // restyle — the visible controls are nameless and the dialog controller
   // live-syncs the per-income hidden inputs it submits.
+
+  // R35 (Flow Scenarios, design §4.2): the picker's row operations. The
+  // browser dialogs (window.confirm / window.prompt) are user-gesture APIs
+  // — not document-level listeners; every query is scoped to the picker
+  // container (data-scenario-picker), per the round 28 rule.
+  #scenarioPicker(btn) {
+    return btn.closest("[data-scenario-picker]");
+  }
+
+  async #scenarioRequest(url, method, payload = null) {
+    const headers = { Accept: "application/json" };
+    const token = document.querySelector('meta[name="csrf-token"]')?.content;
+    if (token) headers["X-CSRF-Token"] = token; // house pattern (application.js)
+    const options = { method, credentials: "same-origin", headers };
+    if (payload !== null) {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(payload);
+    }
+    const res = await fetch(url, options);
+    let body = {};
+    try {
+      body = await res.json();
+    } catch {
+      body = {};
+    }
+    return { ok: res.ok, body };
+  }
+
+  // Reset (owner decision R35): the scenario's snapshot is rebuilt from its
+  // source; on success the page reloads INTO the rebuilt scenario (the
+  // house full-reload navigation for a mode change).
+  resetScenario(event) {
+    const btn = event.currentTarget;
+    if (!window.confirm(btn.dataset.scenarioResetConfirm)) return;
+    const rowId = btn.closest("[data-scenario-row]")?.dataset.scenarioRowId;
+    this.#scenarioRequest(btn.dataset.scenarioResetUrl, "POST")
+      .then(({ ok, body }) => {
+        if (!ok) {
+          window.alert(((body.errors && body.errors.scenario) || ["Reset failed"]).join(" "));
+          return;
+        }
+        const picker = this.#scenarioPicker(btn);
+        window.location.href = `${picker.dataset.scenarioFlowPath}?scenario=${rowId}`;
+      })
+      .catch(() => window.alert("Reset failed"));
+  }
+
+  // Rename: window.prompt -> the rename endpoint -> the row's label updates
+  // in place (the row id is unchanged, so no graph re-plan is needed).
+  renameScenario(event) {
+    const btn = event.currentTarget;
+    const current = btn.dataset.scenarioRenameName;
+    const name = window.prompt(btn.dataset.scenarioRenameTitle, current);
+    if (name === null || !name.trim() || name.trim() === current) return;
+    this.#scenarioRequest(btn.dataset.scenarioRenameUrl, "PATCH", { name: name.trim() })
+      .then(({ ok, body }) => {
+        if (!ok) {
+          window.alert(((body.errors && body.errors.name) || ["Rename failed"]).join(" "));
+          return;
+        }
+        const row = btn.closest("[data-scenario-row]");
+        if (!row) return;
+        row.dataset.scenarioRowName = body.scenario.name;
+        const label = row.querySelector("[data-scenario-row-name-label]");
+        if (label) label.textContent = body.scenario.name;
+      })
+      .catch(() => window.alert("Rename failed"));
+  }
+
+  // Delete: the scenario row is removed from the picker; if it was the
+  // ACTIVE scenario the page reloads back to the live plan (the 422
+  // backstop in the API prevents a live delete, but the picker is the
+  // house's switch-first flow — a deleted active row would otherwise
+  // strand the page on a ?scenario= with no row).
+  deleteScenario(event) {
+    const btn = event.currentTarget;
+    if (!window.confirm(btn.dataset.scenarioDeleteConfirm)) return;
+    const row = btn.closest("[data-scenario-row]");
+    this.#scenarioRequest(btn.dataset.scenarioDeleteUrl, "DELETE")
+      .then(({ ok, body }) => {
+        if (!ok) {
+          window.alert(((body.errors && body.errors.scenario) || ["Delete failed"]).join(" "));
+          return;
+        }
+        const picker = this.#scenarioPicker(btn);
+        if (btn.dataset.scenarioDeleteActive === "true") {
+          window.location.href = picker.dataset.scenarioFlowPath;
+        } else if (row) {
+          row.remove();
+        }
+      })
+      .catch(() => window.alert("Delete failed"));
+  }
+
+  // Open the Create-New-Scenario dialog (the DS::Dialog the picker partial
+  // renders; the query is scoped to the picker container).
+  openScenarioNew(event) {
+    const picker = this.#scenarioPicker(event.currentTarget);
+    picker.querySelector('dialog[data-node-id="scenario-new"]')?.showModal();
+  }
 }

@@ -5,6 +5,16 @@
 class PlanFlowsController < ApplicationController
   include PreviewGateable
   before_action :require_preview_features!
+  # R35 (Flow Scenarios, design §2.2): resolve ?scenario= for every action
+  # whose state it scopes. Absent / blank / "default" = the Default (live)
+  # path — @scenario stays nil and every downstream branch is the live one
+  # (the structural no-op invariants). Unknown ids: JSON callers get the
+  # 404 contract, HTML callers get the house redirect + alert.
+  before_action :load_scenario, only: [
+    :show, :graph,
+    :create_allocation, :update_allocation, :destroy_allocation,
+    :update_account, :update_income, :update_paycheck_config
+  ]
 
   # Round 20d: custom bank-logo upload limits. SVG is excluded on purpose
   # (an uploaded SVG can carry scripts; the built-in vendored set ships its
@@ -22,7 +32,13 @@ class PlanFlowsController < ApplicationController
     # paycheck count (Kurt 2 + Sammi 2 = 4). Display-only; the settlement
     # math (the planner) is untouched.
     @paycheck_unit = paycheck_unit
-    @graph = PaycheckFlowPlanner.plan_graph(family: Current.family, month: @month)
+    # R35 (Flow Scenarios): the active scenario's snapshot is the draft's
+    # base set (design §2.1 — no form draft on page load, same as today).
+    # @scenario nil -> the call is token-for-token today's (Default is
+    # byte-identical, the hard rule).
+    @graph = @scenario ?
+      PaycheckFlowPlanner.plan_graph(family: Current.family, month: @month, draft: scenario_draft) :
+      PaycheckFlowPlanner.plan_graph(family: Current.family, month: @month)
     set_chrome_instance_vars
     # Static (non-plan-state) data the Sankey needs: account names and which
     # accounts are on the plan. The plan state itself comes from /plan/flow/graph.
@@ -48,8 +64,15 @@ class PlanFlowsController < ApplicationController
   # saved set. No write.
   def graph
     @month = Date.current
-    @graph = PaycheckFlowPlanner.plan_graph(family: Current.family, month: @month, draft: graph_draft.presence)
-    render json: @graph
+    # R35 (Flow Scenarios, design §2.1): the scenario's snapshot rows are
+    # the draft's base set; the form's unsaved dialog rows win over them
+    # (the merge order is the design's: scenario first, form on top).
+    draft = graph_draft.presence
+    draft = scenario_draft.merge(draft || {}) if @scenario
+    @graph = PaycheckFlowPlanner.plan_graph(family: Current.family, month: @month, draft: draft.presence)
+    # Additive top-level key ONLY for an active scenario — the Default
+    # payload is byte-identical to the pre-R35 one (no :scenario key).
+    render json: @scenario ? @graph.merge(scenario: { id: @scenario.id, name: @scenario.name }) : @graph
   end
 
   # Allocation dialog save (M2 PR#2b): upsert by (family, source bank, name)
@@ -57,6 +80,25 @@ class PlanFlowsController < ApplicationController
   # duplicating. Invalid rows flash the house alert, no 500.
   def create_allocation
     row = plan_allocation_params
+    if @scenario
+      # R35 (design §2.2): the dialog row merges into the scenario's
+      # snapshot (the live path's upsert key: account + name), validated
+      # with the real PlanAllocation model — the 422 contract is identical
+      # to a live save. No live table is touched.
+      result, allocation, saved_row = scenario_save_plan_allocation(row: row)
+      persist_fun_money_input_snapshot_scenario(allocation, saved_row) if result
+      accounts = [
+        row[:target_account_id] ? Current.family.accounts.find_by(id: row[:target_account_id]) : nil,
+        row[:account]
+      ].compact.uniq
+      return render_flow_json(ok: result, allocation_changed: true, accounts: accounts, error_object: allocation) if json_request?
+
+      if result
+        redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view), notice: t(".saved")
+      else
+        redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view), alert: t(".save_failed")
+      end
+    end
     allocation = Current.family.plan_allocations
                                .find_by(account: row[:account], name: row[:name]) ||
                Current.family.plan_allocations.build
@@ -94,6 +136,26 @@ class PlanFlowsController < ApplicationController
   end
 
   def update_allocation
+    if @scenario
+      # R35 (design §2.2): the update path addresses the snapshot row by
+      # id (the live path's RecordNotFound contract is mirrored: unknown
+      # id -> 404 JSON / the house redirect).
+      row = plan_allocation_params
+      result, allocation, saved_row = scenario_save_plan_allocation(row: row, id: params[:id])
+      return not_found_allocation_redirect unless allocation.present?
+      persist_fun_money_input_snapshot_scenario(allocation, saved_row) if result
+      accounts = [
+        row[:target_account_id] ? Current.family.accounts.find_by(id: row[:target_account_id]) : nil,
+        row[:account]
+      ].compact.uniq
+      return render_flow_json(ok: result, allocation_changed: true, accounts: accounts, error_object: allocation) if json_request?
+
+      if result
+        redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view), notice: t(".saved")
+      else
+        redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view), alert: t(".save_failed")
+      end
+    end
     allocation = Current.family.plan_allocations.find(params[:id])
     # Round 26 R2 (in-place staleness): the save can move the row's source
     # bank and/or target account — capture the OLD source before the
@@ -124,6 +186,25 @@ class PlanFlowsController < ApplicationController
   end
 
   def destroy_allocation
+    if @scenario
+      # R35 (design §2.2): the snapshot row leaves the scenario's edge /
+      # allocation sets — nothing live is destroyed. The account set ships
+      # the same way as the live path so the bank dialogs re-render.
+      snapshot = @scenario.snapshot # jsonb reads deserialize fresh — capture once
+      rows = snapshot["plan_allocations"] || []
+      row = rows.find { |r| r["id"] == params[:id] }
+      return not_found_allocation_redirect unless row
+
+      snapshot["plan_allocations"] = rows.reject { |r| r["id"] == row["id"] }
+      @scenario.update!(snapshot: snapshot, snapshotted_at: Time.current)
+      accounts = [
+        Current.family.accounts.find_by(id: row["target_account_id"]),
+        Current.family.accounts.find_by(id: row["account_id"])
+      ].compact.uniq
+      return render_flow_json(allocation_changed: true, accounts: accounts) if json_request?
+
+      redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view), notice: t(".saved")
+    end
     allocation = Current.family.plan_allocations.find(params[:id])
     # Round 25 (Item 2): the REVERSE of "Make Allocated Sub-Account" — a
     # destroyed target row unfreezes its dressed bank row, so ship the fresh
@@ -310,6 +391,28 @@ class PlanFlowsController < ApplicationController
   # as the edge editor save: checked rows win, unchecked are removed).
   def update_account
     account = Current.family.accounts.find(params[:account_id])
+    if @scenario
+      # R35 (design §2.2): a scenario save touches ONLY the snapshot's edge
+      # rows (the form's links section). The structural account fields
+      # (ownership / plan role / auto-transfer / sub-account links) are live
+      # family structure — design §1.3: scenarios do not snapshot family
+      # structure — so they are left untouched here. The leftover guardrail
+      # and the model value validations run against the SCENARIO's edge set
+      # (the same 422 contract as the live path).
+      result = begin
+        save_scenario_bank_links(account)
+        true
+      rescue ActiveRecord::RecordInvalid
+        false
+      end
+      return render_flow_json(accounts: [ account ], ok: result, error_object: account) if json_request?
+
+      if result
+        redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view)
+      else
+        redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view), alert: t(".save_failed")
+      end
+    end
     ownership = params.dig(:account, :plan_ownership).to_s
     # Round 26 R2 (in-place staleness): captured BEFORE the transaction —
     # when the parent link changes (the sub-account popup's Save / the
@@ -398,6 +501,49 @@ class PlanFlowsController < ApplicationController
   # label back to the account-owner fallback). M2 PR#2b adds
   # plan_max_account_links — the income's hard bank-link limit; blank clears.
   def update_income
+    if @scenario
+      # R35 (design §4.5): the scenario income dialog carries the snapshot's
+      # income-policy override (enabled / zeroed / gross) — NOT a live
+      # series edit (the structural fields stay live, design §1.3). The
+      # effective policy row is validated (the gross must be a positive
+      # amount — the 422 contract via the income's in-memory errors).
+      income = income_series.find { |series| series.id == params[:income_id] }
+      return redirect_to flow_plan_path(scenario: @scenario.id) unless income
+
+      policy = params.dig(:income_policy) || {}
+      # The enabled field uses the house hidden-false + checked-true
+      # checkbox pattern: CHECKED submits both values (Rack parses the
+      # duplicate key as an array), UNCHECKED submits the hidden "false"
+      # alone. A single .to_s on that array would read "false" for a
+      # checked box — so normalize through Array and test membership
+      # (the "1"/"0" flat convention stays accepted too).
+      enabled_vals = policy["enabled"]
+      enabled = enabled_vals.nil? ||
+                Array(enabled_vals).any? { |v| %w[true 1].include?(v.to_s) }
+      zeroed = Array(policy["zeroed"]).any? { |v| %w[true 1].include?(v.to_s) }
+      gross_raw = policy["gross"].to_s.strip
+      gross_cents = gross_raw.blank? ? nil : (gross_raw.to_d * 100).round
+
+      if gross_raw.present? && (!gross_cents || gross_cents <= 0)
+        message = t("plan_flows.income_config_dialog.gross_override_invalid")
+        income.errors.add(:base, message)
+        return render_flow_json(income: income, ok: false, error_object: income) if json_request?
+        return redirect_to flow_plan_path(scenario: @scenario.id), alert: message
+      end
+
+      snapshot = @scenario.snapshot # jsonb reads deserialize fresh — capture once
+      rows = snapshot["incomes"] ||= []
+      row = rows.find { |r| r["series_id"] == income.id } ||
+            { "series_id" => income.id, "enabled" => true, "zeroed" => false, "gross_per_paycheck_cents" => nil }
+      row["enabled"] = enabled
+      row["zeroed"] = zeroed
+      row["gross_per_paycheck_cents"] = gross_cents
+      rows << row unless rows.include?(row)
+      @scenario.update!(snapshot: snapshot, snapshotted_at: Time.current)
+
+      return render_flow_json(income: income, ok: true) if json_request?
+      redirect_to flow_plan_path(scenario: @scenario.id)
+    end
     income = income_series.find { |series| series.id == params[:income_id] }
     return redirect_to flow_plan_path unless income
 
@@ -450,6 +596,47 @@ class PlanFlowsController < ApplicationController
       return redirect_to flow_plan_path(view: flow_view), alert: t(".no_series")
     end
 
+    if @scenario
+      # R35 (design §4.5): the config merges into the scenario's snapshot
+      # copy (the live family_paycheck_configs table is untouched). The
+      # EFFECTIVE config is validated with the real model — the 422
+      # contract is identical to a live save.
+      config = FamilyPaycheckConfig.new
+      config.assign_attributes(
+        family: Current.family,
+        user: member,
+        recurring_transaction: series,
+        gross_per_paycheck_cents: paycheck_gross_cents(params),
+        frequency: paycheck_frequency(params),
+        anchor_date: params.dig(:paycheck_config, :anchor_date).presence
+      )
+      result = config.valid?
+      if result
+        row = {
+          "user_id" => member.id,
+          "recurring_transaction_id" => config.recurring_transaction_id,
+          "gross_per_paycheck_cents" => config.gross_per_paycheck_cents,
+          "frequency" => config.frequency,
+          "anchor_date" => config.anchor_date&.to_date&.iso8601
+        }
+        snapshot = @scenario.snapshot # jsonb reads deserialize fresh — capture once
+        rows = snapshot["paycheck_configs"] ||= []
+        if (old = rows.find { |c| c["user_id"] == member.id })
+          rows[rows.index(old)] = row
+        else
+          rows << row
+        end
+        @scenario.update!(snapshot: snapshot, snapshotted_at: Time.current)
+      end
+      return render_flow_json(ok: result, error_object: config, paycheck_config_member: member) if json_request?
+
+      if result
+        redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view), notice: t(".saved")
+      else
+        redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view), alert: t(".save_failed")
+      end
+    end
+
     config = paycheck_config_for(member)
     config.assign_attributes(
       family: Current.family,
@@ -469,7 +656,458 @@ class PlanFlowsController < ApplicationController
     end
   end
 
+  # -----------------------------------------------------------------------
+  # R35 (Flow Scenarios, design §3 / §5): the scenario CRUD + reset.
+  # The picker is the only client (server-rendered menu + the create
+  # dialog); the JSON contract is the design's, the HTML fallback is the
+  # house redirect. "default" / unknown ids 404 (JSON) or redirect + alert
+  # (HTML) — same contract on rename / delete / reset.
+  # -----------------------------------------------------------------------
+
+  # GET /plan/flow/scenarios — the picker's row list (design §3 index).
+  def flow_scenarios
+    render json: {
+      ok: true,
+      scenarios: Current.family.plan_scenarios.order(:created_at, :id)
+                                           .map { |scenario| scenario_payload(scenario) },
+      active_id: active_scenario_id
+    }
+  end
+
+  # POST /plan/flow/scenarios — { name, source: 'current' | 'fresh' } ->
+  # 201 { ok, scenario, graph } (the graph so the picker can switch without
+  # a round-trip) / 422 { ok: false, errors } (the model's field errors).
+  def flow_scenario_create
+    name = params[:name].to_s.strip
+    source = params[:source].to_s
+    scenario = PlanScenario.new(
+      family: Current.family,
+      name: name,
+      # The API vocabulary is 'current' / 'fresh'; anything else falls
+      # through to the model's inclusion validation (422 'is invalid').
+      source: source == "fresh" ? "fresh" : (source == "current" ? "reuse_current" : source)
+    )
+    unless scenario.valid?
+      return render(json: { ok: false, errors: error_messages(scenario) }, status: :unprocessable_entity) if json_request?
+      return redirect_to flow_plan_path, alert: scenario.errors.full_messages.to_sentence
+    end
+
+    scenario.snapshot = source == "fresh" ?
+      PlanScenarioSnapshot.fresh(Current.family) :
+      PlanScenarioSnapshot.reuse_current(Current.family)
+    scenario.snapshotted_at = source == "fresh" ? nil : Time.current
+    scenario.save!
+
+    if json_request?
+      render json: { ok: true, scenario: scenario_payload(scenario), graph: scenario_plan_graph(scenario) },
+             status: :created
+    else
+      redirect_to flow_plan_path(scenario: scenario.id)
+    end
+  end
+
+  # PATCH /plan/flow/scenarios/:id — { name } rename. 404 on 'default' /
+  # unknown (design §3); 422 { ok: false, errors } on the model's name
+  # errors (blank / too long / reserved / case-insensitive collision).
+  def flow_scenario_rename
+    scenario = find_scenario_or_404
+    return unless scenario
+
+    scenario.name = params[:name].to_s.strip
+    unless scenario.valid?
+      return render(json: { ok: false, errors: error_messages(scenario) }, status: :unprocessable_entity) if json_request?
+      return redirect_to flow_plan_path(scenario: scenario.id), alert: scenario.errors.full_messages.to_sentence
+    end
+    scenario.save!
+    if json_request?
+      render json: { ok: true, scenario: scenario_payload(scenario) }
+    else
+      redirect_to flow_plan_path(scenario: scenario.id)
+    end
+  end
+
+  # DELETE /plan/flow/scenarios/:id — 404 on 'default' / unknown; 422 when
+  # the request's own context IS this scenario (the design's backstop — the
+  # picker's UX switches to Default first, so the backstop rarely fires).
+  def flow_scenario_destroy
+    scenario = find_scenario_or_404
+    return unless scenario
+
+    if active_scenario_id == scenario.id
+      message = t("plan_flows.show.errors.scenario_active_delete")
+      return render(json: { ok: false, errors: { scenario: [ message ] } }, status: :unprocessable_entity) if json_request?
+      return redirect_to flow_plan_path, alert: message
+    end
+
+    scenario.destroy!
+    if json_request?
+      render json: { ok: true, deleted: scenario.id }
+    else
+      redirect_to flow_plan_path
+    end
+  end
+
+  # POST /plan/flow/scenarios/:id/reset — REBUILD the scenario's snapshot
+  # from its source (owner decision R35): 'reuse_current' re-snapshots the
+  # current live plan; 'fresh' re-derives the empty plan over the family's
+  # current incomes. All in-scenario edits are discarded. 404 on
+  # 'default' / unknown (same contract as rename).
+  def flow_scenario_reset
+    scenario = find_scenario_or_404
+    return unless scenario
+
+    snapshot = scenario.source == "reuse_current" ?
+      PlanScenarioSnapshot.reuse_current(Current.family) :
+      PlanScenarioSnapshot.fresh(Current.family)
+    # update_columns: the rebuild is a state write, not a rename — skip the
+    # name/source validations (they would be no-ops anyway).
+    scenario.update_columns(snapshot: snapshot, snapshotted_at: scenario.source == "reuse_current" ? Time.current : nil)
+
+    if json_request?
+      render json: { ok: true, scenario: scenario_payload(scenario), graph: scenario_plan_graph(scenario) }
+    else
+      redirect_to flow_plan_path(scenario: scenario.id)
+    end
+  end
+
+  # R35: the scenario lookup shared by rename / delete / reset — the design
+  # 404 contract ('default' and unknown ids alike). JSON: the 404 body;
+  # HTML: the house redirect + alert (the UI never addresses 'default').
+  def find_scenario_or_404
+    id = params[:id].to_s
+    scenario = id.blank? || id == PlanScenario::RESERVED_NAME ?
+      nil :
+      Current.family.plan_scenarios.find_by(id: id)
+
+    unless scenario
+      if json_request?
+        render json: { ok: false, error: "unknown scenario" }, status: :not_found
+      else
+        redirect_to flow_plan_path, alert: t("plan_flows.show.scenario_missing")
+      end
+      return nil
+    end
+    scenario
+  end
+
+  # R35: the scenario's picker row (design §3 shape) + the request's active
+  # scenario id (nil for Default / unknown) + the scenario's plan graph
+  # (the create / reset responses ship it so the UI can switch in place).
+  def scenario_payload(scenario)
+    snapshot = scenario.snapshot || {}
+    {
+      id: scenario.id,
+      name: scenario.name,
+      source: scenario.source,
+      snapshot_count: {
+        allocations: (snapshot["plan_allocations"] || []).size,
+        edges: (snapshot["allocations"] || []).size,
+        configs: (snapshot["paycheck_configs"] || []).size
+      },
+      snapshotted_at: scenario.snapshotted_at&.iso8601,
+      created_at: scenario.created_at&.iso8601,
+      updated_at: scenario.updated_at&.iso8601
+    }
+  end
+
+  def active_scenario_id
+    id = params[:scenario].presence
+    return nil if id.nil? || id == PlanScenario::RESERVED_NAME
+    Current.family.plan_scenarios.exists?(id: id) ? id : nil
+  end
+
+  def scenario_plan_graph(scenario)
+    PaycheckFlowPlanner.plan_graph(
+      family: Current.family, month: Date.current,
+      draft: PaycheckFlowPlanner.scenario_draft(
+        family: Current.family, month: Date.current, snapshot: scenario.snapshot
+      )
+    )
+  end
+
   private
+
+    # R35 (Flow Scenarios, design §2.2): the active scenario for this
+    # request. Blank / "default" = the Default (live plan) — the structural
+    # no-op path where every scenario branch below is skipped and the
+    # output is byte-identical to today. Unknown ids: the JSON contract is
+    # the 404 (the sankey's graph fetch sends Accept: json, so a stale
+    # ?scenario= in a URL never 500s the diagram); HTML callers (a
+    # hand-typed ?scenario=) get the house redirect + alert (design §3).
+    def load_scenario
+      @scenario = nil
+      id = params[:scenario].presence
+      return if id.nil? || id == PlanScenario::RESERVED_NAME
+
+      @scenario = Current.family.plan_scenarios.find_by(id: id)
+      return if @scenario
+
+      if json_request?
+        render json: { ok: false, error: "unknown scenario" }, status: :not_found
+      else
+        # The design §4.6 key lives under show (the page's canonical home);
+        # reference it absolutely so every scoped action shares it.
+        redirect_to flow_plan_path, alert: t("plan_flows.show.scenario_missing")
+      end
+    end
+
+    # R35: the planner draft for the active scenario (design §2.1) — the
+    # snapshot's stored rows symbolized to the planner's key shape, over the
+    # live income base with the snapshot's paycheck-config copy + income
+    # policy re-applied. nil-safe: @scenario must be non-nil (callers gate).
+    def scenario_draft
+      PaycheckFlowPlanner.scenario_draft(
+        family: Current.family, month: Date.current, snapshot: @scenario.snapshot
+      )
+    end
+
+    # R35: the snapshot's edge rows (string-keyed) for the draft base —
+    # the scenario-mode twin of the live PaycheckFlowPlanner.edge_rows read
+    # in graph_draft / merge_draft_allocation_rows. Rows go through the
+    # planner's scenario_row normalizer (symbol keys + BigDecimal numerics —
+    # the jsonb round-trip stringifies BigDecimals) because the merged
+    # drafts bypass scenario_draft.
+    def scenario_snapshot_allocations
+      (@scenario.snapshot["allocations"] || []).map { |row| PaycheckFlowPlanner.scenario_row(row) }
+    end
+
+    # R35: the snapshot's plan-allocation rows for the draft base (the
+    # scenario-mode twin of plan_allocation_rows).
+    def scenario_snapshot_plan_allocations
+      (@scenario.snapshot["plan_allocations"] || []).map { |row| PaycheckFlowPlanner.scenario_row(row) }
+    end
+
+    # R35: a snapshot edge row wrapped with the model-like accessors the
+    # bank config dialog reads (.mode / .value — the model's major-unit
+    # conventions: specific -> dollars, percent -> the 0-1 fraction,
+    # required -> the 0-100 major-unit percent, leftover -> nil).
+    ScenarioEdge = Struct.new(:mode, :value, :income_series_id, :account_id)
+
+    # R35: the scenario's edge rows for one account, indexed by income
+    # series id — the snapshot twin of the live index_by(&:income_series_id)
+    # read in render_flow_json / the page-load bank dialog render.
+    def scenario_edges_for_account(account_id)
+      (@scenario.snapshot["allocations"] || [])
+        .select { |row| row["account_id"] == account_id }
+        .index_by { |row| row["income_id"] }
+        .transform_values do |row|
+          value = case row["mode"]
+                  when "specific" then row["value_cents"].to_d / 100
+                  when "percent" then row["value_percent"].to_d
+                  when "required" then row["required_percent"].to_d
+                  else nil
+                  end
+          ScenarioEdge.new(row["mode"], value, row["income_id"], row["account_id"])
+        end
+    end
+
+    # R35: the scenario's plan-allocation rows as UNSAVED PlanAllocation
+    # instances — the allocation dialog partial and the empty-state CTA read
+    # model accessors, which work on unsaved records (the values are the
+    # snapshot's; nothing is persisted). The snapshot order is the
+    # snapshot-time order (plan_allocation_rows' natural order), so the
+    # dialog list is byte-stable against the snapshot.
+    def scenario_plan_allocations
+      (@scenario.snapshot["plan_allocations"] || []).map do |row|
+        allocation = PlanAllocation.new(
+          id: row["id"],
+          family_id: Current.family.id,
+          account_id: row["account_id"],
+          name: row["name"], kind: row["kind"], mode: row["mode"],
+          value_cents: row["value_cents"], value_percent: row["value_percent"],
+          cadence: row["cadence"], recurring_transaction_id: row["recurring_transaction_id"],
+          auto_transfer: row["auto_transfer"], category_id: row["category_id"],
+          target_account_id: row["target_account_id"],
+          ownership: row["ownership"], distribution: row["distribution"],
+          matching: row["matching"], distribution_params: row["distribution_params"]
+        )
+        allocation.account = Current.family.accounts.find_by(id: row["account_id"])
+        allocation
+      end
+    end
+
+    # R35: the scenario's paycheck-config snapshot copy for one member (an
+    # UNSAVED instance — the PaycheckDates math reads only frequency /
+    # anchor_date / gross_per_paycheck_cents, so derived values compute
+    # identically on the copy). nil when the member has no config row.
+    def scenario_paycheck_config(member)
+      row = (@scenario.snapshot["paycheck_configs"] || []).find { |c| c["user_id"] == member.id }
+      return nil unless row
+
+      FamilyPaycheckConfig.new(
+        family_id: Current.family.id,
+        user_id: row["user_id"],
+        recurring_transaction_id: row["recurring_transaction_id"],
+        gross_per_paycheck_cents: row["gross_per_paycheck_cents"],
+        frequency: row["frequency"],
+        anchor_date: row["anchor_date"].blank? ? nil : Date.parse(row["anchor_date"])
+      )
+    end
+
+    # R35 (design §2.2): the scenario allocation write — upsert the dialog
+    # row into the active scenario's snapshot. The upsert key is the live
+    # path's (account + name) for create, the explicit id for update. The
+    # EFFECTIVE row is validated with the real PlanAllocation model, so the
+    # 422 contract is identical to a live save; a new row gets a fresh uuid
+    # (the re-use rows keep their live ids — design §1.1). Returns
+    # [ok, model, saved_row-or-nil]; [nil, nil, nil] when the update id is
+    # not in the scenario.
+    def scenario_save_plan_allocation(row:, id: nil)
+      snapshot = @scenario.snapshot
+      rows = snapshot["plan_allocations"] ||= []
+      existing = id ? rows.find { |r| r["id"] == id } :
+                    rows.find { |r| r["account_id"] == row[:account]&.id && r["name"] == row[:name] }
+      return [ nil, nil, nil ] if id && existing.nil?
+
+      allocation = PlanAllocation.new(
+        id: existing ? existing["id"] : SecureRandom.uuid,
+        family: Current.family,
+        account: row[:account],
+        name: row[:name], kind: row[:kind], mode: row[:mode],
+        value_cents: row[:value_cents], value_percent: row[:value_percent],
+        cadence: row[:cadence], recurring_transaction_id: row[:recurring_transaction_id],
+        auto_transfer: row[:auto_transfer], category_id: row[:category_id],
+        target_account_id: row[:target_account_id],
+        ownership: row[:ownership], distribution: row[:distribution],
+        matching: row[:matching], distribution_params: row[:distribution_params]
+      )
+      return [ false, allocation, nil ] unless allocation.valid?
+
+      saved_row = PlanScenarioSnapshot.plan_allocation_row(allocation)
+      if existing
+        rows[rows.index(existing)] = saved_row
+      else
+        rows << saved_row
+      end
+      @scenario.update!(snapshot: snapshot, snapshotted_at: Time.current)
+      [ true, allocation, saved_row ]
+    end
+
+    # R35 (Round 31A C14 twin for scenarios): pin the fun-money input
+    # snapshot on a freshly-saved scenario row. The planner runs on the
+    # scenario's draft (the just-updated snapshot), and the inputs land in
+    # the SCENARIO row's distribution_params jsonb — no AR write.
+    def persist_fun_money_input_snapshot_scenario(allocation, saved_row)
+      return unless saved_row && allocation.kind == "fun_money"
+
+      month = Date.current
+      planner = PaycheckFlowPlanner.new(
+        **PaycheckFlowPlanner.graph_inputs_for(family: Current.family, month: month),
+        draft: PaycheckFlowPlanner.scenario_draft(
+          family: Current.family, month: month, snapshot: @scenario.snapshot
+        )
+      )
+      planner.plan_graph
+      inputs = planner.fun_money_inputs
+      return unless inputs
+
+      snapshot = @scenario.snapshot
+      rows = snapshot["plan_allocations"] || []
+      row = rows.find { |r| r["id"] == allocation.id }
+      params = (row["distribution_params"] || {}).to_h
+      params["inputs_snapshot"] = inputs.transform_keys(&:to_s).transform_values do |entry|
+        { "i" => entry["i"].to_i, "b" => entry["b"].to_i, "s" => entry["s"].to_i }
+      end
+      row["distribution_params"] = params
+      @scenario.update!(snapshot: snapshot, snapshotted_at: Time.current)
+    end
+
+    # R35 (design §2.2): the scenario-mode bank links — the form's links
+    # rows merge into the active scenario's snapshot edge set. Same value
+    # shaping as the live path (draft_edges' major-unit conventions),
+    # validated with the real IncomeAccountAllocation model (the 422
+    # contract is identical); the leftover guardrail runs against the
+    # SCENARIO's own edge set. No live table is touched.
+    def save_scenario_bank_links(account)
+      links = params[:links].to_unsafe_h
+      snapshot = @scenario.snapshot
+      rows = snapshot["allocations"] ||= []
+      existing = rows.select { |row| row["account_id"] == account.id }
+                     .index_by { |row| row["income_id"] }
+
+      links.each do |income_id, link|
+        link = link.respond_to?(:to_unsafe_h) ? link.to_unsafe_h : link
+        series = income_series.find { |s| s.id == income_id }
+        next unless series
+
+        if link["enabled"].present?
+          mode = link["mode"].to_s
+          next unless IncomeAccountAllocation.modes.include?(mode)
+
+          if mode == "leftover"
+            conflict = rows.find do |row|
+              row["income_id"] == series.id && row["mode"] == "leftover" &&
+                row["account_id"] != account.id
+            end
+            if conflict
+              record = IncomeAccountAllocation.new
+              record.errors.add(:base, t("plan_flows.bank_config_dialog.leftover_conflict", name: series.name))
+              @bank_link_errors = record.errors
+              raise ActiveRecord::RecordInvalid.new(record)
+            end
+          end
+
+          # Numeric (BigDecimal) in major units — the same convention the
+          # live path hands to the IncomeAccountAllocation model, and what
+          # PlanScenarioSnapshot.edge_row's `value * 100` arithmetic needs
+          # (a String would repeat, not multiply). The required-mode
+          # carrier is "" when the split is equal (the dialog's hidden
+          # input is nameless/empty in required mode — view seed +
+          # bank_config_dialog_controller#recalcPullFrom), so blank maps
+          # to nil = equal split, mirroring the live path's
+          # `presence` ("" -> nil is VALID; "" -> 0 would trip the
+          # model's 0 < value <= 100 range check and 422 spuriously).
+          value = case mode
+                  when "specific"
+                    link["value"].to_s.strip.to_d
+                  when "percent"
+                    percent = link["value"].to_s.strip.to_d / 100
+                    percent.positive? && percent <= 1 ? percent : 0
+                  when "required"
+                    link["value"].to_s.strip.presence&.to_d
+                  else
+                    nil
+                  end
+
+          record = IncomeAccountAllocation.new(
+            family: Current.family, income_series: series,
+            account: account, mode: mode, value: value
+          )
+          unless record.valid?
+            @bank_link_errors = record.errors
+            raise ActiveRecord::RecordInvalid.new(record)
+          end
+
+          row = PlanScenarioSnapshot.edge_row(
+            income_series_id: series.id, account_id: account.id, mode: mode, value: value
+          )
+          if (old = existing.delete(series.id)) # out of the destroy set
+            rows[rows.index(old)] = row
+          else
+            rows << row
+          end
+        else
+          if (old = existing.delete(series.id))
+            rows.delete(old)
+          end
+        end
+      end
+      # Un-submitted pre-existing rows leave the account's edge set (the
+      # live path's unchecked-destroy rule).
+      existing.each_value { |row| rows.delete(row) }
+
+      @scenario.update!(snapshot: snapshot, snapshotted_at: Time.current)
+    end
+
+    # R35: the allocation write's unknown-id 404 contract (the live path's
+    # RecordNotFound, mirrored for the snapshot rows).
+    def not_found_allocation_redirect
+      if json_request?
+        render(json: { errors: { base: [ "not found" ] } }, status: :not_found)
+      else
+        redirect_to flow_plan_path(scenario: @scenario.id, view: flow_view)
+      end
+    end
 
     def flow_view
       %w[paycheck monthly].include?(params[:view].to_s) ? params[:view] : "paycheck"
@@ -497,7 +1135,12 @@ class PlanFlowsController < ApplicationController
     def render_flow_json(ok: true, allocation_changed: false, accounts: [], income: nil, removed_account: nil, error_object: nil, paycheck_config_member: nil)
       return render(json: { errors: error_messages(error_object) }, status: :unprocessable_entity) unless ok
 
-      graph = PaycheckFlowPlanner.plan_graph(family: Current.family, month: Date.current)
+      # R35 (Flow Scenarios): for an active scenario the plan re-derives from
+      # the (just-updated) snapshot; the Default call is token-for-token
+      # today's (the structural no-op invariant).
+      graph = @scenario ?
+        PaycheckFlowPlanner.plan_graph(family: Current.family, month: Date.current, draft: scenario_draft) :
+        PaycheckFlowPlanner.plan_graph(family: Current.family, month: Date.current)
       @graph = graph
       # Round 27 (owner item 4): the bank dialog form now carries a hidden
       # view input, so the in-place response renders the dialog readouts in
@@ -514,7 +1157,12 @@ class PlanFlowsController < ApplicationController
           node_id: "bank:#{account.id}",
           html: render_to_string(partial: "plan_flows/bank_config_dialog", locals: {
             account: account,
-            edges: Current.family.income_account_allocations.where(account_id: account.id).index_by(&:income_series_id),
+            # R35 (Flow Scenarios): the dialog's edge rows come from the
+            # scenario's snapshot (wrapped with the model-like accessors the
+            # partial reads — .mode / .value); Default is the live table.
+            edges: @scenario ?
+              scenario_edges_for_account(account.id) :
+              Current.family.income_account_allocations.where(account_id: account.id).index_by(&:income_series_id),
             # Round 16: the picker's searchable logo list (same-origin
             # assets; client-side filtering, no endpoint).
             available_bank_logos: @available_bank_logos,
@@ -617,7 +1265,16 @@ class PlanFlowsController < ApplicationController
       # plain 4 digits from plaid_accounts.mask, nil when absent.
       @account_last4s = PaycheckFlowPlanner.account_last4s_for(Current.family)
       @unplanned_count = @flow_accounts.count - @in_plan_accounts.count
-      @plan_allocations = Current.family.plan_allocations.includes(:account).order(:name)
+      # R35 (Flow Scenarios): the allocation dialog loop + empty-state CTA
+      # render the scenario's snapshot rows (unsaved model instances with
+      # the snapshot's values — the partial's accessors work on both);
+      # Default is the live relation (token-for-token today).
+      @plan_allocations = @scenario ? scenario_plan_allocations :
+                              Current.family.plan_allocations.includes(:account).order(:name)
+      # R35 (Flow Scenarios, design §4.1): the family's scenarios for the
+      # header picker (chrome, not plan state — the live table in both
+      # modes, order stable by creation).
+      @scenarios = Current.family.plan_scenarios.order(:created_at, :id)
       # Round 34 (spec 3): the Leftover guardrail — income series id -> the
       # account id of its existing leftover edge (IncomeAccountAllocation
       # mode "leftover"). The bank dialog greys the "Leftover" option for a
@@ -809,8 +1466,14 @@ class PlanFlowsController < ApplicationController
     # @known_allocations_hidden is set so the empty list says
     # "already in the diagram" instead of implying nothing was detected.
     def known_allocations
-      covered_ids = Current.family.plan_allocations.where.not(recurring_transaction_id: nil)
-                                                 .pluck(:recurring_transaction_id).to_set
+      # R35 (Flow Scenarios): in a scenario the "already planned" set comes
+      # from the snapshot's plan-allocation rows (the known list must track
+      # the scenario's plan, not the live one); Default is the live pluck.
+      covered_ids = @scenario ?
+        (@scenario.snapshot["plan_allocations"] || [])
+                              .filter_map { |row| row["recurring_transaction_id"] }.to_set :
+        Current.family.plan_allocations.where.not(recurring_transaction_id: nil)
+                                       .pluck(:recurring_transaction_id).to_set
       scope = Current.family.recurring_transactions
                 .where(status: :active, bill_type: %w[bill subscription installment])
                 .where.not(account_id: nil)
@@ -892,8 +1555,12 @@ class PlanFlowsController < ApplicationController
     # (nil when there is no config to derive from).
     def paycheck_config_tabs
       family_users.map do |member|
-        config = paycheck_config_for(member)
-        saved = config.persisted?
+        # R35 (Flow Scenarios): the readout tabs carry the scenario's
+        # paycheck-config snapshot copy (an UNSAVED instance — the
+        # PaycheckDates math reads only its fields, so the derived values
+        # compute identically); Default is the live saved config.
+        config = @scenario ? scenario_paycheck_config(member) : paycheck_config_for(member)
+        saved = @scenario ? !config.nil? : config.persisted?
         {
           member: member,
           series: member_labeled_income_series(member),
@@ -910,11 +1577,20 @@ class PlanFlowsController < ApplicationController
     # its leftover (the per-paycheck remainder), so the bank dialog greys the
     # "Leftover" option for the member's other allocations. Nil-valued entries
     # never occur (mode "leftover" always carries an account_id).
+    # R35 (Flow Scenarios): in a scenario the map comes from the snapshot's
+    # edge rows (the guardrail greys against the scenario's own leftover);
+    # Default is the live pluck.
     def leftover_accounts
-      Current.family.income_account_allocations
-                   .where(mode: "leftover")
-                   .pluck(:income_series_id, :account_id)
-                   .to_h
+      if @scenario
+        (@scenario.snapshot["allocations"] || [])
+                 .select { |row| row["mode"] == "leftover" }
+                 .to_h { |row| [ row["income_id"], row["account_id"] ] }
+      else
+        Current.family.income_account_allocations
+                     .where(mode: "leftover")
+                     .pluck(:income_series_id, :account_id)
+                     .to_h
+      end
     end
 
     # Round 31B: gross per paycheck in cents. The form submits a 2-dp
@@ -1056,7 +1732,12 @@ class PlanFlowsController < ApplicationController
 
       income = load_selected_income
       if income && params[:edges].present?
-        saved_edges = PaycheckFlowPlanner.edge_rows(Current.family)
+        # R35 (Flow Scenarios): the form-preview edge base is the scenario's
+        # snapshot edge rows when a scenario is active (the merge below
+        # replaces only the selected income's edges); Default is the live
+        # read.
+        saved_edges = @scenario ? scenario_snapshot_allocations :
+                                  PaycheckFlowPlanner.edge_rows(Current.family)
         rows = draft_edges(income).map do |account_id, attrs|
           {
             income_id: income.id,
@@ -1082,7 +1763,12 @@ class PlanFlowsController < ApplicationController
     # from the form survive untouched.
     def merge_draft_allocation_rows
       form_rows = params[:allocations].to_unsafe_h
-      saved = PaycheckFlowPlanner.plan_allocation_rows(Current.family)
+      # R35 (Flow Scenarios): the per-id merge base is the scenario's
+      # snapshot plan rows when a scenario is active; Default is the live
+      # read. The merge itself is shape-agnostic (symbol-keyed base rows
+      # either way).
+      saved = @scenario ? scenario_snapshot_plan_allocations :
+                          PaycheckFlowPlanner.plan_allocation_rows(Current.family)
       form_ids = form_rows.keys.to_set
 
       saved.reject { |row| form_ids.include?(row[:id]) } +

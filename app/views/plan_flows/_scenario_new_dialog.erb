@@ -1,0 +1,50 @@
+<%# R35 (Flow Scenarios, design §4.3): the Create-New-Scenario dialog —
+    name + source (Start Fresh? / Re-Use Current, Re-Use is the default).
+    A plain Turbo form: success is a 303 -> full page load into the NEW
+    scenario (the house navigation for a mode switch, not in-place); a
+    422 comes back as a house flash alert (the model's field messages).
+    locals: none (the family is Current.family) %>
+<%= render DS::Dialog.new(auto_open: false, disable_frame: true,
+  data: { node_id: "scenario-new" }) do |dialog| %>
+  <% dialog.with_header(title: t("plan_flows.show.scenario_dialog_title"),
+                        subtitle: t("plan_flows.show.scenario_name_label")) %>
+  <% dialog.with_body do %>
+    <%= form_with url: flow_scenario_create_plan_path,
+                  class: "space-y-5", method: :post do |f| %>
+      <div class="space-y-1">
+        <%= f.label :name, t("plan_flows.show.scenario_name_label"), class: "block text-xs text-secondary" %>
+        <%= f.text_field :name,
+                         maxlength: 40,
+                         placeholder: t("plan_flows.show.scenario_name_placeholder"),
+                         class: "text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full" %>
+      </div>
+
+      <div class="space-y-1">
+        <p class="text-xs text-secondary"><%= t("plan_flows.show.scenario_source_label") %></p>
+        <label class="flex items-start gap-2 text-sm">
+          <input type="radio" name="source" value="current" checked
+                 class="mt-0.5 h-4 w-4 accent-primary">
+          <span>
+            <span class="font-medium"><%= t("plan_flows.show.scenario_source_reuse") %></span>
+            <span class="block text-xs text-secondary"><%= t("plan_flows.show.scenario_source_reuse_hint") %></span>
+          </span>
+        </label>
+        <label class="flex items-start gap-2 text-sm">
+          <input type="radio" name="source" value="fresh"
+                 class="mt-0.5 h-4 w-4 accent-primary">
+          <span>
+            <span class="font-medium"><%= t("plan_flows.show.scenario_source_fresh") %></span>
+            <span class="block text-xs text-secondary"><%= t("plan_flows.show.scenario_source_fresh_hint") %></span>
+          </span>
+        </label>
+      </div>
+
+      <div class="flex justify-end pt-1">
+        <button type="submit"
+                class="text-sm bg-primary text-on-primary rounded-lg px-3 py-1.5 hover:opacity-90">
+          <%= t("plan_flows.show.scenario_new") %>
+        </button>
+      </div>
+    <% end %>
+  <% end %>
+<% end %>

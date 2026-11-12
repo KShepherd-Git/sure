@@ -2872,8 +2872,9 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   # through for kind "fun_money" ONLY (non-fun_money rows get them dropped,
   # the byte-identical stop-rule), the C14 input snapshot is pinned on
   # save, the graph payload echoes the config + the reconciliation, and
-  # the chrome-top red line renders for an un-allocated residual strictly
-  # above the 100-cent tolerance.
+  # the red line renders for an un-allocated residual strictly above the
+  # 100-cent tolerance (R35c: in the toggle-row hover icon's popup, no
+  # longer in the chrome-top swap).
   test "Round 31A: create a fun_money row with config; graph echoes it and pins the C14 snapshot" do
     travel_to Date.new(2026, 11, 15) do
       series = create_income_series(account: @account, name: "Bob Payroll", amount: 500)
@@ -2963,7 +2964,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_nil @family.plan_allocations.find_by(name: "Fun money")
   end
 
-  test "Round 31A: the chrome-top red line names the income for an un-allocated residual" do
+  test "Round 31A: the red line names the income for an un-allocated residual (R35c: icon popup, not the chrome-top swap)" do
     travel_to Date.new(2026, 11, 15) do
       # 1000.00/mo in (2 x 500.00), 700.00/mo required bills -> 300.00
       # leftover; a 50% percent fun row takes 150.00 -> 150.00 un-allocated
@@ -2984,7 +2985,10 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_match(/Bob Payroll \u2014 Un-Allocated/, response.body)
       assert_match(/150\.00/, response.body)
 
-      # The in-place JSON response ships the same line in chrome.top.
+      # R35c: the red line groups no longer ship in the chrome.top in-place
+      # swap (they moved to the toggle-row hover icon in show.html.erb, fed
+      # from the same @discrepancy_lines local; the swap now carries only
+      # the C14 prompt when present).
       bills = @family.plan_allocations.find_by(name: "Bills")
       patch "/plan/flow/allocations/#{bills.id}",
         headers: { "Accept" => "application/json" }, params: {
@@ -2993,7 +2997,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
         }
       assert_response :success
       chrome = JSON.parse(response.body)["chrome"]
-      assert_match(/Un-Allocated/, chrome["top"])
+      assert_no_match(/Un-Allocated/, chrome["top"])
     end
   end
 
@@ -3153,5 +3157,620 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       assert_equal [ "not found" ],
                    JSON.parse(response.body).dig("errors", "base")
     end
+  end
+end
+
+# ---------------------------------------------------------------------------
+# R35 (Flow Scenarios, design §3 / §5 / §6): the scenario CRUD + reset API,
+# the ?scenario= graph contract, and the scenario-scoped writes (the
+# isolation invariant: every scenario-mode write touches ONLY the scenario
+# row's snapshot — the live plan census is byte-for-byte unchanged).
+# ---------------------------------------------------------------------------
+class PlanFlowsScenarioControllerTest < ActionDispatch::IntegrationTest
+  teardown do
+    travel_back
+  end
+
+  setup do
+    sign_in @user = users(:family_admin)
+    @user.update!(preferences: (@user.preferences || {}).merge("preview_features_enabled" => true))
+    @family = @user.family
+    @other = users(:family_member)
+    @account = accounts(:depository)
+    ensure_tailwind_build
+  end
+
+  def json
+    { "Accept" => "application/json" }
+  end
+
+  def create_income_series(account:, name:, amount:, owner: @user)
+    series = @family.recurring_transactions.create!(
+      name: name, account: account, amount: amount, currency: "USD",
+      expected_day_of_month: 6, last_occurrence_date: Date.new(2026, 9, 6),
+      next_expected_date: Date.new(2026, 12, 20), status: "active",
+      bill_type: "income", manual: true, plan_owner: owner
+    )
+    series.recurring_occurrences.destroy_all
+    [ Date.new(2026, 11, 6), Date.new(2026, 11, 20) ].each do |date|
+      series.recurring_occurrences.create!(family: @family, due_on: date,
+        original_due_on: date, currency: "USD", expected_amount: amount,
+        status: "scheduled")
+    end
+    series
+  end
+
+  # The live plan the scenario snapshots: two incomes (Kurt + Sammi),
+  # leftover edges to the same bank, a $1000 rent bill.
+  def seed_live_plan
+    travel_to Date.new(2026, 11, 15) do
+      @kurt_series = create_income_series(account: @account, name: "Kurt Paycheck", amount: 400)
+      @sammi_series = create_income_series(account: @account, name: "Sammi Paycheck", amount: 900, owner: @other)
+      IncomeAccountAllocation.create!(family: @family, income_series: @kurt_series,
+        account: @account, mode: "leftover")
+      IncomeAccountAllocation.create!(family: @family, income_series: @sammi_series,
+        account: @account, mode: "leftover")
+      @rent = PlanAllocation.create!(family: @family, account: @account, name: "Rent",
+        kind: "bill", mode: "specific", value_cents: 100_000, cadence: "monthly")
+    end
+  end
+
+  def census
+    {
+      allocations: @family.plan_allocations.count,
+      edges: @family.income_account_allocations.count,
+      configs: @family.family_paycheck_configs.count,
+      scenarios: @family.plan_scenarios.count
+    }
+  end
+
+  def create_scenario(name: "Wife quits", source: "current", params: { name: name, source: source })
+    post "/plan/flow/scenarios", headers: json, params: params
+  end
+
+  # The jsonb round-trip stringifies BigDecimals (ActiveSupport's
+  # BigDecimal#as_json -> to_s), so a persisted snapshot differs from a
+  # fresh PlanScenarioSnapshot build only in numeric encoding. Deep-compare
+  # through the planner's row normalizer (symbol keys + BigDecimal
+  # numerics on both sides) — the semantic equality the design means.
+  def scenario_rows(snapshot, key)
+    (snapshot[key] || []).map { |row| PaycheckFlowPlanner.scenario_row(row) }
+  end
+
+  # --- index (design §3) ---
+
+  test "index lists scenarios with the snapshot count and active id" do
+    seed_live_plan
+    create_scenario
+    assert_response :created
+    first = PlanScenario.order(:id).first
+
+    get "/plan/flow/scenarios", headers: json
+    assert_response :success
+    body = response.parsed_body
+    assert body["ok"]
+    assert_equal 1, body["scenarios"].size
+    row = body["scenarios"].first
+    assert_equal "Wife quits", row["name"]
+    assert_equal "reuse_current", row["source"]
+    assert_equal 1, row["snapshot_count"]["allocations"]
+    assert_equal 2, row["snapshot_count"]["edges"]
+    assert_equal 0, row["snapshot_count"]["configs"], "no paycheck configs in the fixture"
+    assert_nil body["active_id"], "no ?scenario= param -> no active id"
+
+    get "/plan/flow/scenarios", headers: json, params: { scenario: first.id }
+    assert_equal first.id, response.parsed_body["active_id"]
+  end
+
+  # --- create (design §3 + §1.1 snapshot identity) ---
+
+  test "create re-uses the live plan: the snapshot deep-equals the fresh builder" do
+    seed_live_plan
+    create_scenario
+    assert_response :created
+    scenario = PlanScenario.last
+    fresh = PlanScenarioSnapshot.reuse_current(@family)
+    assert_equal scenario_rows(fresh, "plan_allocations"), scenario_rows(scenario.snapshot, "plan_allocations")
+    assert_equal scenario_rows(fresh, "allocations"), scenario_rows(scenario.snapshot, "allocations")
+    assert_equal fresh["incomes"], scenario.snapshot["incomes"]
+    assert_equal 1, scenario.snapshot["v"]
+    refute_nil scenario.snapshotted_at
+
+    body = response.parsed_body
+    assert body["ok"]
+    assert_equal scenario.id, body["scenario"]["id"]
+    assert_equal 2, body["graph"]["incomes"].size, "the create response ships the scenario graph"
+  end
+
+  test "create fresh: empty plan over the current incomes (owner decision)" do
+    seed_live_plan
+    create_scenario(source: "fresh")
+    assert_response :created
+    scenario = PlanScenario.last
+    assert_equal "fresh", scenario.source
+    assert_empty scenario.snapshot["plan_allocations"]
+    assert_empty scenario.snapshot["allocations"]
+    assert_empty scenario.snapshot["paycheck_configs"]
+    assert_nil scenario.snapshotted_at
+    # The income policy carries BOTH current series, all enabled.
+    assert_equal [ @kurt_series.id, @sammi_series.id ].sort,
+                 scenario.snapshot["incomes"].map { |row| row["series_id"] }.sort
+    assert scenario.snapshot["incomes"].all? { |row| row["enabled"] == true && row["zeroed"] == false }
+  end
+
+  test "create 422s: blank name, reserved default, case-insensitive collision, bad source" do
+    seed_live_plan
+    create_scenario(name: "   ")
+    assert_response :unprocessable_entity
+    assert_includes response.parsed_body["errors"]["name"].to_a, I18n.t("errors.messages.blank")
+
+    create_scenario(name: "Default")
+    assert_response :unprocessable_entity
+    assert response.parsed_body["errors"]["name"].to_a.any? { |m| m.include?("reserved") }
+
+    create_scenario # "Wife quits"
+    assert_response :created
+    create_scenario(name: "wife quits")
+    assert_response :unprocessable_entity
+    assert response.parsed_body["errors"]["name"].to_a.any? { |m| m.include?("taken") }
+
+    create_scenario(source: "bogus")
+    assert_response :unprocessable_entity
+    assert response.parsed_body["errors"]["source"].to_a.any? { |m| m.include?("invalid") }
+
+    assert_equal 1, PlanScenario.count
+  end
+
+  # --- rename (design §3) ---
+
+  test "rename updates the name; 404s on default/unknown; 422 on collision" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+
+    patch "/plan/flow/scenarios/#{scenario.id}", headers: json, params: { name: "Quits v2" }
+    assert_response :success
+    assert_equal "Quits v2", response.parsed_body["scenario"]["name"]
+
+    patch "/plan/flow/scenarios/default", headers: json, params: { name: "X" }
+    assert_response :not_found
+    assert_equal "unknown scenario", response.parsed_body["error"]
+
+    patch "/plan/flow/scenarios/00000000-0000-0000-0000-000000000000", headers: json, params: { name: "X" }
+    assert_response :not_found
+
+    create_scenario(name: "Other")
+    patch "/plan/flow/scenarios/#{scenario.id}", headers: json, params: { name: "other" }
+    assert_response :unprocessable_entity
+    assert response.parsed_body["errors"]["name"].to_a.any? { |m| m.include?("taken") }
+  end
+
+  # --- delete (design §3) ---
+
+  test "delete removes the row; 404s on default/unknown; 422 while active" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+
+    # Active-context delete is the 422 backstop (the picker switches first).
+    delete "/plan/flow/scenarios/#{scenario.id}", headers: json, params: { scenario: scenario.id }
+    assert_response :unprocessable_entity
+    assert response.parsed_body["errors"]["scenario"].any? { |m| m =~ /switch away/i }
+    assert_equal 1, PlanScenario.count
+
+    delete "/plan/flow/scenarios/#{scenario.id}", headers: json
+    assert_response :success
+    assert_equal scenario.id, response.parsed_body["deleted"]
+    assert_equal 0, PlanScenario.count
+
+    delete "/plan/flow/scenarios/default", headers: json
+    assert_response :not_found
+  end
+
+  # --- reset (owner decision R35) ---
+
+  test "reset reuse_current re-snapshots the CURRENT live plan" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+
+    # A live edit AFTER the snapshot: a new allocation.
+    PlanAllocation.create!(family: @family, account: @account, name: "Car Loan",
+      kind: "bill", mode: "specific", value_cents: 30_000, cadence: "monthly")
+
+    post "/plan/flow/scenarios/#{scenario.id}/reset", headers: json
+    assert_response :success
+    rebuilt = PlanScenarioSnapshot.reuse_current(@family)
+    assert_equal scenario_rows(rebuilt, "plan_allocations"), scenario_rows(scenario.reload.snapshot, "plan_allocations"),
+      "the reset snapshot must deep-equal a fresh reuse snapshot (the live edit is in)"
+    assert_equal 2, scenario.snapshot["plan_allocations"].size
+    refute_nil scenario.snapshotted_at
+    assert response.parsed_body["ok"]
+    assert_equal 2, response.parsed_body["graph"]["allocations"].size
+  end
+
+  test "reset fresh discards in-scenario edits and rebuilds the empty plan" do
+    seed_live_plan
+    create_scenario(name: "Fresh", source: "fresh")
+    fresh = PlanScenario.last
+
+    # An in-scenario edit (a new allocation row), then the reset:
+    post "/plan/flow/allocations?scenario=#{fresh.id}", headers: json, params: {
+      plan_allocation: { account_id: @account.id, name: "Scenario Bill", kind: "bill",
+                         mode: "specific", value: "25.00", cadence: "monthly" }
+    }
+    assert_response :success
+    assert_equal 1, fresh.reload.snapshot["plan_allocations"].size
+
+    post "/plan/flow/scenarios/#{fresh.id}/reset", headers: json
+    assert_response :success
+    fresh.reload
+    assert_empty fresh.snapshot["plan_allocations"], "the edit is discarded"
+    assert_empty fresh.snapshot["allocations"]
+    assert_equal 2, fresh.snapshot["incomes"].size, "the empty plan over the CURRENT incomes"
+    assert_nil fresh.snapshotted_at
+    assert_equal fresh.id, response.parsed_body["scenario"]["id"]
+    assert_equal 0, response.parsed_body["graph"]["allocations"].size
+
+    post "/plan/flow/scenarios/default/reset", headers: json
+    assert_response :not_found
+    post "/plan/flow/scenarios/00000000-0000-0000-0000-000000000000/reset", headers: json
+    assert_response :not_found
+  end
+
+  # --- scenario bank-links save (Round 35d: the required-mode blank carrier) ---
+
+  # The live plan behind the scenario: two incomes with required edges to
+  # @account (nil value = the equal split) and a $500/month required base
+  # on the bank. The dialog seeds the hidden links[id][value] carrier ""
+  # for required mode (view seed + recalcPullFrom), so a save of the
+  # dialog's exact carrier must accept the blank.
+  def seed_bank_links_plan
+    travel_to Date.new(2026, 11, 15) do
+      @kurt_series = create_income_series(account: @account, name: "Kurt Paycheck", amount: 400)
+      @sammi_series = create_income_series(account: @account, name: "Sammi Paycheck", amount: 900, owner: @other)
+      IncomeAccountAllocation.create!(family: @family, income_series: @kurt_series,
+        account: @account, mode: "required")
+      IncomeAccountAllocation.create!(family: @family, income_series: @sammi_series,
+        account: @account, mode: "required")
+      PlanAllocation.create!(family: @family, account: @account, name: "SoFi Savings",
+        kind: "bill", mode: "required", value_cents: 50_000, cadence: "monthly")
+    end
+  end
+
+  # The scenario-mode twin of patch_bank_links: the same in-place save with
+  # the ?scenario= param (the scenario's snapshot takes the links write;
+  # the live table is untouched).
+  def patch_bank_links_scenario(scenario, links)
+    patch "/plan/flow/accounts/#{@account.id}", headers: json, params: {
+      account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
+                 parent_account_id: "", auto_transfer_target_ids: ["0"] },
+      links: links,
+      scenario: scenario.id
+    }
+  end
+
+  test "scenario bank-links: required + blank carrier saves (equal split), no 422 (Round 35d)" do
+    seed_bank_links_plan
+    create_scenario(name: "R35d repro", source: "current")
+    scenario = PlanScenario.last
+
+    # The owner's exact shape: Kurt checked + Required (the blank carrier),
+    # Sammi unchecked. Pre-fix the blank carrier became 0 -> the model's
+    # required range check 422'd with "must be greater than 0".
+    patch_bank_links_scenario(scenario, {
+      @kurt_series.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" },
+      @sammi_series.id.to_s => { "mode" => "required", "value" => "" }
+    })
+    assert_response :success, "the blank required carrier must not 422"
+    assert response.parsed_body.key?("graph"),
+      "the in-place save response ships the fresh graph (the 422 shape is {errors})"
+
+    # The snapshot row: nil required_percent = the equal split (not 0).
+    rows = scenario_rows(scenario.reload.snapshot, "allocations")
+    kurt_row = rows.find { |r| r[:income_id] == @kurt_series.id && r[:account_id] == @account.id }
+    assert kurt_row, "the Kurt edge row must be in the scenario snapshot"
+    assert_equal "required", kurt_row[:mode]
+    assert_nil kurt_row[:required_percent], "blank carrier -> nil (equal split), not 0"
+    assert rows.none? { |r| r[:income_id] == @sammi_series.id },
+      "the unchecked Sammi row leaves the snapshot edge set"
+
+    # The live plan is untouched: the live edge still carries nil.
+    assert_nil IncomeAccountAllocation.find_by(income_series_id: @kurt_series.id,
+      account_id: @account.id).value
+
+    # The scenario graph settles the equal split: the single funder's 2
+    # paychecks divide the $500/month base -> 250.00 per paycheck.
+    get "/plan/flow/graph?scenario=#{scenario.id}", headers: json
+    assert_response :success
+    bank = response.parsed_body["banks"].find { |b| b["id"] == @account.id }
+    kurt_inflow = bank["inflow"].select { |row| row["income_id"] == @kurt_series.id }
+    assert_equal 2, kurt_inflow.size
+    assert kurt_inflow.all? { |row| row["mode"] == "required" }
+    assert_equal ["250.00", "250.00"], kurt_inflow.map { |row| row["amount"] }
+    assert_equal "500.00", bank["inflow_month"], "the bank's full required base lands"
+  end
+
+  test "scenario bank-links: required + a stored percent keeps the value (Round 35d)" do
+    seed_bank_links_plan
+    create_scenario(name: "R35d repro", source: "current")
+    scenario = PlanScenario.last
+
+    patch_bank_links_scenario(scenario, {
+      @kurt_series.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "19.91" },
+      @sammi_series.id.to_s => { "enabled" => "1", "mode" => "required", "value" => "" }
+    })
+    assert_response :success
+    assert response.parsed_body.key?("graph"),
+      "the in-place save response ships the fresh graph (the 422 shape is {errors})"
+
+    # The snapshot row carries the stored 2-dp percent (the jsonb round-trip
+    # stringifies it; scenario_rows normalizes it back to a BigDecimal).
+    rows = scenario_rows(scenario.reload.snapshot, "allocations")
+    kurt_row = rows.find { |r| r[:income_id] == @kurt_series.id && r[:account_id] == @account.id }
+    assert_equal BigDecimal("19.91"), kurt_row[:required_percent]
+
+    # The scenario graph settles the stored split: 19.91% of the $500.00
+    # base = 99.55 over Kurt's two paychecks (49.78 + 49.77, last absorbs).
+    get "/plan/flow/graph?scenario=#{scenario.id}", headers: json
+    assert_response :success
+    bank = response.parsed_body["banks"].find { |b| b["id"] == @account.id }
+    kurt_inflow = bank["inflow"].select { |row| row["income_id"] == @kurt_series.id }
+    assert_equal 2, kurt_inflow.size
+    assert_equal BigDecimal("99.55"), kurt_inflow.map { |row| BigDecimal(row["amount"]) }.sum
+  end
+
+  # --- graph contract (design §2.2 / §3) ---
+
+  test "graph without a scenario carries NO scenario key and the live plan" do
+    seed_live_plan
+    get "/plan/flow/graph", headers: json
+    assert_response :success
+    body = response.parsed_body
+    assert body.key?("incomes") || body.key?("banks") || body.key?("allocations") ||
+           body.is_a?(Hash), "the graph JSON shape"
+    refute body.key?("scenario"), "Default graph JSON must NOT carry the scenario key"
+  end
+
+  test "graph ?scenario= plans the snapshot and adds the additive key only" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+
+    # Sammi quits inside the scenario.
+    snapshot = scenario.snapshot
+    snapshot["incomes"] = snapshot["incomes"].map do |row|
+      row["series_id"] == @sammi_series.id ? row.merge("enabled" => false) : row
+    end
+    scenario.update_column(:snapshot, snapshot)
+
+    get "/plan/flow/graph", headers: json
+    default_body = response.parsed_body
+    default_incomes = default_body["incomes"]
+
+    get "/plan/flow/graph?scenario=#{scenario.id}", headers: json
+    assert_response :success
+    body = response.parsed_body
+    assert_equal({ "id" => scenario.id, "name" => scenario.name }, body["scenario"])
+    scenario_incomes = body["incomes"]
+    assert scenario_incomes.none? { |i| i["id"] == @sammi_series.id },
+      "the disabled series must be absent from the scenario graph"
+    assert default_incomes.any? { |i| i["id"] == @sammi_series.id },
+      "and present in the Default graph (the live plan is untouched)"
+    # Same keys otherwise (the additive-key invariant).
+    assert_equal default_body.keys - [ "scenario" ], body.keys - [ "scenario" ]
+  end
+
+  test "graph ?scenario= unknown is a 404 JSON contract" do
+    get "/plan/flow/graph?scenario=00000000-0000-0000-0000-000000000000", headers: json
+    assert_response :not_found
+    assert_equal "unknown scenario", response.parsed_body["error"]
+  end
+
+  # --- show (page shell) ---
+
+  test "show default: no banner, sankey attr unscoped" do
+    seed_live_plan
+    get "/plan/flow"
+    assert_response :success
+    assert_includes response.body, "data-plan-flow-sankey-graph-url-value=\"/plan/flow/graph\""
+    assert_not_includes response.body, "not your live plan"
+  end
+
+  test "show ?scenario=: banner + scoped sankey attr + snapshot-driven page" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+
+    get "/plan/flow?scenario=#{scenario.id}"
+    assert_response :success
+    assert_includes response.body, "data-plan-flow-sankey-graph-url-value=\"/plan/flow/graph?scenario=#{scenario.id}\""
+    assert_includes response.body, "Wife quits"
+    assert_includes response.body, "not your live plan"
+    # The picker lists the scenario row with its rename/delete affordances.
+    assert_includes response.body, "flow/scenarios/#{scenario.id}"
+  end
+
+  test "show ?scenario= unknown redirects to the live plan with the house alert" do
+    seed_live_plan
+    get "/plan/flow?scenario=00000000-0000-0000-0000-000000000000"
+    assert_response :redirect
+    assert_redirected_to "/plan/flow"
+    follow_redirect!
+    assert_match(/not found/, flash[:alert].to_s)
+  end
+
+  # --- scenario-scoped writes (the isolation invariant) ---
+
+  test "scenario allocation create: snapshot row only, live census untouched" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+    before = census
+
+    post "/plan/flow/allocations?scenario=#{scenario.id}", headers: json, params: {
+      plan_allocation: { account_id: @account.id, name: "Scenario Bill", kind: "bill",
+                         mode: "specific", value: "25.00", cadence: "monthly" }
+    }
+    # render_flow_json's contract: 200 + the re-planned graph (no top-level
+    # ok key — a failure 422s with { errors: ... }).
+    assert_response :success
+    assert response.parsed_body.key?("graph")
+
+    rows = scenario.reload.snapshot["plan_allocations"]
+    assert_equal 2, rows.size, "the scenario's snapshot gained the row"
+    row = rows.find { |r| r["name"] == "Scenario Bill" }
+    refute_nil row
+    refute_equal @rent.id, row["id"], "a new row gets a fresh uuid"
+    assert_equal 2500, row["value_cents"].to_i
+    refute row["id"].nil?
+
+    assert_equal before, census, "the live plan census is byte-for-byte unchanged"
+    assert_nil @family.plan_allocations.find_by(name: "Scenario Bill")
+  end
+
+  test "scenario allocation create: an invalid value 422s with the model errors" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+
+    post "/plan/flow/allocations?scenario=#{scenario.id}", headers: json, params: {
+      plan_allocation: { account_id: @account.id, name: "Bad", kind: "bill", mode: "specific" }
+    }
+    assert_response :unprocessable_entity
+    assert response.parsed_body["errors"].values.any?, "the 422 carries the model field errors"
+    assert_equal 1, scenario.reload.snapshot["plan_allocations"].size, "the bad row is not persisted"
+  end
+
+  test "scenario allocation update + destroy: snapshot only" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+    before = census
+
+    # Update the rent row inside the scenario (its live uuid is kept).
+    patch "/plan/flow/allocations/#{@rent.id}?scenario=#{scenario.id}", headers: json, params: {
+      plan_allocation: { account_id: @account.id, name: "Rent", kind: "bill",
+                         mode: "specific", value: "1200.00" }
+    }
+    assert_response :success
+    row = scenario.reload.snapshot["plan_allocations"].find { |r| r["id"] == @rent.id }
+    assert_equal 120_000, row["value_cents"].to_i
+    assert_equal 100_000, @rent.reload.value_cents.to_i, "the live row is untouched"
+
+    # Unknown id in the scenario: 404.
+    patch "/plan/flow/allocations/00000000-0000-0000-0000-000000000000?scenario=#{scenario.id}",
+      headers: json, params: { plan_allocation: { account_id: @account.id, name: "X" } }
+    assert_response :not_found
+
+    # Destroy the rent row inside the scenario.
+    delete "/plan/flow/allocations/#{@rent.id}?scenario=#{scenario.id}", headers: json
+    assert_response :success
+    assert scenario.reload.snapshot["plan_allocations"].none? { |r| r["id"] == @rent.id }
+    assert @family.plan_allocations.exists?(@rent.id), "the live row survives"
+
+    assert_equal before, census
+  end
+
+  test "scenario bank links: the snapshot edge set updates, live IAA untouched" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+    before = census
+
+    # Kurt's leftover moves to a percent split inside the scenario.
+    patch "/plan/flow/accounts/#{@account.id}?scenario=#{scenario.id}", headers: json, params: {
+      account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
+                 parent_account_id: "", auto_transfer_target_ids: ["0"] },
+      links: {
+        @kurt_series.id => { enabled: "1", mode: "percent", value: "50" },
+        @sammi_series.id => { enabled: "1", mode: "leftover", value: "" }
+      }
+    }
+    assert_response :success
+
+    rows = scenario.reload.snapshot["allocations"]
+    kurt = rows.find { |r| r["income_id"] == @kurt_series.id }
+    assert_equal "percent", kurt["mode"]
+    assert_equal 0.5, kurt["value_percent"].to_f
+    sammi = rows.find { |r| r["income_id"] == @sammi_series.id }
+    assert_equal "leftover", sammi["mode"]
+    assert_equal before, census
+    assert_equal "leftover", @family.income_account_allocations
+      .find_by(income_series_id: @kurt_series.id, account_id: @account.id).mode,
+      "the live edge is untouched"
+  end
+
+  test "scenario income policy write: snapshot incomes only, live series untouched" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+    before = census
+
+    # The scenario income dialog posts the flat income_policy params
+    # (enabled / zeroed / gross) — the controller's scenario branch reads
+    # params[:income_policy].
+    patch "/plan/flow/incomes/#{@sammi_series.id}?scenario=#{scenario.id}", headers: json, params: {
+      income_policy: { enabled: "0" }
+    }
+    assert_response :success
+    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @sammi_series.id }
+    assert_equal false, row["enabled"]
+    assert_equal before, census
+    assert @sammi_series.reload.status == "active", "the live series is untouched"
+
+    # Zeroed + gross levers.
+    patch "/plan/flow/incomes/#{@sammi_series.id}?scenario=#{scenario.id}", headers: json, params: {
+      income_policy: { enabled: "1", zeroed: "1" }
+    }
+    assert_response :success
+    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @sammi_series.id }
+    assert_equal true, row["zeroed"]
+
+    patch "/plan/flow/incomes/#{@sammi_series.id}?scenario=#{scenario.id}", headers: json, params: {
+      income_policy: { enabled: "1", zeroed: "0", gross: "750.00" }
+    }
+    assert_response :success
+    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @sammi_series.id }
+    assert_equal false, row["zeroed"]
+    assert_equal 75_000, row["gross_per_paycheck_cents"].to_i
+
+    # The REAL form shape: the house hidden-false + checked-true checkbox
+    # submits BOTH values when checked (Rack parses the duplicate key as an
+    # array) and only the hidden "false" when unchecked. The array form
+    # must read ENABLED (the original .to_s bug read "false" for a checked
+    # box) and the hidden-only form must read DISABLED.
+    patch "/plan/flow/incomes/#{@sammi_series.id}?scenario=#{scenario.id}", headers: json, params: {
+      income_policy: { enabled: [ "false", "true" ] }
+    }
+    assert_response :success
+    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @sammi_series.id }
+    assert_equal true, row["enabled"], "checked box (array form) = enabled"
+
+    patch "/plan/flow/incomes/#{@sammi_series.id}?scenario=#{scenario.id}", headers: json, params: {
+      income_policy: { enabled: "false" }
+    }
+    assert_response :success
+    row = scenario.reload.snapshot["incomes"].find { |r| r["series_id"] == @sammi_series.id }
+    assert_equal false, row["enabled"], "unchecked box (hidden-only form) = disabled"
+  end
+
+  test "scenario paycheck config: snapshot config only, live configs untouched" do
+    seed_live_plan
+    create_scenario
+    scenario = PlanScenario.last
+    before = census
+
+    patch "/plan/flow/paycheck-config/#{@user.id}?scenario=#{scenario.id}", headers: json, params: {
+      paycheck_config: { gross: "1000.00", frequency: "biweekly", anchor_date: "2026-11-02" }
+    }
+    assert_response :success
+    row = scenario.reload.snapshot["paycheck_configs"].find { |c| c["user_id"] == @user.id }
+    refute_nil row
+    assert_equal 100_000, row["gross_per_paycheck_cents"].to_i
+    assert_equal "biweekly", row["frequency"]
+    assert_equal "2026-11-02", row["anchor_date"]
+    assert_equal before, census
+    assert_equal 0, @family.family_paycheck_configs.count, "no live config row"
   end
 end

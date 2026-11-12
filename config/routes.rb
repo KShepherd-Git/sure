@@ -540,6 +540,21 @@ Rails.application.routes.draw do
                                    as: :flow_allocation_update, path: "flow/allocations/:id", params: [ :id ]
     delete :flow_allocation_destroy, to: "plan_flows#destroy_allocation", on: :collection,
                                     as: :flow_allocation_destroy, path: "flow/allocations/:id", params: [ :id ]
+    # R35 (Flow Scenarios): the scenario CRUD + reset (design §3). The
+    # picker (server-rendered DS::Menu) drives index / rename / delete; the
+    # create dialog drives create; the per-scenario Reset affordance
+    # (owner decision) drives reset. ?scenario= scopes every plan-flow
+    # state/action URL (the load_scenario before_action resolves it).
+    get :flow_scenarios, to: "plan_flows#flow_scenarios", on: :collection,
+                        as: :flow_scenarios, path: "flow/scenarios"
+    post :flow_scenario_create, to: "plan_flows#flow_scenario_create", on: :collection,
+                               as: :flow_scenario_create, path: "flow/scenarios"
+    patch :flow_scenario_rename, to: "plan_flows#flow_scenario_rename", on: :collection,
+                                as: :flow_scenario_rename, path: "flow/scenarios/:id", params: [ :id ]
+    delete :flow_scenario_destroy, to: "plan_flows#flow_scenario_destroy", on: :collection,
+                                  as: :flow_scenario_destroy, path: "flow/scenarios/:id", params: [ :id ]
+    post :flow_scenario_reset, to: "plan_flows#flow_scenario_reset", on: :collection,
+                              as: :flow_scenario_reset, path: "flow/scenarios/:id/reset", params: [ :id ]
   end
 
   # Family-wide investment hub, built on the Reports section framework.
