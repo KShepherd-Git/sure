@@ -1,8 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-<!-- monogram fallback (P3-f 2026-11-02); original lockup at git HEAD 1ef7aac -->
-<rect x="2" y="2" width="44" height="44" rx="10" fill="#9dd5f6"/>
-<text x="24" y="24" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#ffffff" text-anchor="middle" dominant-baseline="central">A</text>
-</svg>
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Generator: Adobe Illustrator 14.0.0, SVG Export Plug-In . SVG Version: 6.00 Build 43363)  -->
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
@@ -70,3 +65,4 @@
 	l-12.167-13.508l12.167-13.079V198.404z M98.24,194.509H78.756v-6.598h17.398v-6.766H78.756v-6.029h19.868l8.668,9.664
 	L98.24,194.509z M161.242,179.183c0,9.212-6.873,11.114-13.8,11.114h-9.888v11.123h-15.403l-9.758-10.978l-10.141,10.978h-31.39
 	v-33.162h31.873l9.75,10.87l10.08-10.87h25.322C154.176,168.258,161.242,169.999,161.242,179.183z"/>
+</svg>

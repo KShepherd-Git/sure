@@ -98,7 +98,7 @@
          data-plan-flow-sankey-mode-value="manage"
          data-plan-flow-sankey-currency-value="<%= Current.family.currency %>"
          data-plan-flow-sankey-accounts-value="<%= @account_names.to_json %>"
-         data-plan-flow-sankey-in-plan-value="<%= @in_plan_account_ids.to_json %>"
+         data-plan-flow-sankey-in-plan-value="<%= @sankey_in_plan_ids.to_json %>"
          data-plan-flow-sankey-labels-value="<%= { "income" => t(".column_incomes"), "bank" => t(".column_banks"), "allocation" => t(".column_allocations"), "surplus" => t(".surplus_node"), "unallocated" => t(".unallocated_node"), "unassigned" => t(".unassigned_node"), "error" => t(".chart_error"), "empty" => t(".chart_empty") }.to_json %>">
     </div>
 
@@ -116,7 +116,18 @@
   <% @in_plan_accounts.each do |account| %>
     <% edges = Current.family.income_account_allocations.where(account: account).index_by(&:income_series_id) %>
     <%= render "plan_flows/bank_config_dialog",
-               account: account, edges: edges, available_bank_logos: @available_bank_logos %>
+               account: account, edges: edges, available_bank_logos: @available_bank_logos,
+               view: @view,
+               # Round 27 (owner item 4): the read-only dialog context —
+               # the required base in the active view unit + the per-income
+               # amounts for the client-side auto-fill and ratio
+               # re-derivation (never submitted).
+               required_display_amount: (@bank_required_display || {})[account.id],
+               income_amounts: @income_display_amounts,
+               # Round 30: the per-income required-split readouts (greyed
+               # 50/50 / Proportional readouts + the stored percents behind
+               # the Percent behavior's inputs).
+               required_splits: (@bank_required_splits || {})[account.id] %>
   <% end %>
   <% @income_series.each do |series| %>
     <%= render "plan_flows/income_config_dialog", series: series %>

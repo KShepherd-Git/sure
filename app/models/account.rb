@@ -834,13 +834,6 @@ class Account < ApplicationRecord
 
     if (slug = BankLogoSlugs.resolve(name, explicit: bank_logo_slug)).present?
       "/images/bank-logos/#{slug}.svg"
-  # uploaded logo (the ActiveStorage attachment) wins; then the explicit
-  # bank_logo_slug (a VENDORED app asset, data-driven — the built-in set is
-  # swapped out from under this path by later rounds); otherwise nil (the
-  # dialog renders a neutral circle). Deliberately excludes the cloud
-  # brandfetch / provider logo URLs: the plan flow is 100% local.
-    if bank_logo_slug.present? && BankLogoSlugs.available.key?(bank_logo_slug)
-      ActionController::Base.helpers.asset_path("bank-logos/#{bank_logo_slug}.svg")
     end
   end
   # Marks the account pending_deletion and enqueues DestroyJob. If the enqueue
@@ -1218,10 +1211,22 @@ class Account < ApplicationRecord
           errors.add(:auto_transfer_target_ids, "must name family accounts")
         elsif target.family_id != family_id
           errors.add(:auto_transfer_target_ids, "must belong to the same family")
-        elsif target.parent_account_id != id
+        elsif target.parent_account_id != id && !dressed_target_funded_by_self?(target_id)
           errors.add(:auto_transfer_target_ids, "must be sub-accounts of this account")
         end
       end
+    end
+
+    # Round 26 R2 (owner item 3, MOVE): the fan-out array doubles as the
+    # source -> dressed pillar band list (Round 25 "Make Allocated Sub-
+    # Account": plan_allocations.target_account_id). Dressed targets carry
+    # no parent link, so the strict rule above would 422 EVERY save of a
+    # source that funds one — adding a sub-account to such a source saves
+    # the source via sync_parent_fan_out and re-validates its whole
+    # fan-out. Accept a target that THIS account funds as a dressed
+    # allocation; everything else keeps the round-11 strict rule.
+    def dressed_target_funded_by_self?(target_id)
+      PlanAllocation.exists?(family_id: family_id, account_id: id, target_account_id: target_id)
     end
 
     # Round 16: the logo slug must name a vendored file (app/assets/images/

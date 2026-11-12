@@ -9,8 +9,6 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
   P2 = "partner-2".freeze
 
   def graph(month:, incomes:, allocations: [], obligations: {}, plan_allocations: [], required_amounts: {}, plan_max_links: {}, plan_roles: {}, auto_transfers: {}, plan_ordered: {}, linked_bank_counts: {}, recommendations: [], partners: [ P1 ], sub_account_links: {}, auto_transfer_targets: {}, account_names: {}, account_last4s: {}, account_bank_logos: {}, bank_logo_keywords: [], bank_logos: {}, categories: {}, draft: nil)
-  def graph(month:, incomes:, allocations: [], obligations: {}, plan_allocations: [], required_amounts: {}, plan_max_links: {}, plan_roles: {}, auto_transfers: {}, plan_ordered: {}, linked_bank_counts: {}, recommendations: [], partners: [ P1 ], draft: nil)
-  def graph(month:, incomes:, allocations: [], obligations: {}, plan_allocations: [], required_amounts: {}, plan_max_links: {}, plan_roles: {}, auto_transfers: {}, plan_ordered: {}, linked_bank_counts: {}, recommendations: [], partners: [ P1 ], sub_account_links: {}, auto_transfer_targets: {}, account_names: {}, draft: nil)
     PaycheckFlowPlanner.new(
       month: month,
       incomes: incomes,
@@ -47,16 +45,23 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
       end }
   end
 
-  def edge(income_id:, account_id:, mode:, value_cents: nil, value_percent: nil)
+  # required_percent (Round 30): the stored 2-dp percent of the bank's
+  # required amount a required edge carries (nil = the equal split).
+  def edge(income_id:, account_id:, mode:, value_cents: nil, value_percent: nil, required_percent: nil)
     { income_id: income_id, account_id: account_id, mode: mode,
-      value_cents: value_cents, value_percent: value_percent }
+      value_cents: value_cents, value_percent: value_percent,
+      required_percent: required_percent }
   end
 
-  def alloc(id:, account_id:, name: "Alloc", kind: "bill", mode: "required", value_cents: nil, value_percent: nil, recurring_transaction_id: nil, auto_transfer: false, category_id: nil)
+  def alloc(id:, account_id:, name: "Alloc", kind: "bill", mode: "required", value_cents: nil, value_percent: nil, recurring_transaction_id: nil, auto_transfer: false, category_id: nil, ownership: nil, distribution: nil, matching: nil, distribution_params: nil)
     { id: id, account_id: account_id, name: name, kind: kind, mode: mode,
       value_cents: value_cents, value_percent: value_percent,
       cadence: "monthly", recurring_transaction_id: recurring_transaction_id,
-      auto_transfer: auto_transfer, category_id: category_id }
+      auto_transfer: auto_transfer, category_id: category_id,
+      # Round 31A (Fun Money v2): the fun_money row's config (nil for every
+      # non-fun_money row — additive keys).
+      ownership: ownership, distribution: distribution, matching: matching,
+      distribution_params: distribution_params }
   end
 
   # 1. The owner's example: income 1000, bills 800 (required), fun 300 hard
@@ -739,5 +744,500 @@ class PaycheckFlowPlannerGraphTest < ActiveSupport::TestCase
     b1 = g[:allocations].find { |a| a[:id] == "b1" }
     assert_nil b1[:category_name]
     assert_nil b1[:category_color]
+  end
+
+  # Round 30: the required split (P1). A stored percent split of the bank's
+  # required base charges each income its monthly share spread over its
+  # occurrences; the monthly inflow still sums EXACTLY to the base
+  # (monthly-preserving settlement — the UI readout formula is a separate
+  # concern, D-RECON).
+  test "required percents split the base 30/70 over two incomes (P1)" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [
+        income(id: "A", owner_id: P1, amounts: [ 50_000, 50_000 ]),
+        income(id: "B", owner_id: P2, amounts: [ 50_000, 50_000 ])
+      ],
+      allocations: [
+        edge(income_id: "A", account_id: "bank", mode: "required", required_percent: BigDecimal("30.00")),
+        edge(income_id: "B", account_id: "bank", mode: "required", required_percent: BigDecimal("70.00"))
+      ],
+      plan_allocations: [
+        alloc(id: "b1", account_id: "bank", name: "Bills", kind: "bill",
+              mode: "required", value_cents: BigDecimal(10_000))
+      ]
+    )
+
+    bank = g[:banks].find { |b| b[:id] == "bank" }
+    a_bands = bank[:inflow].select { |band| band[:income_id] == "A" }
+    b_bands = bank[:inflow].select { |band| band[:income_id] == "B" }
+    assert_equal [ "15.00", "15.00" ], a_bands.map { |band| band[:amount] }
+    assert_equal [ "35.00", "35.00" ], b_bands.map { |band| band[:amount] }
+    # Monthly shares 3_000 / 7_000; the month sums exactly to the base.
+    assert_equal BigDecimal("30.00"), a_bands.sum { |band| BigDecimal(band[:amount]) }
+    assert_equal BigDecimal("70.00"), b_bands.sum { |band| BigDecimal(band[:amount]) }
+    assert_equal "100.00", bank[:inflow_month]
+    assert_equal "100.00", g[:allocations].find { |a| a[:id] == "b1" }[:got_month]
+    assert_equal "ok", g[:allocations].find { |a| a[:id] == "b1" }[:status]
+  end
+
+  # Round 30 (P2): a 33.33/33.33/33.34 split (the equal-split derivation's
+  # 3-income shape, summing to exactly 100.00) — the last income absorbs
+  # the rounding residue, so the monthly shares sum to the base EXACTLY.
+  test "required percents 33.33/33.33/33.34: last income absorbs to the base (P2)" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [
+        income(id: "A", owner_id: P1, amounts: [ 50_000, 50_000 ]),
+        income(id: "B", owner_id: P1, amounts: [ 50_000, 50_000 ]),
+        income(id: "C", owner_id: P2, amounts: [ 50_000, 50_000 ])
+      ],
+      allocations: [
+        edge(income_id: "A", account_id: "bank", mode: "required", required_percent: BigDecimal("33.33")),
+        edge(income_id: "B", account_id: "bank", mode: "required", required_percent: BigDecimal("33.33")),
+        edge(income_id: "C", account_id: "bank", mode: "required", required_percent: BigDecimal("33.34"))
+      ],
+      plan_allocations: [
+        alloc(id: "b1", account_id: "bank", name: "Bills", kind: "bill",
+              mode: "required", value_cents: BigDecimal(10_000))
+      ]
+    )
+
+    bank = g[:banks].find { |b| b[:id] == "bank" }
+    a = bank[:inflow].select { |band| band[:income_id] == "A" }.sum { |band| BigDecimal(band[:amount]) }
+    b = bank[:inflow].select { |band| band[:income_id] == "B" }.sum { |band| BigDecimal(band[:amount]) }
+    c = bank[:inflow].select { |band| band[:income_id] == "C" }.sum { |band| BigDecimal(band[:amount]) }
+    assert_equal BigDecimal("33.33"), a
+    assert_equal BigDecimal("33.33"), b
+    assert_equal BigDecimal("33.34"), c # 10_000 - 3_333 - 3_333 (last absorbs)
+    assert_equal "100.00", bank[:inflow_month]
+  end
+
+  # Round 30 (P3): a 33/33/34 split on an odd base (10_001) — the non-last
+  # shares round half-up individually; the last income absorbs so the
+  # monthly total is the base to the cent.
+  test "required percents 33/33/34 on an odd base: last absorbs the cent (P3)" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [
+        income(id: "A", owner_id: P1, amounts: [ 50_000, 50_000 ]),
+        income(id: "B", owner_id: P1, amounts: [ 50_000, 50_000 ]),
+        income(id: "C", owner_id: P2, amounts: [ 50_000, 50_000 ])
+      ],
+      allocations: [
+        edge(income_id: "A", account_id: "bank", mode: "required", required_percent: BigDecimal("33.00")),
+        edge(income_id: "B", account_id: "bank", mode: "required", required_percent: BigDecimal("33.00")),
+        edge(income_id: "C", account_id: "bank", mode: "required", required_percent: BigDecimal("34.00"))
+      ],
+      plan_allocations: [
+        alloc(id: "b1", account_id: "bank", name: "Bills", kind: "bill",
+              mode: "required", value_cents: BigDecimal(10_001))
+      ]
+    )
+
+    bank = g[:banks].find { |b| b[:id] == "bank" }
+    a = bank[:inflow].select { |band| band[:income_id] == "A" }.sum { |band| BigDecimal(band[:amount]) }
+    b = bank[:inflow].select { |band| band[:income_id] == "B" }.sum { |band| BigDecimal(band[:amount]) }
+    c = bank[:inflow].select { |band| band[:income_id] == "C" }.sum { |band| BigDecimal(band[:amount]) }
+    assert_equal BigDecimal("33.00"), a # 10_001 * 0.33 -> 3_300.33 -> 3_300
+    assert_equal BigDecimal("33.00"), b
+    assert_equal BigDecimal("34.01"), c # 10_001 - 3_300 - 3_300 (last absorbs 1c)
+    assert_equal "100.01", bank[:inflow_month]
+  end
+
+  # Round 30 (P4): nil percents (every required edge stores nothing) are
+  # TODAY'S behavior — each paycheck occurrence charges the full
+  # required-per-paycheck figure; the stop-rule byte-identity rests on
+  # this path.
+  test "nil required percents keep today's per-paycheck charge (P4)" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [
+        income(id: "A", owner_id: P1, amounts: [ 50_000, 50_000 ]),
+        income(id: "B", owner_id: P2, amounts: [ 50_000, 50_000 ])
+      ],
+      allocations: [
+        edge(income_id: "A", account_id: "bank", mode: "required"),
+        edge(income_id: "B", account_id: "bank", mode: "required")
+      ],
+      plan_allocations: [
+        alloc(id: "b1", account_id: "bank", name: "Bills", kind: "bill",
+              mode: "required", value_cents: BigDecimal(10_000))
+      ]
+    )
+
+    bank = g[:banks].find { |b| b[:id] == "bank" }
+    # 4 funding occurrences -> 2_500c ($25.00) each, every occurrence.
+    assert_equal [ "25.00", "25.00", "25.00", "25.00" ], bank[:inflow].map { |band| band[:amount] }
+    assert_equal "100.00", bank[:inflow_month]
+  end
+
+  # Round 30 (P5, D-UNDER): a split summing to less than 100 (30/40) is
+  # allowed — NO absorb: the charges are the raw shares, the month funds
+  # only the split total, and the shortfall surfaces on the required
+  # allocation via the existing report fields.
+  test "under-100 required percents fund the raw shares, no absorb (P5)" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [
+        income(id: "A", owner_id: P1, amounts: [ 50_000, 50_000 ]),
+        income(id: "B", owner_id: P2, amounts: [ 50_000, 50_000 ])
+      ],
+      allocations: [
+        edge(income_id: "A", account_id: "bank", mode: "required", required_percent: BigDecimal("30.00")),
+        edge(income_id: "B", account_id: "bank", mode: "required", required_percent: BigDecimal("40.00"))
+      ],
+      plan_allocations: [
+        alloc(id: "b1", account_id: "bank", name: "Bills", kind: "bill",
+              mode: "required", value_cents: BigDecimal(10_000))
+      ]
+    )
+
+    bank = g[:banks].find { |b| b[:id] == "bank" }
+    a = bank[:inflow].select { |band| band[:income_id] == "A" }.sum { |band| BigDecimal(band[:amount]) }
+    b = bank[:inflow].select { |band| band[:income_id] == "B" }.sum { |band| BigDecimal(band[:amount]) }
+    assert_equal BigDecimal("30.00"), a
+    assert_equal BigDecimal("40.00"), b
+    assert_equal "70.00", bank[:inflow_month] # no absorb: 3_000 + 4_000
+    bill = g[:allocations].find { |a| a[:id] == "b1" }
+    assert_equal "100.00", bill[:wanted_month]
+    assert_equal "70.00", bill[:got_month]
+    assert_equal "30.00", bill[:shortfall_month] # dollars, like wanted/got
+    assert_equal "partly", bill[:status]
+  end
+
+  # Round 31A (Fun Money v2) — the per-income reconciliation (B_k / S_k /
+  # L_k / FM_k) + the Un-Allocated discrepancies. The owner's worked
+  # example (design spec §3.5) is a MANDATORY test case with exact
+  # payload values.
+  #
+  # Setup (monthly, single occurrence each on 2026-11-01):
+  #   Income A $1000.00 (member A) | Income B $500.00 (member B)
+  #   Bills   $900.00/mo required  on bank X (funded 100% by A)
+  #   Savings $250.00/mo specific  on bank Y (funded 100% by B)
+  #   Fun Money row: ownership = member A, matching = Equalize,
+  #                  mode = Leftover.
+  #   L_A = 1000 - 900 - 0 = 100.00 | L_B = 500 - 0 - 250 = 250.00
+  #   T = max(0, min(100, 250)) = 100.00 -> FM_A = FM_B = 100.00
+  test "Round 31A: owner worked example — Equalize member ownership (exact payload)" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [
+        income(id: "A", owner_id: P1, amounts: [ 100_000 ], name: "Income A"),
+        income(id: "B", owner_id: P2, amounts: [ 50_000 ], name: "Income B")
+      ],
+      allocations: [
+        edge(income_id: "A", account_id: "X", mode: "required"),
+        edge(income_id: "B", account_id: "Y", mode: "leftover")
+      ],
+      partners: [ P1, P2 ],
+      plan_allocations: [
+        alloc(id: "b1", account_id: "X", name: "Bills", kind: "bill",
+              mode: "required", value_cents: BigDecimal(90_000)),
+        alloc(id: "s1", account_id: "Y", name: "Savings", kind: "savings",
+              mode: "specific", value_cents: BigDecimal(25_000)),
+        alloc(id: "fm1", account_id: "X", name: "Fun money", kind: "fun_money",
+              mode: "leftover", ownership: P1, matching: "equalize")
+      ]
+    )
+
+    a = g[:incomes].find { |i| i[:id] == "A" }
+    b = g[:incomes].find { |i| i[:id] == "B" }
+    assert_equal(
+      { bills_month: "900.00", savings_month: "0.00", fun_money_month: "100.00",
+        allocated_month: "1000.00", un_allocated_month: "0.00" },
+      a[:reconciliation]
+    )
+    assert_equal(
+      { bills_month: "0.00", savings_month: "250.00", fun_money_month: "100.00",
+        allocated_month: "350.00", un_allocated_month: "150.00" },
+      b[:reconciliation]
+    )
+
+    # RED line: income B un-allocates 150.00 (strictly above the $1.00
+    # tolerance); income A (0.00) has none.
+    assert_equal(
+      [ { income_id: "B", income_name: "Income B", un_allocated_month: "150.00" } ],
+      g[:discrepancies]
+    )
+
+    # The fun_money row's per-member rows (the other rows get nil).
+    fm = g[:allocations].find { |x| x[:id] == "fm1" }
+    assert_equal(
+      [
+        { member_id: P1, leftover_month: "100.00", fun_money_month: "100.00",
+          un_allocated_month: "0.00" },
+        { member_id: P2, leftover_month: "250.00", fun_money_month: "100.00",
+          un_allocated_month: "150.00" }
+      ],
+      fm[:per_member]
+    )
+    # The config echoes on the fun_money row only; no pinned snapshot
+    # reads inputs_stale false (the amber prompt fires only on divergence).
+    assert_equal P1, fm[:ownership]
+    assert_equal "equalize", fm[:matching]
+    assert_equal false, fm[:inputs_stale]
+    assert_nil g[:allocations].find { |x| x[:id] == "b1" }[:per_member]
+    assert_nil g[:allocations].find { |x| x[:id] == "b1" }[:ownership]
+    assert_not_nil a[:reconciliation]
+  end
+
+  # Round 31A: Per Income matching (C5) — each member's FM is the mode
+  # function on their OWN leftover; the worked example's B keeps 250.00
+  # (no Un-Allocated line: both incomes are fully allocated).
+  test "Round 31A: per income matching — leftover mode, no discrepancies" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [
+        income(id: "A", owner_id: P1, amounts: [ 100_000 ], name: "Income A"),
+        income(id: "B", owner_id: P2, amounts: [ 50_000 ], name: "Income B")
+      ],
+      allocations: [
+        edge(income_id: "A", account_id: "X", mode: "required"),
+        edge(income_id: "B", account_id: "Y", mode: "leftover")
+      ],
+      partners: [ P1, P2 ],
+      plan_allocations: [
+        alloc(id: "b1", account_id: "X", name: "Bills", kind: "bill",
+              mode: "required", value_cents: BigDecimal(90_000)),
+        alloc(id: "s1", account_id: "Y", name: "Savings", kind: "savings",
+              mode: "specific", value_cents: BigDecimal(25_000)),
+        alloc(id: "fm1", account_id: "X", name: "Fun money", kind: "fun_money",
+              mode: "leftover", ownership: P1, matching: "per_income")
+      ]
+    )
+
+    assert_equal(
+      [
+        { member_id: P1, leftover_month: "100.00", fun_money_month: "100.00",
+          un_allocated_month: "0.00" },
+        { member_id: P2, leftover_month: "250.00", fun_money_month: "250.00",
+          un_allocated_month: "0.00" }
+      ],
+      g[:allocations].find { |x| x[:id] == "fm1" }[:per_member]
+    )
+    assert_equal [], g[:discrepancies]
+  end
+
+  # Round 31A: C10 — Distribution "Individual Leftover by Allocations"
+  # forces the Per Income matching semantics even when the row stores
+  # matching "equalize" (rows saved before the dialog lock existed).
+  test "Round 31A: individual_leftover distribution coerces per_income" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [
+        income(id: "A", owner_id: P1, amounts: [ 100_000 ], name: "Income A"),
+        income(id: "B", owner_id: P2, amounts: [ 50_000 ], name: "Income B")
+      ],
+      allocations: [
+        edge(income_id: "A", account_id: "X", mode: "required"),
+        edge(income_id: "B", account_id: "Y", mode: "leftover")
+      ],
+      partners: [ P1, P2 ],
+      plan_allocations: [
+        alloc(id: "b1", account_id: "X", name: "Bills", kind: "bill",
+              mode: "required", value_cents: BigDecimal(90_000)),
+        alloc(id: "s1", account_id: "Y", name: "Savings", kind: "savings",
+              mode: "specific", value_cents: BigDecimal(25_000)),
+        alloc(id: "fm1", account_id: "X", name: "Fun money", kind: "fun_money",
+              mode: "leftover", ownership: P1, matching: "equalize",
+              distribution: "individual_leftover")
+      ]
+    )
+
+    # Equalize would give both 100.00; the coercion gives each their own
+    # leftover (100.00 / 250.00).
+    assert_equal(
+      [ "100.00", "250.00" ],
+      g[:allocations].find { |x| x[:id] == "fm1" }[:per_member].map { |row| row[:fun_money_month] }
+    )
+  end
+
+  # Round 31A: Household ownership (C6/M2) — the shared pool reconciles at
+  # the AGGREGATE level only (no per-income reconciliation; the per-member
+  # rows are the distribution's DISPLAY split). FM_total is the row's
+  # resolved got; the aggregate gap labels "Household".
+  test "Round 31A: household ownership — aggregate reconciliation + display split" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [
+        income(id: "A", owner_id: P1, amounts: [ 100_000 ], name: "Income A"),
+        income(id: "B", owner_id: P2, amounts: [ 50_000 ], name: "Income B")
+      ],
+      allocations: [
+        edge(income_id: "A", account_id: "X", mode: "required"),
+        edge(income_id: "B", account_id: "Y", mode: "leftover")
+      ],
+      partners: [ P1, P2 ],
+      plan_allocations: [
+        alloc(id: "b1", account_id: "X", name: "Bills", kind: "bill",
+              mode: "required", value_cents: BigDecimal(90_000)),
+        alloc(id: "s1", account_id: "Y", name: "Savings", kind: "savings",
+              mode: "specific", value_cents: BigDecimal(25_000)),
+        # Legacy household row (no config at all) + a 100.00/mo Hard Number
+        # on bank Y (B's leftover feeds it) -> got 100.00.
+        alloc(id: "fm1", account_id: "Y", name: "Fun money", kind: "fun_money",
+              mode: "specific", value_cents: BigDecimal(10_000)),
+        # Household + distribution percent: 40/60 display split.
+        alloc(id: "fm2", account_id: "Y", name: "Fun money 2", kind: "fun_money",
+              mode: "leftover", ownership: "household", distribution: "percent",
+              distribution_params: { "percents" => { P1 => "40.00", P2 => "60.00" } })
+      ]
+    )
+
+    # The FIRST fun_money row (fm1, sort order) drives the reconciliation.
+    a = g[:incomes].find { |i| i[:id] == "A" }
+    b = g[:incomes].find { |i| i[:id] == "B" }
+    assert_nil a[:reconciliation]
+    assert_nil b[:reconciliation]
+
+    # L_A = 100.00, L_B = 250.00 -> aggregate 350.00; FM_total = 100.00
+    # (fm1's got on Y) -> Household gap 250.00 (strictly above tolerance).
+    assert_equal(
+      [ { income_id: nil, income_name: "Household", un_allocated_month: "250.00" } ],
+      g[:discrepancies]
+    )
+
+    fm1 = g[:allocations].find { |x| x[:id] == "fm1" }
+    # Equal display split of the 100.00 pool (distribution nil -> equal).
+    assert_equal(
+      [ "50.00", "50.00" ],
+      fm1[:per_member].map { |row| row[:fun_money_month] }
+    )
+  end
+
+  # Round 31A: the 100-cent tolerance is STRICT — a 98-cent un-allocated
+  # residual shows no line; 101 cents does.
+  test "Round 31A: tolerance boundary (98c silent, 101c labeled)" do
+    build = lambda do |bill_cents|
+      graph(
+        month: Date.new(2026, 11, 1),
+        incomes: [ income(id: "A", owner_id: P1, amounts: [ 100_000 ], name: "Income A") ],
+        allocations: [ edge(income_id: "A", account_id: "X", mode: "required") ],
+        plan_allocations: [
+          alloc(id: "b1", account_id: "X", name: "Bills", kind: "bill",
+                mode: "required", value_cents: BigDecimal(bill_cents)),
+          alloc(id: "fm1", account_id: "X", name: "Fun money", kind: "fun_money",
+                mode: "specific", value_cents: BigDecimal(1),
+                ownership: P1, matching: "per_income")
+        ]
+      )
+    end
+
+    assert_equal [], build.call(99_901)[:discrepancies] # 98c residual
+    assert_equal(
+      [ { income_id: "A", income_name: "Income A", un_allocated_month: "1.01" } ],
+      build.call(99_898)[:discrepancies] # 101c residual = $1.01
+    )
+  end
+
+  # Round 31A (C14): the input snapshot — an exact match reads fresh, a
+  # divergent I_k reads stale (the amber prompt; never a red mismatch).
+  test "Round 31A: inputs_stale vs the C14 snapshot" do
+    base = lambda do |snapshot|
+      graph(
+        month: Date.new(2026, 11, 1),
+        incomes: [
+          income(id: "A", owner_id: P1, amounts: [ 100_000 ], name: "Income A"),
+          income(id: "B", owner_id: P2, amounts: [ 50_000 ], name: "Income B")
+        ],
+        allocations: [
+          edge(income_id: "A", account_id: "X", mode: "required"),
+          edge(income_id: "B", account_id: "Y", mode: "leftover")
+        ],
+        plan_allocations: [
+          alloc(id: "b1", account_id: "X", name: "Bills", kind: "bill",
+                mode: "required", value_cents: BigDecimal(90_000)),
+          alloc(id: "fm1", account_id: "X", name: "Fun money", kind: "fun_money",
+                mode: "leftover", ownership: P1, matching: "equalize",
+                distribution_params: { "inputs_snapshot" => snapshot })
+        ]
+      )
+    end
+
+    # This fixture has no savings row, so S is 0 for both incomes.
+    fresh = { "A" => { "i" => 100_000, "b" => 90_000, "s" => 0 },
+              "B" => { "i" => 50_000, "b" => 0, "s" => 0 } }
+    stale_income = { "A" => { "i" => 95_000, "b" => 90_000, "s" => 0 },
+                     "B" => { "i" => 50_000, "b" => 0, "s" => 0 } }
+    stale_missing = { "A" => { "i" => 100_000, "b" => 90_000, "s" => 0 } }
+
+    assert_equal false, base.call(fresh)[:allocations].find { |x| x[:id] == "fm1" }[:inputs_stale]
+    assert_equal true, base.call(stale_income)[:allocations].find { |x| x[:id] == "fm1" }[:inputs_stale]
+    assert_equal true, base.call(stale_missing)[:allocations].find { |x| x[:id] == "fm1" }[:inputs_stale]
+    assert_equal false, base.call(nil)[:allocations].find { |x| x[:id] == "fm1" }[:inputs_stale]
+  end
+
+  # Round 31A: an UNLABELED income (owner_id nil) still reconciles — its
+  # residual enters the rows (income_name nil -> the "an income" chrome
+  # fallback) but it never joins the Equalize min.
+  test "Round 31A: unlabeled income excluded from Equalize min, still labeled" do
+    g = graph(
+      month: Date.new(2026, 11, 1),
+      incomes: [
+        income(id: "A", owner_id: P1, amounts: [ 100_000 ], name: "Income A"),
+        income(id: "B", owner_id: P2, amounts: [ 50_000 ], name: "Income B"),
+        # name nil: the chrome falls back to "an income" (S10).
+        income(id: "C", owner_id: nil, amounts: [ 20_000 ], name: nil)
+      ],
+      allocations: [
+        edge(income_id: "A", account_id: "X", mode: "required"),
+        edge(income_id: "B", account_id: "Y", mode: "leftover")
+      ],
+      partners: [ P1, P2 ],
+      plan_allocations: [
+        alloc(id: "b1", account_id: "X", name: "Bills", kind: "bill",
+              mode: "required", value_cents: BigDecimal(90_000)),
+        alloc(id: "fm1", account_id: "X", name: "Fun money", kind: "fun_money",
+              mode: "leftover", ownership: P1, matching: "equalize")
+      ]
+    )
+
+    # C's 200.00 residual never lowers the Equalize target (T stays 100.00).
+    c = g[:incomes].find { |i| i[:id] == "C" }
+    assert_equal "200.00", c[:reconciliation][:un_allocated_month]
+    assert_equal "0.00", g[:incomes].find { |i| i[:id] == "A" }[:reconciliation][:un_allocated_month]
+    # B un-allocates 400.00 (this fixture has no savings row: L_B = 500.00
+    # minus the 100.00 Equalize target); C's 200.00 residual carries no
+    # name -> the chrome's "an income" fallback.
+    assert_equal(
+      [
+        { income_id: "B", income_name: "Income B", un_allocated_month: "400.00" },
+        { income_id: "C", income_name: nil, un_allocated_month: "200.00" }
+      ],
+      g[:discrepancies]
+    )
+  end
+
+  # Round 31A (stop-rule): plan() — the paycheck-plans payload — is
+  # byte-identical with the fun_money config fields present on the
+  # plan_allocations rows (plan() derives required only from the
+  # obligations; the new fields never reach it).
+  test "Round 31A: plan() byte-identical with fun_money fields (stop-rule)" do
+    common = {
+      month: Date.new(2026, 11, 1),
+      incomes: [ income(id: "A", owner_id: P1, amounts: [ 100_000, 100_000 ]) ],
+      allocations: [ edge(income_id: "A", account_id: "chk", mode: "leftover") ],
+      obligations_by_account: { "chk" => BigDecimal(80_000) },
+      partners: [ P1 ],
+      leftover_distribution: "income_ratio",
+      currency: "USD",
+      required_amounts: {}, plan_max_links: {}, plan_roles: {},
+      auto_transfers: {}, plan_ordered: {}, linked_bank_counts: {},
+      recommendations: [], sub_account_links: {}, auto_transfer_targets: {},
+      account_names: {}, account_last4s: {}, account_bank_logos: {},
+      bank_logo_keywords: [], bank_logos: {}, categories: {}
+    }
+    bill = alloc(id: "b1", account_id: "chk", name: "Bills", kind: "bill",
+                 mode: "required", value_cents: BigDecimal(80_000))
+    fm = alloc(id: "fm1", account_id: "chk", name: "Fun money", kind: "fun_money",
+               mode: "leftover", ownership: P1, distribution: "equal",
+               matching: "equalize",
+               distribution_params: { "percents" => { P1 => "100.00" } })
+
+    plain = PaycheckFlowPlanner.new(**common, plan_allocations: [ bill ]).plan
+    with_fm = PaycheckFlowPlanner.new(**common, plan_allocations: [ bill, fm ]).plan
+    assert_equal JSON.pretty_generate(plain), JSON.pretty_generate(with_fm)
+    assert_equal plain, with_fm
   end
 end

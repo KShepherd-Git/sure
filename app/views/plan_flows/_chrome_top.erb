@@ -2,7 +2,11 @@
     (show.html.erb) and the in-place JSON responses (owner review round 3,
     R1/R7) can swap them without a full reload. Reads @graph +
     @over_plan_lines. i18n keys are explicit (plan_flows.show.*) — a
-    partial's lazy scope is its own name. %>
+    partial's lazy scope is its own name.
+    Round 31A (Fun Money v2): the SECOND line group — the RED Un-Allocated
+    discrepancies (@discrepancy_lines, strict >$1.00 tolerance) + the C14
+    AMBER drift prompt (inputs_stale on the fun_money row) when present.
+    Both ship in the same chrome.top swap as the over-plan lines. %>
 <div data-flow-chrome="top">
   <% if @over_plan_lines.any? %>
     <div class="space-y-1">
@@ -15,6 +19,38 @@
                 item: line[:item]) %>
         </div>
       <% end %>
+    </div>
+  <% end %>
+  <% if @discrepancy_lines&.any? %>
+    <div class="space-y-1">
+      <% @discrepancy_lines.each do |line| %>
+        <div class="flex items-center gap-2 text-sm text-destructive">
+          <span class="h-2 w-2 rounded-full bg-destructive shrink-0" aria-hidden="true"></span>
+          <%= t("plan_flows.show.un_allocated",
+                income: line[:income],
+                amount: number_to_currency(line[:amount], currency: Current.family.currency)) %>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+  <%# C14 (Round 31A): the stale-config prompt — amber, NOT red (a stale
+      config is a prompt, not a mismatch); the Re-apply link re-opens the
+      fun_money dialog so the owner re-saves (the save re-pins the input
+      snapshot). %>
+  <% stale = @graph[:allocations]&.find { |row| row[:kind] == "fun_money" && row[:inputs_stale] } %>
+  <% if stale %>
+    <div class="flex items-center gap-2 text-sm text-amber-600" data-flow-chrome-stale>
+      <span class="h-2 w-2 rounded-full bg-amber-500 shrink-0" aria-hidden="true"></span>
+      <span>
+        <%= t("plan_flows.show.inputs_stale") %>
+        —
+        <button type="button"
+                class="underline hover:opacity-75"
+                data-fm-stale-reapply
+                data-fm-stale-allocation="<%= stale[:id] %>">
+          <%= t("plan_flows.show.inputs_stale_reapply") %>
+        </button>
+      </span>
     </div>
   <% end %>
 </div>

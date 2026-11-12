@@ -1460,7 +1460,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_080000) do
     t.index ["account_id"], name: "index_income_account_allocations_on_account_id"
     t.index ["family_id"], name: "index_income_account_allocations_on_family_id"
     t.index ["income_series_id", "account_id"], name: "idx_on_income_series_id_account_id_233c1f13be", unique: true
-    t.check_constraint "mode::text = 'specific'::text AND value > 0::numeric OR mode::text = 'percent'::text AND value > 0::numeric AND value <= 1::numeric OR (mode::text = ANY (ARRAY['required'::character varying, 'leftover'::character varying]::text[])) AND value IS NULL", name: "chk_income_account_allocations_value_mode"
+    t.check_constraint "mode::text = 'specific'::text AND value > 0::numeric OR mode::text = 'percent'::text AND value > 0::numeric AND value <= 1::numeric OR mode::text = 'required'::text AND (value IS NULL OR value > 0::numeric AND value <= 100::numeric) OR mode::text = 'leftover'::text AND value IS NULL", name: "chk_income_account_allocations_value_mode"
     t.check_constraint "mode::text = ANY (ARRAY['required'::text, 'specific'::text, 'percent'::text, 'leftover'::text])", name: "chk_income_account_allocations_mode"
   end
 
@@ -2022,9 +2022,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_080000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.uuid "category_id"
+    t.uuid "target_account_id"
+    t.string "ownership"
+    t.string "distribution"
+    t.string "matching"
+    t.jsonb "distribution_params", default: {}
     t.index ["category_id"], name: "index_plan_allocations_on_category_id"
     t.index ["family_id", "account_id"], name: "index_plan_allocations_on_family_id_and_account_id"
     t.index ["recurring_transaction_id"], name: "index_plan_allocations_on_recurring_transaction_id"
+    t.index ["target_account_id"], name: "index_plan_allocations_on_target_account_id"
     t.check_constraint "cadence IS NULL OR (cadence::text = ANY (ARRAY['weekly'::text, 'biweekly'::text, 'monthly'::text, 'quarterly'::text, 'yearly'::text]))", name: "chk_plan_allocations_cadence"
     t.check_constraint "kind::text = ANY (ARRAY['bill'::text, 'debt'::text, 'savings'::text, 'fun_money'::text])", name: "chk_plan_allocations_kind"
     t.check_constraint "mode::text = 'required'::text AND value_percent IS NULL AND (value_cents IS NOT NULL OR recurring_transaction_id IS NOT NULL) AND (value_cents IS NULL OR value_cents > 0::numeric) OR mode::text = 'specific'::text AND value_cents > 0::numeric AND value_percent IS NULL OR mode::text = 'percent'::text AND value_percent > 0::numeric AND value_percent <= 1::numeric AND value_cents IS NULL OR mode::text = 'leftover'::text AND value_cents IS NULL AND value_percent IS NULL", name: "chk_plan_allocations_value_mode"

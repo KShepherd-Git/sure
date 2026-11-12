@@ -28,6 +28,12 @@ en:
       legend_savings: Savings
       legend_surplus: Surplus
       over_plan: "Over-planned by %{amount} on %{income} — bills covered; reduce %{item}"
+      # Round 31A (Fun Money v2): the RED Un-Allocated line (the second
+      # group in the chrome-top, after the over-plan lines) + the C14
+      # amber drift prompt (the stale-config nudge; NOT a mismatch).
+      un_allocated: "%{income} — Un-Allocated %{amount}"
+      inputs_stale: Inputs changed since last apply
+      inputs_stale_reapply: Re-apply
       banks_not_planned:
         one: "%{count} account not planned yet"
         other: "%{count} accounts not planned yet"
@@ -54,19 +60,51 @@ en:
       # shows only checkbox + name until checked (the rule select + value
       # reveal in the same row).
       pull_from_incomes: Pull From Incomes
-      subtitle: Linked incomes, ownership, role, sub-accounts, and auto transfer.
-      linked_incomes: Linked incomes
       no_incomes: No income declared yet.
       rule_aria: "Rule for %{name}"
-      mode_required: Pay this bank's bills first
-      mode_specific: Fixed amount per paycheck
-      mode_percent: Percent of this income
-      mode_leftover: Leftover after other banks
+      # Round 27 (owner items 3+4): short mode labels for the restyled
+      # Pull-From-Incomes triggers (R26 trigger pattern; the long
+      # round-20a labels are replaced).
+      mode_required: Required
+      mode_specific: Fixed Amount
+      mode_percent: Percent
+      mode_leftover: Leftover
+      # Round 27 (owner item 4): the two-income Ratio trigger + the greyed
+      # readouts/labels the dialog derives client-side (the ratio is never
+      # submitted — it is re-derived from the stored per-income values).
+      # Round 28: the behavior option labels are the owner's words (the
+      # radio value= attributes stay equal/rational/fixed_amounts — only
+      # the rendered labels change).
+      ratio_label: Ratio
+      ratio_equal: 50/50
+      ratio_rational: Proportional Split
+      ratio_fixed_amounts: Fixed Amounts
+      # Round 30: the 4th behavior option (Percent of the required amount) —
+      # a Required-mode-only control (the radio is disabled + hidden under
+      # every other mode).
+      ratio_percent: Percent
+      # Round 28: the small grey labels above the between-row shared
+      # block's two triggers (the owner's "Split Behavior" label + the
+      # symmetric "Mode" label).
+      mode_label: Mode
+      split_behavior_label: Split Behavior
+      # Round 30: the required note explains the persisted split (percents
+      # of the required amount; blank = the equal split) and the leftover
+      # note why the split behavior does not apply (C1: display-only).
+      ratio_hidden_hint: "The required amount is split across the checked incomes — the split is saved as a percent of the required amount."
+      ratio_leftover_hint: "Each paycheck's leftover is what each income has left after required, fixed, and percent — it is inherently per-income, so the split behavior does not apply."
+      required_amount_label: "Required Amount: %{amount}"
+      required_amount_total_label: "Required Amount: %{amount} (total)"
+      total_amount_label: Total
+      percent_hint: Percent of each paycheck (combined income).
+      per_income_readout: "%{name}: %{amount}"
+      per_income_readout_percent: "%{name}: %{amount} (%{percent})"
+      mixed_modes: Mixed
+      percent_of_each_paycheck: of each paycheck
       percent_placeholder: "0-100"
       specific_placeholder: "0.00"
-      # Round 20f: ownership + role collapsed into one section, closed by
-      # default (least shown until needed).
-      details_heading: Details
+      # Round 28 (R28-4): the "Details" disclosure is gone — ownership +
+      # role stay always exposed in the bg-surface-inset panel.
       ownership_label: Ownership
       ownership_shared: Home / Shared
       role_label: Role
@@ -102,41 +140,6 @@ en:
       logo_upload_error_size: The image is too large. Maximum 1 MB.
       more_aria: More options
       popup_cancel: Cancel
-      role_savings_bucket: Savings bucket
-      role_credit_card_payoff: Credit card payoff
-      role_loan_payoff: Loan payoff
-      # Round 11 issue 8: the legacy single auto-transfer select is replaced
-      # by the sub-account-of select + the multi-target fan-out checkboxes.
-      sub_account_label: Sub-account of
-      sub_account_none: Not a sub-account
-      # Round 20e: the auto-transfer fan-out moved into the kebab.
-      menu_configure_auto_transfer: Configure Auto-Transfer
-      # Round 16 (owner note 3b): the searchable logo picker. The hidden
-      # input always submits the current slug (presence keeps / assign,
-      # blank clears); the server validates against the vendored set.
-      logo_label: Bank logo
-      logo_hint: Optional. Search the list and click one to assign it to this bank.
-      logo_search_placeholder: Search logos
-      logo_search_aria: Search bank logos
-      logo_clear: Clear
-      logo_none: No logo (auto-match or none)
-      logo_no_match: No logo matches that search.
-      auto_transfer_targets: Auto-Transfer to (sub-accounts)
-      auto_transfer_targets_hint: A bucket must first be set as a sub-account of this bank.
-      # Round 20d: the old search + list section is gone; the avatar
-      # (top-left of the dialog) opens the logo popup instead. Picking a
-      # built-in while a custom upload is attached removes the custom.
-      logo_popup_title: Bank logo
-      logo_hint: Click the avatar to upload a logo or pick a built-in one.
-      logo_upload: Upload Custom
-      logo_remove_custom: Remove custom
-      logo_builtin_heading: Built-in logos
-      logo_none: None
-      logo_upload_error_missing: No image file attached.
-      logo_upload_error_type: Only PNG, JPEG, WebP, or GIF images can be used as a bank logo.
-      logo_upload_error_size: The image is too large. Maximum 1 MB.
-      more_aria: More options
-      popup_cancel: Cancel
       save: Save
       # Remove from plan (owner review round 3, R3): the bank leaves the map;
       # its allocations persist unassigned ("No Assignment" marker).
@@ -145,6 +148,30 @@ en:
         one: "Remove this bank from the plan? Its %{count} allocation keeps its data but loses its source bank (shown as unassigned)."
         other: "Remove this bank from the plan? Its %{count} allocations keep their data but lose their source banks (shown as unassigned)."
         zero: Remove this bank from the plan?
+      # Round 25 (Item 2): "Make Allocated Sub-Account" — the kebab item
+      # that moves the opened account into the allocation pillar as its own
+      # node (the target allocation), and the REVERSE it becomes once one
+      # exists.
+      menu_make_allocated_sub_account: Make Allocated Sub-Account
+      menu_make_plain_bank_row: Make plain bank row
+      # Round 26 R2 (owner items 3 + 5): the context-aware kebab matrix —
+      # "Make Parent Account" (slot 1: opens the sub-account popup, whose
+      # "Not a sub-account" entry clears the link; slot 2: the REVERSE that
+      # destroys the target allocation) and the main-section "Parent
+      # Account" labeled row + picker. menu_make_plain_bank_row is unused
+      # since the matrix (the reverse item took its label) but the key is
+      # kept. none_selected is the pending bank-source row placeholder (a
+      # later round).
+      make_parent_account: Make Parent Account
+      parent_account: Parent Account
+      none_selected: None Selected
+      allocated_sub_title: Make Allocated Sub-Account
+      allocated_sub_hint: "This account moves into the allocation pillar as its own node. The source bank below funds it with the amount you set — pick \"Make Parent Account\" in this menu to undo it."
+      allocated_sub_name: Name
+      allocated_sub_amount: How much you want to put in there
+      allocated_sub_amount_hint: The monthly amount, prorated over this month's paychecks.
+      allocated_sub_source: Source bank
+      allocated_sub_source_hint: Pick the bank that funds it. The diagram draws the band from it into the account's node.
     income_config_dialog:
       title: "Configure %{name}"
       subtitle: Who this income belongs to and how many banks it can feed.
@@ -165,13 +192,36 @@ en:
       new_hint: Start a bill from scratch, or pick one above.
       new_cta: Add New Allocation
       locked_tooltip: "Edit Details Grabbed from Tracked Accounts"
-      new_cta: New Allocation
       name_label: Name
       kind_label: Kind
       kind_bill: Bill
       kind_debt: Debt
       kind_savings: Savings
       kind_fun_money: Fun money
+      # Round 31A (Fun Money v2): the fun_money kind's configuration
+      # fields (Ownership / Distribution / Mode / Matching). Rendered ONLY
+      # for kind "fun_money" (kind-conditional blocks; every other kind's
+      # dialog stays byte-identical).
+      ownership_label: Ownership
+      ownership_household: Household
+      distribution_label: Distribution
+      distribution_none: "—"
+      distribution_equal: 50/50 Pooled Income
+      distribution_rational: Proportional of Income
+      distribution_percent: Percentage of Pooled
+      distribution_individual_leftover: Individual Leftover by Allocations
+      distribution_percent_hint: Per-member percents must total 100.00.
+      # C3 = (a): the four existing Mode enum values with the bank-dialog
+      # labels, reordered per the owner's list (no new enum value).
+      fm_mode_leftover: Leftover
+      fm_mode_percent: Percent of Leftover
+      fm_mode_specific: Hard Number
+      fm_mode_required: Required (Monthly)
+      matching_label: Matching
+      matching_equalize: "Equalize (same per user)"
+      matching_per_income: "Per Income (own leftover)"
+      matching_household: "— Household"
+      fun_money_multiple_hint: Several Fun Money rows exist — the first one (by diagram order) drives the reconciliation.
       # Round 20 two-stack rework (U): the dialog is two disclosure stacks.
       # Stack 1 "Configure the allocation" shows only what is NOT pulled from
       # the detected bill (name / amount / cadence / mode render read-only
@@ -182,18 +232,23 @@ en:
       # link) render only for kind "bill" / "debt".
       section_configure: Configure the allocation
       section_bank_source: Bank source
+      # Round 25 R3: the collapsed "More options" disclosure (Kind /
+      # Cadence / Category — the per-kind second-tier fields).
+      more_options: More options
       linked_context_hint: Pulled from the detected bill, so these values are read-only here.
       linked_bill_label: Linked bill
       source_bank_label: Source bank
       # Optional but recommended (owner review round 3, R3): an unassigned
       # allocation ("No Assignment" marker) can pick a source bank again.
       source_bank_unassigned: No bank (unassigned)
+      # Round 26 R4 (item 6): the bank-source trigger's selection text when
+      # the allocation has no source bank (paired with the profile icon).
+      none_selected: None Selected
       # Round 21 T8: empty-state hint for the in-place-swappable BANK
       # SOURCE rows (plan_flows/_allocation_bank_rows.html.erb) when no
       # account is on the plan yet.
       empty_bank_rows: "Add accounts first: use Add Account."
       source_bank_hint: Pick the bank this allocation pays from. Unassigned allocations wait outside the resolution.
-      source_bank_hint: Pick a source bank so this allocation pays from it — unassigned allocations wait outside the resolution.
       # Owner round 10 (issue 4): the savings-bucket view of the same two
       # fields. The associated account IS the existing source-bank field
       # (account_id): the planner resolution and the Sankey band both key
@@ -201,7 +256,6 @@ en:
       # existing value field with mode "required" (monthly, prorated over
       # the month's paychecks). The bill-only fields (mode / cadence /
       # detected-bill link) are hidden for kind "savings" and "fun_money".
-      # detected-bill link / auto transfer) are hidden for kind "savings".
       savings_account_label: Which Account is this Savings Bucket Associated to
       savings_account_hint: Pick the account this savings bucket is associated to. The diagram draws the monthly band from it into the bucket.
       savings_value_label: How much to save Per Month
@@ -277,3 +331,5 @@ en:
       saved: Allocation removed.
     remove_account:
       removed: Bank removed from the plan.
+      has_target_allocation: This account is the target of an allocation — remove that allocation first.
+      has_sub_accounts: This account still has sub-accounts — remove them from the plan first.

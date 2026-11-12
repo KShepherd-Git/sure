@@ -48,22 +48,6 @@
               </label>
             <% end %>
           </div>
-          <% @unassigned_accounts.each do |account| %>
-            <label class="flex items-center gap-2 text-sm text-primary cursor-pointer">
-              <input type="checkbox"
-                     name="account_ids[]" value="<%= account.id %>"
-                     class="checkbox checkbox--light h-4 w-4 rounded" />
-              <span class="truncate"><%= account.name %></span>
-              <% if account.institution_name.present? %>
-                <span class="text-xs text-secondary truncate"><%= account.institution_name %></span>
-              <% end %>
-              <%# Round 16 (owner note 4): the same last-4 the plan-flow
-                  payload carries; nil for every account without a mask. %>
-              <% if (last4 = @account_last4s[account.id]) %>
-                <span class="text-xs text-secondary tabular-nums">****<%= last4 %></span>
-              <% end %>
-            </label>
-          <% end %>
           <% unless @unassigned_accounts.empty? %>
             <div class="pt-1">
               <%# Round 22 (N10): bg-primary resolves to #171717 in the

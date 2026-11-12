@@ -28,7 +28,8 @@
                 data-known-name="<%= known[:name] %>"
                 data-known-amount-cents="<%= known[:amount_cents].to_i %>"
                 data-known-cadence="<%= known[:cadence] %>"
-                data-known-account="<%= known[:account_id] %>">
+                data-known-account="<%= known[:account_id] %>"
+                data-known-category="<%= known[:category_id] %>">
           <span class="truncate text-primary"><%= known[:name] %></span>
           <span class="flex items-center gap-2 shrink-0">
             <% if known[:amount_cents].to_i.positive? %>

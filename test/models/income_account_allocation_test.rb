@@ -51,11 +51,34 @@ class IncomeAccountAllocationTest < ActiveSupport::TestCase
     assert build(mode: "percent", value: 1).valid?
   end
 
-  test "required and leftover carry no stored value" do
-    assert_not build(mode: "required", value: 5).valid?
+  # Round 30 (M1): required carries the stored PERCENT of the bank's
+  # required amount (2 dp major units) or nil (nil = the equal split =
+  # today's planner behavior).
+  test "required stores a percent of the required amount (0 < v <= 100) or nil" do
     assert build(mode: "required", value: nil).valid?
-    assert_not build(mode: "leftover", value: 0.25).valid?
+    assert build(mode: "required", value: 30.00).valid?
+    assert build(mode: "required", value: 50).valid?
+    assert build(mode: "required", value: 100.00).valid?
+  end
+
+  # Round 30 (M2): out-of-range percents fail with the stock validator
+  # wording (the trimmed locale set has no :numericality key — R5 BUG-7).
+  test "required rejects zero and over-100 percents with stock wording" do
+    zero = build(mode: "required", value: 0)
+    assert_not zero.valid?
+    assert zero.errors[:value].any? { |m| m.include?("must be greater than 0") }
+
+    over = build(mode: "required", value: 100.01)
+    assert_not over.valid?
+    assert over.errors[:value].any? { |m| m.include?("must be less than or equal to 100") }
+  end
+
+  # Round 30 (M3): leftover stays display-only (C1) — no stored value.
+  test "leftover carries no stored value" do
     assert build(mode: "leftover", value: nil).valid?
+    leftover = build(mode: "leftover", value: 5.00)
+    assert_not leftover.valid?
+    assert leftover.errors[:value].any?
   end
 
   test "the income series must be a declared income" do

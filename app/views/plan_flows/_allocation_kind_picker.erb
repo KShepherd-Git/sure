@@ -1,0 +1,45 @@
+<%# locals: (trigger_class:, label:, wrapper_class: "", with_plus: false) %>
+<%# Round 25 R3: the Add Allocation CTA kind picker (Round 25 R3). The Add Allocation CTAs
+    (the diagram's floating button, the empty-state button, and the
+    allocation dialog's header CTA) no longer open the blank allocation
+    form directly — they open this 4-item DS::Menu (Bill / Debt / Savings /
+    Fun Money). Picking a kind opens the allocation:new dialog on a blank
+    form pre-set to that kind (plan-flow#openAllocationKind, which reuses
+    the openBlankAllocation reset: form.reset() + mode "required" +
+    #applyAllocationVisibility + the category summary).
+    DS::Menu was chosen over a hand-rolled Tailwind dropdown because it
+    carries the trigger toggle, the ARIA contract (role=menu/menuitem,
+    aria-haspopup/expanded/controls), keyboard roving, floating placement,
+    and outside-click/Escape close for free (app/components/DS/menu*.rb).
+    The items are real <button>s (DS::MenuItem's button variant renders
+    via button_to), so the explicit click-> action binding is the house
+    pattern — a bare data-action on a <div> would bind silently.
+    href="#" makes button_to emit a dead form (no real URL to submit);
+    openAllocationKind calls event.preventDefault() to kill the implicit
+    submit before it can fire (house precedent:
+    app/views/imports/_import_option.html.erb button_to + data turbo:false).
+    The trigger must NOT carry a plan-flow data-action: DS--menu's own
+    click listener toggles the menu, and a second listener would
+    double-toggle it. The trigger keeps each CTA's existing classes +
+    inner span; wrapper_class sizes the DS::Menu wrapper div where the CTA's
+    layout needs it (the dialog header is flex-col, so the wrapper keeps the
+    trigger right-aligned via self-end); with_plus matches the diagram CTAs'
+    plus icon (the dialog header CTA has none). %>
+<% if wrapper_class.present? %><div class="<%= wrapper_class %>"><% end %>
+  <%= render DS::Menu.new(variant: "button") do |menu| %>
+    <% menu.with_button(class: trigger_class) do %>
+      <span class="flex items-center gap-1">
+        <% if with_plus %><%= icon("plus", class: "h-3 w-3") %><% end %><%= label %>
+      </span>
+    <% end %>
+    <% %w[bill debt savings fun_money].each do |kind| %>
+      <% menu.with_item(variant: "button",
+            text: t("plan_flows.allocation_dialog.kind_#{kind}"),
+            icon: { "bill" => "receipt-text", "debt" => "credit-card",
+                    "savings" => "piggy-bank", "fun_money" => "party-popper" }[kind],
+            href: "#",
+            data: { action: "click->plan-flow#openAllocationKind",
+                    allocation_kind: kind, turbo: "false" }) %>
+    <% end %>
+  <% end %>
+<% if wrapper_class.present? %></div><% end %>

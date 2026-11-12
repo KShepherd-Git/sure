@@ -33,10 +33,14 @@
     <div class="absolute right-3 top-10 w-72 max-h-[420px] overflow-y-auto rounded-xl border border-dashed border-subdued bg-container/95 shadow-border-xs p-4 space-y-3">
       <div class="flex items-center justify-between gap-2">
         <p class="text-xs font-medium uppercase tracking-wide text-secondary"><%= t("plan_flows.show.column_allocations") %></p>
-        <%= button_tag(type: "button", class: "text-xs bg-primary text-on-primary rounded-lg px-2.5 py-1 hover:opacity-90",
-             data: { action: "plan-flow#openNewAllocation" }) do %>
-          <span class="flex items-center gap-1"><%= icon("plus", class: "h-3 w-3") %><%= t("plan_flows.show.add_allocation") %></span>
-        <% end %>
+        <%# Round 25 R3: the CTA opens the 4-kind picker (Bill / Debt /
+            Savings / Fun Money) instead of the blank form; picking a kind
+            opens the allocation:new dialog pre-set to it (the
+            plan-flow#openAllocationKind action on the menu items). %>
+        <%= render "plan_flows/allocation_kind_picker",
+              trigger_class: "text-xs bg-primary text-on-primary rounded-lg px-2.5 py-1 hover:opacity-90",
+              label: t("plan_flows.show.add_allocation"),
+              with_plus: true %>
       </div>
     </div>
   <% else %>
@@ -46,14 +50,12 @@
         allocation node keeps its own label + hit-rect click handlers
         (R1 T6), so the allocation stays editable underneath. %>
     <div class="absolute right-3 top-2">
-    <%# Round 21 T6: the float sits at the BOTTOM-right corner. Allocations
-        stack down from the column top, so top-2 landed 6px above the first
-        allocation node at the owner viewport and stole its clicks. %>
-    <div class="absolute right-3 bottom-3">
-      <%= button_tag(type: "button", class: "text-xs bg-container border border-subdued text-secondary rounded-lg px-2.5 py-1 shadow-border-xs hover:text-primary",
-           data: { action: "plan-flow#openNewAllocation" }) do %>
-        <span class="flex items-center gap-1"><%= icon("plus", class: "h-3 w-3") %><%= t("plan_flows.show.add_allocation") %></span>
-      <% end %>
+      <%# Round 25 R3: the 4-kind picker (see _allocation_kind_picker.erb)
+          — picking a kind opens the allocation:new dialog pre-set to it. %>
+      <%= render "plan_flows/allocation_kind_picker",
+            trigger_class: "text-xs bg-container border border-subdued text-secondary rounded-lg px-2.5 py-1 shadow-border-xs hover:text-primary",
+            label: t("plan_flows.show.add_allocation"),
+            with_plus: true %>
     </div>
   <% end %>
 

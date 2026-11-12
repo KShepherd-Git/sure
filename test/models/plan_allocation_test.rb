@@ -13,7 +13,6 @@ class PlanAllocationTest < ActiveSupport::TestCase
 
   def build(mode:, value_cents: nil, value_percent: nil, name: "Netflix", kind: "bill",
             recurring_transaction: nil, family: @family, account: @account, category: nil)
-            recurring_transaction: nil, family: @family, account: @account)
     PlanAllocation.new(
       family: family,
       account: account,
@@ -148,5 +147,121 @@ class PlanAllocationTest < ActiveSupport::TestCase
     foreign_alloc = build(mode: "specific", value_cents: 100, category: foreign)
     assert_not foreign_alloc.valid?
     assert foreign_alloc.errors[:category].any?
+  end
+
+  # Round 31A (Fun Money v2): the fun_money row's configuration —
+  # ownership / distribution / matching are fun_money-only (a config value
+  # on any other kind is a 422, same as the dialog's sanitizer), the
+  # ownership must name the household or THIS family's member, the
+  # distribution/matching must be the fixed sets, and distribution
+  # "percent" needs per-member percents keyed by family members, 0-100,
+  # summing to 100.00 +/- 0.01 (C9).
+  def fm_build(**attrs)
+    PlanAllocation.new(
+      family: @family, account: @account, name: "Fun money",
+      kind: "fun_money", mode: attrs.fetch(:mode, "leftover"),
+      value_cents: attrs[:value_cents], value_percent: attrs[:value_percent]
+    ).tap { |row| attrs.each { |k, v| row.public_send("#{k}=", v) } }
+  end
+
+  test "Round 31A: no config -> valid (legacy household behavior)" do
+    assert fm_build().valid?
+    assert fm_build(mode: "required", value_cents: 10_000).valid?
+    assert fm_build(mode: "specific", value_cents: 10_000).valid?
+    assert fm_build(mode: "percent", value_percent: 0.5).valid?
+  end
+
+  test "Round 31A: config values on non-fun_money kinds are rejected" do
+    %w[bill debt savings].each do |kind|
+      row = build(mode: "leftover", kind: kind, name: "Row")
+      row.ownership = "household"
+      row.distribution = "equal"
+      row.matching = "equalize"
+      assert_not row.valid?, "#{kind} with config"
+      assert row.errors[:ownership].any?, "#{kind} ownership error"
+      assert row.errors[:distribution].any?, "#{kind} distribution error"
+      assert row.errors[:matching].any?, "#{kind} matching error"
+    end
+  end
+
+  test "Round 31A: ownership must be the household or this family's member" do
+    admin_id = users(:family_admin).id
+    member_id = users(:family_member).id
+    stranger = @other_family.users.create!(
+      first_name: "X", last_name: "Y", email: "x@y.z", role: "member",
+      password: "Password123!"
+    )
+
+    assert fm_build(mode: "leftover", ownership: "household").valid?
+    assert fm_build(mode: "leftover", ownership: admin_id.to_s).valid?
+    assert fm_build(mode: "leftover", ownership: member_id.to_s).valid?
+
+    dangling = fm_build(mode: "leftover", ownership: "00000000-0000-0000-0000-000000000000")
+    assert_not dangling.valid?
+    assert dangling.errors[:ownership].any?
+
+    cross_family = fm_build(mode: "leftover", ownership: stranger.id.to_s)
+    assert_not cross_family.valid?
+    assert cross_family.errors[:ownership].any?
+  end
+
+  test "Round 31A: distribution and matching are the fixed sets" do
+    # (percent is exercised with its percents in the C9 test — the bare
+    # value is accepted as a set member, the percents are the model's
+    # concern.)
+    %w[equal rational individual_leftover].each do |distribution|
+      assert fm_build(distribution: distribution).valid?, distribution
+    end
+    pooled = fm_build(distribution: "pooled")
+    assert_not pooled.valid?
+    assert pooled.errors[:distribution].any?
+
+    %w[equalize per_income].each do |matching|
+      assert fm_build(matching: matching).valid?, matching
+    end
+    split = fm_build(matching: "split")
+    assert_not split.valid?
+    assert split.errors[:matching].any?
+  end
+
+  test "Round 31A: distribution percent needs per-member percents summing to 100.00 (C9)" do
+    admin_id = users(:family_admin).id
+    member_id = users(:family_member).id
+
+    # No percents at all.
+    none = fm_build(distribution: "percent", distribution_params: {})
+    assert_not none.valid?
+    assert none.errors[:distribution].any?
+
+    # Per-member percents, keyed by family members, summing to 100.00.
+    assert fm_build(distribution: "percent",
+      distribution_params: { "percents" => { admin_id.to_s => "40.00", member_id.to_s => "60.00" } }).valid?
+
+    # Sum drift beyond the 0.01 allowance.
+    drift = fm_build(distribution: "percent",
+      distribution_params: { "percents" => { admin_id.to_s => "40.00", member_id.to_s => "60.02" } })
+    assert_not drift.valid?
+    assert drift.errors[:distribution_params].any?
+
+    # Out-of-range percent.
+    ranged = fm_build(distribution: "percent",
+      distribution_params: { "percents" => { admin_id.to_s => "40.00", member_id.to_s => "160.00" } })
+    assert_not ranged.valid?
+    assert ranged.errors[:distribution_params].any?
+
+    # A key that is not a family member.
+    foreign_key = fm_build(distribution: "percent",
+      distribution_params: { "percents" => { "00000000-0000-0000-0000-000000000000" => "100.00" } })
+    assert_not foreign_key.valid?
+    assert foreign_key.errors[:distribution_params].any?
+
+    # The other distributions do not need percents.
+    assert fm_build(distribution: "equal").valid?
+    assert fm_build(distribution: "individual_leftover").valid?
+  end
+
+  test "Round 31A: a saved inputs_snapshot (C14) is inert for validation" do
+    snapshot = { "inputs_snapshot" => { "A" => { "i" => 10_000, "b" => 5_000, "s" => 0 } } }
+    assert fm_build(ownership: "household", distribution_params: snapshot).valid?
   end
 end

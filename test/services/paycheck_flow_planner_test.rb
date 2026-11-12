@@ -26,9 +26,14 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
       end }
   end
 
-  def edge(income_id:, account_id:, mode:, value_cents: nil, value_percent: nil)
+  # required_percent (Round 30): the stored 2-dp percent of the bank's
+  # required amount a required edge carries (nil = the equal split). The
+  # LEGACY plan path ignores it (the graph path is the only consumer —
+  # P6 pins the byte-identity).
+  def edge(income_id:, account_id:, mode:, value_cents: nil, value_percent: nil, required_percent: nil)
     { income_id: income_id, account_id: account_id, mode: mode,
-      value_cents: value_cents, value_percent: value_percent }
+      value_cents: value_cents, value_percent: value_percent,
+      required_percent: required_percent }
   end
 
   # 1. A 90/10 income split is equalized under equal_split: the pooled leftover
@@ -342,5 +347,118 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
     assert_includes entry.message, "Unconvertible amount zeroed"
     assert_equal "EUR", entry.metadata["source_currency"]
     assert_equal "USD", entry.metadata["target_currency"]
+  end
+
+  # R6 (Round 27 T4 fix): AR-seam regression for deterministic graph
+  # serialization (the R5 SHA drift). The app's own upsert destroys and
+  # recreates an income_account_allocations row (fresh id + created_at, a
+  # new physical table position), and the planner's unordered edge read let
+  # that reposition the bank in the serialized banks array. The edge read
+  # is now ordered by the natural key (income series, account) and the
+  # banks union is sorted by account id, so the serialized graph must be
+  # byte-identical across the upsert. (R25 h's proposed
+  # .order(:created_at, :id) cannot satisfy this property — a recreate
+  # gets the newest created_at and moves to the end — so the natural key
+  # supersedes it.)
+  test "plan_graph serialization is byte-stable across an allocation upsert" do
+    family = users(:family_admin).family
+    owner = users(:family_admin)
+    bank_a = accounts(:depository)
+    bank_b = Account.create!(name: "R6 Regression Bank B", family: family,
+      owner: owner, currency: "USD", balance: 0, status: "active",
+      accountable_type: "Depository", accountable: Depository.new)
+    bank_c = Account.create!(name: "R6 Regression Bank C", family: family,
+      owner: owner, currency: "USD", balance: 0, status: "active",
+      accountable_type: "Depository", accountable: Depository.new)
+
+    # Two income series sharing BOTH due_on dates — also exercises the
+    # :id tie-break on the occurrences read.
+    series_a = family.recurring_transactions.create!(
+      name: "R6 Payroll A", account: bank_a, amount: 2700, currency: "USD",
+      expected_day_of_month: 6, last_occurrence_date: Date.new(2026, 9, 6),
+      next_expected_date: Date.new(2026, 12, 20), status: "active",
+      bill_type: "income", manual: true)
+    series_b = family.recurring_transactions.create!(
+      name: "R6 Payroll B", account: bank_a, amount: 900, currency: "USD",
+      expected_day_of_month: 6, last_occurrence_date: Date.new(2026, 9, 20),
+      next_expected_date: Date.new(2026, 12, 20), status: "active",
+      bill_type: "income", manual: true)
+    [ [series_a, 2700], [series_b, 900] ].each do |series, amount|
+      # The series create-callback backfills occurrences up to
+      # next_expected_date — clear them (the house pattern) before the
+      # exact two are created below.
+      series.recurring_occurrences.destroy_all
+      [ Date.new(2026, 11, 6), Date.new(2026, 11, 20) ].each do |date|
+        series.recurring_occurrences.create!(family: family, due_on: date,
+          original_due_on: date, currency: "USD", expected_amount: amount,
+          status: "scheduled")
+      end
+    end
+
+    # Five edges — one leftover per income (no multi-leftover ambiguity).
+    # The middle edge is the upsert target (mirrors the R5 po5 drift).
+    upserted = family.income_account_allocations.create!(
+      income_series: series_a, account: bank_b, mode: "percent", value: 0.25)
+    family.income_account_allocations.create!(
+      income_series: series_a, account: bank_a, mode: "specific", value: 100.0)
+    family.income_account_allocations.create!(
+      income_series: series_a, account: bank_c, mode: "leftover")
+    family.income_account_allocations.create!(
+      income_series: series_b, account: bank_a, mode: "specific", value: 50.0)
+    family.income_account_allocations.create!(
+      income_series: series_b, account: bank_c, mode: "leftover")
+
+    month = Date.new(2026, 11, 15)
+    before = PaycheckFlowPlanner.plan_graph(family: family, month: month)
+
+    # The app's upsert shape (save_bank_links): destroy + recreate the
+    # same edge — fresh id + created_at, a new physical table position.
+    upserted.destroy!
+    family.income_account_allocations.create!(
+      income_series: series_a, account: bank_b, mode: "percent", value: 0.25)
+
+    after = PaycheckFlowPlanner.plan_graph(family: family, month: month)
+
+    assert_equal before.to_json, after.to_json,
+      "the serialized plan_graph must be byte-stable across an allocation upsert"
+    assert_equal before[:banks].map { |bank| bank[:id] }, after[:banks].map { |bank| bank[:id] },
+      "the serialized banks order must be stable across an allocation upsert"
+    assert_equal before[:banks].map { |bank| bank[:id] }.sort,
+      before[:banks].map { |bank| bank[:id] },
+      "the banks array must be in stable account-id order"
+  end
+
+  # Round 30 (P6): the LEGACY plan path (plan, not plan_graph) never reads
+  # the required percents — resolve_edges receives an empty split map, so a
+  # required edge carrying a stored percent plans EXACTLY as today. This is
+  # the stop-rule's legacy-side half (the graph-side half is P4 in the
+  # graph test file).
+  test "the legacy plan ignores required percents (P6)" do
+    a = income(id: "A", owner_id: P1, amounts: [ 50_000, 50_000 ])
+    b = income(id: "B", owner_id: P2, amounts: [ 50_000, 50_000 ])
+    plain = planner(
+      month: Date.new(2026, 11, 1),
+      incomes: [ a, b ],
+      allocations: [
+        edge(income_id: "A", account_id: "accObl", mode: "required"),
+        edge(income_id: "B", account_id: "accObl", mode: "required"),
+        edge(income_id: "A", account_id: "accFun", mode: "leftover"),
+        edge(income_id: "B", account_id: "accFun", mode: "leftover")
+      ],
+      obligations: { "accObl" => BigDecimal(60_000) }
+    )
+    with_percents = planner(
+      month: Date.new(2026, 11, 1),
+      incomes: [ a, b ],
+      allocations: [
+        edge(income_id: "A", account_id: "accObl", mode: "required", required_percent: BigDecimal("30.00")),
+        edge(income_id: "B", account_id: "accObl", mode: "required", required_percent: BigDecimal("70.00")),
+        edge(income_id: "A", account_id: "accFun", mode: "leftover"),
+        edge(income_id: "B", account_id: "accFun", mode: "leftover")
+      ],
+      obligations: { "accObl" => BigDecimal(60_000) }
+    )
+    assert_equal plain.to_json, with_percents.to_json,
+      "the legacy plan output must be byte-identical with or without required percents"
   end
 end

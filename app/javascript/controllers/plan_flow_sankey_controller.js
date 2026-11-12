@@ -48,12 +48,6 @@ let nextChartId = 0;
 // strictly proportional with the dashboard-style small-label hide — the
 // owner's honest-ratio answer, untouched by round 15.
 export default class PlanFlowSankeyController extends Controller {
-// re-fetch — the mode never changes the data). MANAGE (the default on
-// load) = the current behavior: the MIN_NODE_HEIGHT / MIN_BAND_WIDTH /
-// 1.5% sliver floors keep every label showable. VIEW = strictly
-// proportional to the data (floor passes skipped, the dashboard-style
-// small-label hide re-enabled) — the owner's honest-ratio answer.
-export default class extends Controller {
   static values = {
     graphUrl: String,
     view: String, // "paycheck" | "monthly"
@@ -91,14 +85,6 @@ export default class extends Controller {
   // non-zero bands keep their true proportional width.
   static MIN_BAND_WIDTH = 3;
   // Round 21 (T1, owner): the gap between the income's right edge and the
-  // Un-Allocated stub's left edge on EMPTY plans (no allocations at all) —
-  // see #placeUnallocatedNearTails. The stub sits a short straight band
-  // away from the income instead of sweeping the full chart width.
-  static UA_GAP = 28;
-  // Round 16.7: the explicit gutter the min-width search enforces between
-  // two label boxes (owner: "only enough space for the labels to not
-  // overlap with minimum in between space").
-  static MIN_LABEL_GAP = 8;
   // Un-Allocated stub's left edge — see #placeUnallocatedNearTails.
   // Round 22 (N3, owner): the gap is GONE — the stub is flush at the
   // income's right edge (zero gap, "straight out and stop super early")
@@ -117,7 +103,15 @@ export default class extends Controller {
   // (the tightest inter-block gap in the reference's allocation column).
   static LABEL_GUTTER = 8;
   static LABEL_BLOCK_PADDING = 15;
-  // wiring to its source bank at the floor width.
+  // Round 24 (owner): the visible block-to-block padding in MANAGE mode —
+  // the drawn rows of the bank and allocation/surplus columns are re-stacked
+  // (top-anchored) with exactly this gap between every adjacent DRAWN row,
+  // and the overall diagram height grows to fit (the round 16.6/16.8
+  // "manage locked to the container" height lock is lifted for MANAGE by
+  // owner directive; the individual drawn block heights are UNCHANGED and
+  // VIEW mode keeps the locked container height — see
+  // #manageRowGapsAndExtent).
+  static ROW_GAP = 8;
   static ANIM_NODE_MS = 500;
   static ANIM_LINK_MS = 400;
   static COLORS = {
@@ -126,7 +120,9 @@ export default class extends Controller {
     bill: "#EAB308",
     debt: "#EC2222",
     savings: "#2563EB", // R4: savings allocations are BLUE
-    fun_money: "#EAB308",
+    // Round 31A (C7, owner spec a): the fun_money kind default is the app's
+    // income green (a category color still wins — validHex precedence below).
+    fun_money: "#10A861",
     surplus: "#10A861",
     unallocated: "#9E9E9E",
     over: "#EC2222",
@@ -136,8 +132,6 @@ export default class extends Controller {
   // Round 16 (owner note 3b): the bank favicon chip geometry — part of the
   // label box (it sits node-side of the text), so the measured label floors
   // adapt automatically.
-  // label box (it sits node-side of the text), so the measured floors and
-  // the min-width overlap search adapt automatically.
   static LOGO_CHIP_SIZE = 14; // px, chip height (owner: ~14-16px)
   static LOGO_CHIP_GAP = 4; // px between the chip and the label text
 
@@ -232,7 +226,19 @@ export default class extends Controller {
     this.svg = null;
     this.rafId = null;
     this.animationToken = 0;
-    this.resizeObserver = new ResizeObserver(() => this.#redraw());
+    // Round 24 (owner): the observer is WIDTH-ONLY. The manage row-gap
+    // pass grows this.lastChartHeight (the svg — and with it this wrapper
+    // — grows vertically, 480 -> 704 on the live plan), and a height-only
+    // change must NOT re-trigger the layout: the layout is width-driven,
+    // so a height change would just re-fetch + re-lay-out + re-tween to
+    // the exact same grown size (and re-enter this observer — a loop).
+    this.lastObservedWidth = null;
+    this.resizeObserver = new ResizeObserver(() => {
+      const w = this.element.clientWidth;
+      if (this.lastObservedWidth !== null && w === this.lastObservedWidth) return;
+      this.lastObservedWidth = w;
+      this.#redraw();
+    });
     this.resizeObserver.observe(this.element);
     document.fonts?.ready?.then(() => this.#redraw());
     // In-place graph updates (owner round 3, R1/R7): a plan mutation (the
@@ -322,17 +328,19 @@ export default class extends Controller {
         return;
       }
       layout = this.#generateSankeyData(nodes, links, width, height);
-      // Round 16.8: the chart is LOCKED at the container in both modes
-      // (the manage label floors are a draw-level clamp only) — draw +
-      // flatten at the chart dimensions the layout pass recorded (the
-      // container size).
-      // Round 16 (owner notes A/B): the layout can be BIGGER than the
-      // container (the manage label floors grow the chart; the min-width
-      // search can widen it) — draw + flatten at the chart dimensions the
-      // layout pass recorded, not the container size.
+      // Round 16.8: the chart is LOCKED at the container (the manage label
+      // floors are a draw-level clamp only). Round 24 (owner) unlocked that
+      // lock for MANAGE ONLY: the row-gap pass may grow lastChartHeight
+      // during the flatten, so the re-read BELOW the flatten (not this
+      // pre-flatten design-height read, which stays the runLayout input)
+      // is what #draw uses. View stays locked at the design height.
       chartWidth = this.lastChartWidth || width;
       chartHeight = this.lastChartHeight || height;
       this.#flattenColumns(layout, chartWidth, chartHeight);
+      // Round 24 (E4): re-read AFTER the flatten — #manageRowGapsAndExtent
+      // may have grown this.lastChartHeight in place (manage row-gap
+      // layout). View mode: the pass early-returns, so this is a no-op.
+      chartHeight = this.lastChartHeight || chartHeight;
     } catch (error) {
       // Never leave the chart silently blank: any data anomaly surfaces as a
       // visible note + console error (owner review round 2, F4).
@@ -341,7 +349,6 @@ export default class extends Controller {
       return;
     }
     this.#draw(layout, chartWidth, chartHeight);
-    this.#draw(layout, width, height);
     this.#flushModePending();
   }
 
@@ -403,13 +410,16 @@ export default class extends Controller {
       chartWidth = this.lastChartWidth || width;
       chartHeight = this.lastChartHeight || height;
       this.#flattenColumns(layout, chartWidth, chartHeight);
+      // Round 24 (E4): re-read AFTER the flatten — #manageRowGapsAndExtent
+      // may have grown this.lastChartHeight in place (manage row-gap
+      // layout). View mode: the pass early-returns, so this is a no-op.
+      chartHeight = this.lastChartHeight || chartHeight;
     } catch (error) {
       console.error("plan-flow diagram failed to render", error);
       this.#fallback(`${this.labelsValue.error || "Couldn't draw the diagram — refresh the page."} [${error.name}: ${error.message}${error.stack ? ` | ${String(error.stack).split("\n").slice(1, 2).join("")}` : ""}`);
       return;
     }
     this.#draw(layout, chartWidth, chartHeight);
-    this.#draw(layout, width, height);
     this.#flushModePending();
   }
 
@@ -461,7 +471,6 @@ export default class extends Controller {
     let layout;
     let chartWidth = width;
     let chartHeight = height;
-    const height = this.element.clientHeight;
     try {
       const { nodes, links } = this.#buildGraph(this.graph);
       const totalValue = nodes.reduce((sum, node) => sum + Number(node.fixedValue ?? node.value ?? 0), 0);
@@ -473,6 +482,10 @@ export default class extends Controller {
       chartWidth = this.lastChartWidth || width;
       chartHeight = this.lastChartHeight || height;
       this.#flattenColumns(layout, chartWidth, chartHeight);
+      // Round 24 (E4): re-read AFTER the flatten — #manageRowGapsAndExtent
+      // may have grown this.lastChartHeight in place (manage row-gap
+      // layout). View mode: the pass early-returns, so this is a no-op.
+      chartHeight = this.lastChartHeight || chartHeight;
     } catch (error) {
       console.error("plan-flow diagram failed to render", error);
       this.#fallback(`${this.labelsValue.error || "Couldn't draw the diagram — refresh the page."} [${error.name}: ${error.message}${error.stack ? ` | ${String(error.stack).split("\n").slice(1, 2).join("")}` : ""}`);
@@ -494,9 +507,6 @@ export default class extends Controller {
       if (Number.isFinite(min) && min >= 100) return min;
     } catch { /* no layout engine (headless harness) */ }
     return this.element.clientHeight;
-      this.#flattenColumns(layout, width, height);
-      this.#fallback(this.labelsValue.error || "Couldn't draw the diagram — refresh the page.");
-    this.#draw(layout, width, height);
   }
 
   // Issue 10: a mode toggle that landed while a draw was in flight applies
@@ -523,13 +533,6 @@ export default class extends Controller {
     // the SAME object just before calling #buildGraph (idempotent), and
     // the test harnesses call #buildGraph/#flattenColumns directly via
     // ForTest aliases without ever setting this.graph.
-    // Round 21 (T1): record the payload on the instance so the empty-plan
-    // gate inside #flattenColumns (#placeUnallocatedNearTails reads
-    // this.graph?.allocations) is stable however the pipeline is driven:
-    // the three live re-render paths assign this.graph the SAME object
-    // just before calling #buildGraph (idempotent), and the test
-    // harnesses call #buildGraph/#flattenColumns directly via ForTest
-    // aliases without ever setting this.graph.
     this.graph = graph;
     const scale = this.#scale(graph);
     const { COLORS, VALUE_FLOOR } = this.constructor;
@@ -636,74 +639,6 @@ export default class extends Controller {
       if (allocation.mode !== "required" || allocation.account_id == null) return;
       fanoutBase.set(allocation.account_id, (fanoutBase.get(allocation.account_id) || 0) + Number(allocation.value_cents || 0));
     });
-    // Un-Allocated: the total of every income's no-leftover-edge remainder.
-    // Computed up front: when it is positive the layout grows a dedicated
-    // pillar layer BETWEEN the Incomes and the Banks (owner, 2026-11-02: the
-    // full-width hatched band overlapped the bank column), so every other
-    // column is placed one slot to the right.
-    const unallocatedTotal = (graph.incomes || []).reduce(
-      (total, income) => total + Number(income.unallocated_month || 0),
-      0,
-    );
-    const unallocatedNode = unallocatedTotal > 0
-      ? {
-          id: "unallocated",
-          value: scale(unallocatedTotal),
-          displayValue: scale(unallocatedTotal),
-          kind: "unallocated",
-          // Round 14: its own slot (1) between the incomes (0) and the banks
-          // (2 in the four-slot layout). The x is fixed by d3-sankey from the
-          // layer; the tail y is applied post-flatten by
-          // #placeUnallocatedTails. A future sub-account column (round 14
-          // issue 8) lands at 3+, so column 1 stays shift-safe.
-          column: 1,
-          name: this.labelsValue.unallocated || "Un-Allocated",
-          color: COLORS.unallocated,
-          value: scale(amount),
-          displayValue: scale(amount),
-          label: true,
-          // Round 14: the sortKey is assigned in the ordering section below
-          // (rendered income order) so the pillars stack Kurt-above-Sammi in
-          // their own layer; the hidden bridge (sortKey = income count)
-          // sits after them in the same layer.
-        });
-      }
-    });
-    // Four x-slots (incomes | Un-Allocated pillars + hidden bridge | banks |
-    // allocations) while any pillar exists, else the classic 3-column layout.
-    // Round 14 (issue 5b): the pillars own the middle slot again; the hidden
-    // bridge shares it (zero value, invisible) purely to keep the layer
-    // count and the four-slot x layout.
-    const fourCol = unallocatedNodes.length > 0;
-
-    // Round 11 issue 8: the DEDICATED sub-account column. When any bank row
-    // is a sub-account (sub_account true — the server set parent_account_id),
-    // the layout gains a column BETWEEN the top-level banks and the
-    // allocations — a sub-account is its own row there (a band from a parent
-    // to a same-column child would have zero horizontal extent), and the
-    // parent's fan-out (auto_transfer_target_ids, ordered = the diagram's
-    // band order) draws one REAL band per target. The pillar layer (G's
-    // round 5b tail placement) stays exactly where it is — column 1,
-    // derived shift-safe — so:
-    //   no pillars:    0 incomes | 1 banks | 2 sub-accounts | 3 alloc+anchor
-    //   with pillars:  0 incomes | 1 pillars | 2 banks | 3 subs | 4 alloc
-    // NO sub-accounts -> the columns collapse back and every computed value
-    // below is identical to the pre-issue-8 layout (byte-identical).
-    const hasSubAccounts = (graph.banks || []).some((bank) => bank.sub_account === true);
-    const subAccountCol = fourCol ? 3 : 2;
-    const allocationCol = fourCol ? (hasSubAccounts ? 4 : 3) : (hasSubAccounts ? 3 : 2);
-    // The child's reservation base (dollars/month). The planner keeps the
-    // fan-out transfer OUT of graph[:bands] (it is a RESERVATION on the
-    // parent's post-allocation surplus, not an inflow movement), so the
-    // payload carries no per-transfer flow: the JS derives each child's
-    // monthly base from its required-mode plan allocations (value_cents).
-    // A child with zero required allocations (the zero-base bucket) gets
-    // base 0 -> its band renders at the 3px minBand floor (owner Q3).
-    const fanoutBase = new Map();
-    (graph.allocations || []).forEach((allocation) => {
-      if (allocation.mode !== "required" || allocation.account_id == null) return;
-      fanoutBase.set(allocation.account_id, (fanoutBase.get(allocation.account_id) || 0) + Number(allocation.value_cents || 0));
-    });
 
     // Banks: the graph's banks plus in-plan accounts it does not touch yet
     // (added but not linked) — they sit at the value floor.
@@ -749,8 +684,6 @@ export default class extends Controller {
         // sorts, the dialog lookups and the planner identity; the suffix
         // lives here so the measured label boxes (floors) adapt to the
         // FINAL text automatically.
-        // lives here so the measured label boxes (floors + overlap search)
-        // adapt to the FINAL text automatically.
         labelName: bank.last4 != null && String(bank.last4) !== ""
           ? `${this.accountsValue[bank.id] || "Account"} [${bank.last4}]`
           : undefined,
@@ -766,7 +699,6 @@ export default class extends Controller {
         // Round 16 (owner note 3a): the kind fill (nil-safe — the current
         // grey when the payload carries no kind/plan_role on the row).
         color: this.constructor.bankKindColor(this.constructor.bankKind(bank)),
-        color: COLORS.bank,
         value: isSubAccount
           ? fanoutValue
           : Math.max(Number(bank.inflow_month), 0) * (1 / (this.viewValue === "paycheck" ? (graph.paycheck_dates?.length || 1) : 1)),
@@ -775,18 +707,6 @@ export default class extends Controller {
         label: true,
       };
     });
-    ].map((bank) => ({
-      id: `bank:${bank.id}`,
-      sourceId: bank.id,
-      kind: "bank",
-      column: fourCol ? 2 : 1,
-      name: this.accountsValue[bank.id] || "Account",
-      color: COLORS.bank,
-      value: Math.max(Number(bank.inflow_month), 0) * (1 / (this.viewValue === "paycheck" ? (graph.paycheck_dates?.length || 1) : 1)),
-      surplus: Math.max(Number(bank.surplus_month), 0) * (1 / (this.viewValue === "paycheck" ? (graph.paycheck_dates?.length || 1) : 1)),
-      fixedValue: 0,
-      label: true,
-    }));
     bankNodes.forEach((bank) => {
       bank.fixedValue = Math.max(bank.value, VALUE_FLOOR);
       bank.displayValue = bank.value;
@@ -799,6 +719,13 @@ export default class extends Controller {
     // figure (so the row reads like its assigned siblings).
     const allocationNodes = (graph.allocations || []).map((allocation) => {
       const unassigned = allocation.status === "unassigned" || allocation.account_id == null;
+      // Round 25 (Item 2): a target allocation DRESSES the target account —
+      // the node label is the account identity and the chip is the
+      // account's logo (validated against the payload's available set, the
+      // bank's rule) with the kind icon as fallback (the bank's "always
+      // chip" rule). Plain rows carry neither field, so hasChip stays
+      // false and their rendering is untouched (the byte-identity proof).
+      const dressed = allocation.target_account_name != null;
       return {
         id: `allocation:${allocation.id}`,
         sourceId: allocation.id,
@@ -806,8 +733,17 @@ export default class extends Controller {
         account: allocation.account_id,
         kind: allocation.kind,
         column: allocationCol, // issue 8: 4 with pillars+subs, 3 without pillars+subs, 2 classic
-        column: fourCol ? 3 : 2,
-        name: allocation.name,
+        name: dressed ? allocation.target_account_name : allocation.name,
+        // Round 25 (Item 2): the dressed account's chip slug — nil-safe,
+        // the bank's rule (present on the row AND in the payload set).
+        logoSlug:
+          dressed &&
+          typeof allocation.target_account_logo === "string" &&
+          allocation.target_account_logo !== "" &&
+          availableBankLogos.has(allocation.target_account_logo)
+            ? allocation.target_account_logo
+            : null,
+        kindIcon: dressed ? this.constructor.kindIconKey(allocation.kind) : null,
         // Round 16 (owner note 5): the linked category's color wins when
         // present (the node fill AND the incoming band's gradient end —
         // #joinLinks stops run source.color -> target.color); nil / non-hex
@@ -817,7 +753,9 @@ export default class extends Controller {
             ? COLORS.debt
             : allocation.kind === "savings"
               ? COLORS.savings // R4: savings is blue
-              : COLORS.bill), // bill + fun money = spending amber
+              : allocation.kind === "fun_money"
+                ? COLORS.fun_money // Round 31A (C7): the green default
+                : COLORS.bill), // bill = spending amber
         // NOTE: the graph JSON's value_cents/got_month are DISPLAY dollars
         // (the planner runs money() on the raw cents) — do NOT re-divide.
         value: unassigned
@@ -844,7 +782,6 @@ export default class extends Controller {
           nodeType: "surplus",
           kind: "surplus",
           column: allocationCol, // issue 8: same column as the allocations
-          column: fourCol ? 3 : 2,
           name: this.labelsValue.surplus || "Surplus",
           color: COLORS.surplus,
           value: bank.surplus,
@@ -879,6 +816,15 @@ export default class extends Controller {
     // which allocation.
     allocationNodes.forEach((allocation) => {
       if (allocation.account == null) return;
+      // Round 26 (item 4): a dressed account (target allocation) no longer
+      // holds a bank row — the planner excludes it from graph.banks, and the
+      // in-plan list never synthesizes it (it has no plan marker of its own
+      // beyond the allocation). A band into a bank node that does not exist
+      // would dangle (d3-sankey throws on the unknown id -> the visible
+      // fallback). Skip the band; the allocation's source keeps drawing its
+      // other bands and the dressed node stays reachable through them.
+      const sourceId = allocation.account;
+      if (!graphBanks.has(sourceId) && !this.inPlanValue.includes(sourceId)) return;
       links.push({ source: `bank:${allocation.account}`, target: allocation.id, value: allocation.value, minBand: true });
     });
 
@@ -916,23 +862,13 @@ export default class extends Controller {
     // so each ribbon runs from its income to the node at the same row and
     // the ribbons cannot cross each other or share a target (same rule as
     // the bank -> allocation fan-out).
-    // Un-Allocated: hatched ribbons into the pillar. The target-side order
-    // follows the RENDERED income order (bigger income on top), so the
-    // ribbons keep their source-side stacking and cannot cross each other
-    // (same rule as the bank -> allocation fan-out).
     const hatchedLinks = [];
     if (fourCol) {
-    // Un-Allocated: hatched ribbons into the pillar. The target-side order
-    // follows the RENDERED income order (bigger income on top), so the
-    // ribbons keep their source-side stacking and cannot cross each other
-    // (same rule as the bank -> allocation fan-out).
-    if (unallocatedNode) {
       incomeNodes.forEach((incomeNode) => {
         const row = (graph.incomes || []).find((income) => income.id === incomeNode.sourceId);
         const amount = Number(row?.unallocated_month || 0);
         if (amount > 0) {
           hatchedLinks.push({ source: incomeNode.id, target: `unallocated:${incomeNode.sourceId}`, value: scale(amount), hatched: true });
-          hatchedLinks.push({ source: incomeNode.id, target: "unallocated", value: scale(amount), hatched: true });
         }
       });
     }
@@ -957,7 +893,6 @@ export default class extends Controller {
     let bridgeNode = null;
     if (bankNodes.length > 0) {
       anchorNode = { id: "anchor", kind: "anchor", column: allocationCol, name: "", color: COLORS.bank, fixedValue: 0, label: false };
-      anchorNode = { id: "anchor", kind: "anchor", column: fourCol ? 3 : 2, name: "", color: COLORS.bank, fixedValue: 0, label: false };
       if (incomeNodes.length === 0) {
         rootNode = { id: "root", kind: "root", column: 0, name: "", color: COLORS.bank, fixedValue: 0, label: false };
       }
@@ -970,9 +905,6 @@ export default class extends Controller {
         // gives each pillar depth 1 (its layer, since nodeAlign pins the
         // column) and the round 11 bridge -> pillar links are dead weight.
         bridgeNode = { id: "bridge", kind: "bridge", column: 1, name: "", color: COLORS.bank, fixedValue: 0, label: false, sortKey: incomeNodes.length };
-        // The pillar implies at least one income; the root is the fallback
-        // feeder if the data ever disagrees.
-        bridgeNode = { id: "bridge", kind: "bridge", column: 1, name: "", color: COLORS.bank, fixedValue: 0, label: false, sortKey: 1 };
         links.push({ source: incomeNodes.length > 0 ? incomeNodes[0].id : "root", target: "bridge", value: 0 });
       }
       const bankHasFlow = (bank) =>
@@ -1074,7 +1006,6 @@ export default class extends Controller {
         renderIndex.set(child.id, key);
       });
     });
-    const bankOrder = new Map(bankNodes.map((node, index) => [node.id, index]));
     // Allocations: grouped under their source bank's row (the round-2
     // barycenter order) with VALUE-DESCENDING rank inside the bank, so the
     // bank -> allocation bands fan out without crossings (owner round 3,
@@ -1155,35 +1086,6 @@ export default class extends Controller {
         node._ghost = true;
       }
     });
-    // Small allocation/surplus rows would render as sub-pixel slivers whose
-    // labels collide with neighbours; floor them to a visible sliver (height
-    // is proportional, so the floor is a share of the column total).
-    // Issue 10 (View/Manage): MANAGE only — VIEW mode is the honest-ratio
-    // answer and skips every value floor (strictly proportional).
-    if (this.mode !== "view") {
-      const allocationTotal = allocationNodes.reduce((sum, node) => sum + node.value, 0);
-      const surplusTotal = surplusNodes.reduce((sum, node) => sum + node.value, 0);
-      const allocationFloor = allocationTotal > 0 ? allocationTotal * 0.015 : 0;
-      const surplusFloor = surplusTotal > 0 ? surplusTotal * 0.015 : 0;
-      allocationNodes.forEach((node) => {
-        if (node.value > 0) node.fixedValue = Math.max(node.value, allocationFloor);
-      });
-      surplusNodes.forEach((node) => {
-        if (node.value > 0) node.fixedValue = Math.max(node.value, surplusFloor);
-      });
-    } else {
-      // VIEW: a zero-value row would break the layout (d3 ky guard: value 0
-      // -> NaN heights). The same $0.01 sliver the banks keep in BOTH modes
-      // keeps it placeable at a true hairline — negligible, not a size floor.
-      allocationNodes.forEach((node) => {
-        if (node.value <= 0) node.fixedValue = VALUE_FLOOR;
-      });
-      surplusNodes.forEach((node) => {
-        if (node.value <= 0) node.fixedValue = VALUE_FLOOR;
-      });
-    }
-      if (node.value <= 0) node.fixedValue = VALUE_FLOOR;
-      if (node.value <= 0) node.fixedValue = VALUE_FLOOR;
 
     const nodes = [
       ...incomeNodes,
@@ -1192,7 +1094,6 @@ export default class extends Controller {
       ...allocationNodes,
       ...surplusNodes,
       ...unallocatedNodes,
-      ...(unallocatedNode ? [unallocatedNode] : []),
       ...(bridgeNode ? [bridgeNode] : []),
       ...(anchorNode ? [anchorNode] : []),
     ];
@@ -1202,7 +1103,6 @@ export default class extends Controller {
 
   #generateSankeyData(nodes, links, width, height) {
     const { EXTENT_MARGIN, HEADER_SPACE, NODE_WIDTH, NODE_PADDING, MIN_NODE_PADDING, MAX_PADDING_RATIO } = this.constructor;
-    const { EXTENT_MARGIN, HEADER_SPACE, NODE_WIDTH, NODE_PADDING, MIN_NODE_PADDING, MAX_PADDING_RATIO, MIN_NODE_HEIGHT, MIN_BAND_WIDTH } = this.constructor;
     const availableHeight = height - HEADER_SPACE - EXTENT_MARGIN;
     const gaps = Math.max(nodes.length - 1, 1);
     const dynamicPadding = Math.min(NODE_PADDING, Math.floor((availableHeight * MAX_PADDING_RATIO) / gaps));
@@ -1210,18 +1110,10 @@ export default class extends Controller {
     // Algorithmic order: the hidden bridge shares the pillars' layer 1 slot
     // (sortKey = the income count, after the pillars) and the anchor sinks
     // to the bottom of its layer. Everything else uses the precomputed
-    // Algorithmic order: the Un-Allocated pillar leads its own layer 1
-    // (sortKey 0), the hidden bridge below it (sortKey 1), and the anchor
-    // sinks to the bottom of its layer. Everything else uses the precomputed
     // sortKey (banks = barycenter of their funding incomes, allocations =
     // their source bank's position, incomes = flow-weighted, and the
     // Un-Allocated pillars = rendered income order inside their own layer —
     // round 14: the tail y is post-flatten), with a stable name tiebreak.
-    // Algorithmic order: the Un-Allocated pillar leads its own layer 1
-    // (sortKey 0), the hidden bridge below it (sortKey 1), and the anchor
-    // sinks to the bottom of its layer. Everything else uses the precomputed
-    // their source bank's position, incomes = flow-weighted), with a stable
-    // name tiebreak.
     const rank = (node) => (node.id === "anchor" ? 3 : 0);
     const nodeSort = (a, b) => {
       if (rank(a) !== rank(b)) return rank(a) - rank(b);
@@ -1236,10 +1128,6 @@ export default class extends Controller {
     // both modes run the same d3-sankey pipeline once, at the container
     // size (the round 16/16.6 label-floor rescale and the round 16.7
     // min-width search are gone).
-    // Round 16 (owner notes A/B) + round 16.6: the generator is a
-    // FACTORY — the manage label-floor pass re-lays out at the LOCKED
-    // container height and the min-width search re-lays out at candidate
-    // widths, all through the same d3-sankey pipeline.
     const makeGenerator = (W, Hh) =>
       sankey()
         .nodeId((d) => d.id)
@@ -1294,199 +1182,6 @@ export default class extends Controller {
     // any pre-flatten pillar shift is undone on every draw (owner screenshot
     // 2026-11-01). Round 14 (issue 5b): the unallocated tail placement runs
     // at the END of #flattenColumns instead (#placeUnallocatedNearTails) - the
-    // pillars keep their own layer by node ordering (see #buildGraph) and
-    // the tail y is applied only after the flat-top re-anchoring it must
-    // survive.
-    // R2 (owner round 3): a guaranteed MINIMUM height for allocation /
-    // surplus rows. d3-sankey honors `fixedValue`, so a second layout pass
-    // bumps any short row's fixedValue (value -> height is linear per
-    // column, so value * (MIN / height) lands exactly on the floor) and
-    // the column re-scales. This keeps small bars (and their compact
-    // labels) from overlapping neighbours, and keeps unassigned rows (R3,
-    // zero flow) visible at the floor with their marker.
-    // Round 4 (ghost banks): bank rows join the floor too — a plan-ordered
-    // bank with $0 inflow (added but not linked yet) sits at the floor,
-    // visible and clickable, instead of a sub-pixel ghost.
-    // d3-sankey uses ONE pixel scale across all columns, so bumping a row's
-    // fixedValue shrinks that scale — a single pass lands just under the
-    // floor. Iterate (bump -> re-layout) until every short row is on the
-    // floor; it converges geometrically and the 0.5px tolerance stops early.
-    // Issue 10 (View/Manage): the floor passes are MANAGE-mode only. VIEW
-    // mode skips them entirely — nodes and bands render strictly
-    // proportional to the data (a 3px-would-be band keeps its true
-    // proportional height; small rows keep their true heights).
-    let layout = runLayout(width, height);
-    let chartWidth = width;
-    let chartHeight = height;
-    // Contract history (rounds 15 -> 16.6 -> 16.7): MANAGE minimums =
-    // LABEL-SUPPORTING (owner verbatim A, round 15: "the flow should be a
-    // minimum size that matches the minimum size of the labels and then
-    // everything else just gets bigger so that it's all still
-    // proportional..."). Round 16.6 retracted the grown height ("almost
-    // unlimited, this is impossible to look at") and rescaled the layout
-    // to honor the floors INSIDE the locked container. Round 16.7 (owner
-    // directive): that rescale is GONE — MANAGE layout = VIEW layout
-    // exactly (the strictly proportional d3 fit, height locked to the
-    // container, width = the min-width search below), and the floors are
-    // a DRAW-level clamp only (#applyManageFloors at the end of
-    // #flattenColumns: drawn node height = max(layout, label floor),
-    // drawn labeled-band thickness = max(layout, the band's label floor);
-    // overlap with neighbours is accepted per the directive). Owner
-    // verbatim B (round 16.6, still in force): the diagram gets a
-    // MINIMUM WIDTH with no label-box overlap — the svg is
-    // max(container, min width) and the wrapper scrolls horizontally
-    // (VIEW is unaffected: it fits the container and hides labels).
-    if (this.mode !== "view") {
-      // Round 16.7 (owner directive): the MANAGE layout is the VIEW layout
-      // exactly — the strictly proportional d3 fit at the container size,
-      // at the searched minimum width. The round 15/16/16.6 label-floor
-      // rescale (downward ky convergence, ghost fixedValue step, flow pin,
-      // the bump->re-layout safety net, and its layout-level Q3 value bump)
-      // is GONE: the minimums are applied at the DRAW level only
-      // (#applyManageFloors, called at the end of #flattenColumns), which
-      // extends the drawn node rect / band thickness to the measured label
-      // floor without rescaling the layout. The min-width search below
-      // keeps the wrapper wide enough that the measured labels do not
-      // overlap (at least MIN_LABEL_GAP between the label boxes); the
-      // height stays LOCKED at the container (round 16.6 retraction).
-      let candidate = width;
-      let overlap = this.#labelOverlapAt(candidate, chartHeight, () => runLayout(candidate, chartHeight));
-      while (overlap && candidate < 4096) {
-        candidate += 32;
-        overlap = this.#labelOverlapAt(candidate, chartHeight, () => runLayout(candidate, chartHeight));
-      }
-      if (candidate > width) chartWidth = candidate;
-      layout = runLayout(chartWidth, chartHeight);
-    const byId = new Map(nodes.map((d) => [d.id, d]));
-    // Round 9: the ORIGINAL bank -> allocation links, keyed the way the
-    // pass links address their endpoints (d3 replaces source/target with
-    // node objects after a layout). The floor pass mutates the originals so
-    // the next runLayout() picks the bumped values up.
-    const linkById = new Map(links.map((l) => [`${l.source}|${l.target}`, l]));
-    let pass = layout;
-    for (let i = 0; i < 4; i += 1) {
-      // A row is short when it is under the pixel floor OR when the bands it
-      // carries sum to more than its own value (round 6: a floor-pinned bank
-      // with a surplus band overflowed its 22px node — the floor must never
-      // clamp a node below the flow it carries). The node height must cover
-      // the LARGER of the in/out stack, not both.
-      const srcSumOf = (n) => pass.links.reduce((s, l) => s + (l.source === n ? l.value : 0), 0);
-      const tgtSumOf = (n) => pass.links.reduce((s, l) => s + (l.target === n ? l.value : 0), 0);
-      const short = pass.nodes.filter(
-        (n) =>
-          (n.nodeType === "allocation" || n.kind === "surplus" || n.kind === "bank") &&
-          n.label !== false &&
-          (n.y1 - n.y0 < MIN_NODE_HEIGHT - 0.5 || n.value < Math.max(srcSumOf(n), tgtSumOf(n)) - 1e-9),
-      );
-      const anyPos = pass.nodes.find((n) => n.value > 0 && n.y1 - n.y0 > 0);
-      const pixelScale = anyPos ? (anyPos.y1 - anyPos.y0) / anyPos.value : null;
-      let bumped = false;
-      short.forEach((n) => {
-        const original = byId.get(n.id);
-        if (!original) return;
-        const h = Math.max(0.5, n.y1 - n.y0);
-        const current = original.fixedValue ?? original.value;
-        let target = n.value > 0
-          ? current * (MIN_NODE_HEIGHT / h)
-          : (pixelScale ? MIN_NODE_HEIGHT / pixelScale : MIN_NODE_HEIGHT);
-        // Never below the flow the node carries in either direction.
-        const srcSum = pass.links.reduce((s, l) => s + (l.source === n ? l.value : 0), 0);
-        const tgtSum = pass.links.reduce((s, l) => s + (l.target === n ? l.value : 0), 0);
-        target = Math.max(target, srcSum, tgtSum);
-        if (target > current + 0.25) {
-          original.fixedValue = target;
-          bumped = true;
-        }
-      });
-      // Round 9: minBand (bank -> allocation) links below the MIN_BAND_WIDTH
-      // floor get their value raised to the floor so the band renders at the
-      // floor width — width = value * pixelScale (the single scale d3-sankey
-      // uses), so the value target is MIN_BAND_WIDTH / scale. Bumping the
-      // ORIGINAL link (not the pass copy) makes the next runLayout() honor
-      // it — same pattern as the fixedValue bump above.
-      if (pixelScale) {
-        pass.links.forEach((l) => {
-          if (!l.minBand) return;
-          const target = MIN_BAND_WIDTH / pixelScale;
-          if (target > l.value + 1e-9) {
-            const original = linkById.get(`${l.source.id}|${l.target.id}`);
-            if (original) original.value = target;
-      const byId = new Map(nodes.map((d) => [d.id, d]));
-      // Round 9: the ORIGINAL bank -> allocation links, keyed the way the
-      // pass links address their endpoints (d3 replaces source/target with
-      // node objects after a layout). The floor pass mutates the originals
-      // so the next runLayout() picks the bumped values up.
-      const linkById = new Map(links.map((l) => [`${l.source}|${l.target}`, l]));
-      let pass = layout;
-      for (let i = 0; i < 4; i += 1) {
-        // A row is short when it is under the pixel floor OR when the bands it
-        // carries sum to more than its own value (round 6: a floor-pinned bank
-        // with a surplus band overflowed its 22px node — the floor must never
-        // clamp a node below the flow it carries). The node height must cover
-        // the LARGER of the in/out stack, not both.
-        const srcSumOf = (n) => pass.links.reduce((s, l) => s + (l.source === n ? l.value : 0), 0);
-        const tgtSumOf = (n) => pass.links.reduce((s, l) => s + (l.target === n ? l.value : 0), 0);
-        const short = pass.nodes.filter(
-          (n) =>
-            (n.nodeType === "allocation" || n.kind === "surplus" || n.kind === "bank") &&
-            n.label !== false &&
-            (n.y1 - n.y0 < MIN_NODE_HEIGHT - 0.5 || n.value < Math.max(srcSumOf(n), tgtSumOf(n)) - 1e-9),
-        );
-        const anyPos = pass.nodes.find((n) => n.value > 0 && n.y1 - n.y0 > 0);
-        const pixelScale = anyPos ? (anyPos.y1 - anyPos.y0) / anyPos.value : null;
-        let bumped = false;
-        short.forEach((n) => {
-          const original = byId.get(n.id);
-          if (!original) return;
-          const h = Math.max(0.5, n.y1 - n.y0);
-          const current = original.fixedValue ?? original.value;
-          let target = n.value > 0
-            ? current * (MIN_NODE_HEIGHT / h)
-            : (pixelScale ? MIN_NODE_HEIGHT / pixelScale : MIN_NODE_HEIGHT);
-          // Never below the flow the node carries in either direction.
-          const srcSum = pass.links.reduce((s, l) => s + (l.source === n ? l.value : 0), 0);
-          const tgtSum = pass.links.reduce((s, l) => s + (l.target === n ? l.value : 0), 0);
-          target = Math.max(target, srcSum, tgtSum);
-          if (target > current + 0.25) {
-            original.fixedValue = target;
-            bumped = true;
-          }
-        });
-        // Round 9: minBand (bank -> allocation) links below the MIN_BAND_WIDTH
-        // floor get their value raised to the floor so the band renders at the
-        // floor width — width = value * pixelScale (the single scale d3-sankey
-        // uses), so the value target is MIN_BAND_WIDTH / scale. Bumping the
-        // ORIGINAL link (not the pass copy) makes the next runLayout() honor
-        // it — same pattern as the fixedValue bump above.
-        if (pixelScale) {
-          pass.links.forEach((l) => {
-            if (!l.minBand) return;
-            const target = MIN_BAND_WIDTH / pixelScale;
-            if (target > l.value + 1e-9) {
-              const original = linkById.get(`${l.source.id}|${l.target.id}`);
-              if (original) original.value = target;
-              bumped = true;
-            }
-          });
-        }
-        if (!bumped) break;
-        pass = runLayout();
-      }
-      if (candidate > width) chartWidth = candidate;
-      layout = runLayout(chartWidth, chartHeight);
-    }
-    // Round 16 (owner notes A/B): the chart dimensions the layout pass
-    // landed on (MANAGE: the LOCKED container height + the min width;
-    // VIEW: the container size). The callers draw + flatten at THESE, not
-    // the container size.
-    this.lastChartWidth = chartWidth;
-    this.lastChartHeight = chartHeight;
-    // Round 10 issue 5's post-layout bottom shift lived here and is REMOVED
-    // (round 11): #flattenColumns runs AFTER this method (both #doRedraw and
-    // #graphUpdated call it) and re-anchors every column to the flat top, so
-    // any pre-flatten pillar shift is undone on every draw (owner screenshot
-    // 2026-11-01). Round 14 (issue 5b): the unallocated tail placement runs
-    // at the END of #flattenColumns instead (#placeUnallocatedTails) - the
     // pillars keep their own layer by node ordering (see #buildGraph) and
     // the tail y is applied only after the flat-top re-anchoring it must
     // survive.
@@ -1666,13 +1361,6 @@ export default class extends Controller {
       // #placeLabel's side-flip/scale and the view-mode hide set consume.
       const measured = g.node().querySelector("text") || g.node();
       const box = measured.getBBox();
-      this.#writeLabelText(d, g.node(), (d.y0 + d.y1) / 2);
-      // Round 19 (P2, owner round 18b): measure the <text> box ONLY — the
-      // chip is drawn centered on the node bar (node geometry, not the
-      // label's horizontal span), so it must not inflate the box that
-      // #placeLabel's side-flip/scale and the view-mode hide set consume.
-      const measured = g.node().querySelector("text") || g.node();
-      const box = measured.getBBox();
       labelBoxes.set(d.index, box);
       // Round 10: measure the FULL label and place it so nothing clips —
       // the label flips to the opposite node side when the middle-facing
@@ -1768,11 +1456,6 @@ export default class extends Controller {
   // resurrect them in MANAGE (their _fy floors clear 1px) but not in
   // VIEW, an unrequested mode-visibility change. The label:false
   // root/bridge/anchor nodes stay excluded by the gate above.
-  // #applyManageFloors) lifts a sub-pixel height to >= 1. The bank-kind
-  // scope keeps zero-value allocation/surplus rows out: the unscoped
-  // post-floor test would resurrect them in MANAGE (their _fy floors clear
-  // 1px) but not in VIEW, an unrequested mode-visibility change. The
-  // label:false root/bridge/anchor nodes stay excluded by the gate above.
   #visibleNode(d) {
     const postFloor = (d._fy1 ?? d.y1) - (d._fy0 ?? d.y0);
     return (
@@ -1783,7 +1466,6 @@ export default class extends Controller {
           !d._zeroRow && postFloor >= 1) ||
         this.#isCritical(d) ||
         (d.kind === "unallocated" && d.value > 0))
-      (d.y1 - d.y0 >= 1 || this.#isCritical(d) || (d.kind === "unallocated" && d.value > 0))
     );
   }
 
@@ -2129,9 +1811,6 @@ export default class extends Controller {
     const { LABEL_GUTTER } = this.constructor;
     if (d._labelSide === "start") return { x: d.x1 + LABEL_GUTTER, anchor: "start" };
     if (d._labelSide === "end") return { x: d.x0 - LABEL_GUTTER, anchor: "end" };
-    // the old middle-facing rule stays the default.
-    if (d._labelSide === "start") return { x: d.x1 + 6, anchor: "start" };
-    if (d._labelSide === "end") return { x: d.x0 - 6, anchor: "end" };
     const leftColumn = d.x0 < (this.drawWidth || 0) / 2;
     return { x: leftColumn ? d.x1 + LABEL_GUTTER : d.x0 - LABEL_GUTTER, anchor: leftColumn ? "start" : "end" };
   }
@@ -2234,1109 +1913,146 @@ export default class extends Controller {
     });
   }
 
-  // Round 23 (note 2, owner reversal): VIEW-mode minimum drawn height for
-  // REAL (value > 0) sub-pixel allocation/surplus rows. In VIEW the manage
-  // label floors do not run (#applyManageFloors early-returns), so a 0.4-
-  // 0.7px raw rect is not "visible". These rows get a small 3px sliver,
-  // SYMMETRIC around the layout center (_fy0 = c - 1.5, _fy1 = c + 1.5), so
-  // the layout center — where their bands land — sits inside the drawn
-  // row. The sliver only touches rows currently HIDDEN by the raw-height
-  // gate (h < 1) and never: zero-value rows (_zeroRow — the existing
-  // stay-hidden contract), #isCritical rows (already visible at their true
-  // size), or rows already drawn >= 1px (their true size is kept). The
-  // text label in VIEW still follows the existing hide rule — only the
-  // color block is forced visible here (owner: "prevent the color block
-  // label and text label from being hidden in Managed View, and the Color
-  // Block Label from being hidden in the View mode").
-  #applyViewRowSlivers(layout) {
-    if (this.mode !== "view") return;
-    const MIN_SLIVER = 3;
-    layout.nodes.forEach((n) => {
-      if (n.label === false) return;
-      if (n.nodeType !== "allocation" && n.nodeType !== "surplus") return;
-      if (n._zeroRow) return; // zero-value rows stay hidden
-      if (this.#isCritical(n)) return; // already visible at true size
-      const h = n.y1 - n.y0;
-      if (h >= 1) return; // already visible at its true size
-      const c = (n.y0 + n.y1) / 2;
-      n._fy0 = c - MIN_SLIVER / 2;
-      n._fy1 = c + MIN_SLIVER / 2;
-    });
-  }
-
-  // Round 19 (A, owner round 19): the allocation / surplus label
-  // de-overlap pass, MANAGE mode only (the view hide path is untouched).
-  // The round-16 side-flip + font-floor machinery is kept; MANAGE keeps
-  // every label FULLY READABLE (no truncation, no hiding) and no two
-  // allocation/surplus labels may overlap each other (or spill
-  // off-canvas) at the locked container width.
-  //
-  // Round 20 (T1, owner round 20): the trigger is no longer collision-only
-  // — consecutive label blocks must also keep the reference-dashboard
-  // inter-label padding (LABEL_BLOCK_PADDING = 15px at scale 1, scaled
-  // with the column font scale; measured from the Main Front-Dashboard
-  // reference chart). A padding shortfall tiles the column exactly like a
-  // collision does.
-  //
-  // Mechanism (order-preserving, NO band rescale): within each
-  // allocation/surplus column the nodes keep their d3 order and their
-  // proportional ROW heights; when the measured label boxes collide (or
-  // spill the canvas edge, or fall short of the reference inter-label
-  // padding) the column gets ONE uniform font scale
-  // (d._manageScale, consumed by #writeLabelText as
-  // min(_labelScale, _manageScale); the round-16 0.5x font floor
-  // applies) found by bisection on the slot span, and a compact
-  // top-down SLOT tiling places the nodes.
-  //
-  // The SLOT of a node is max(label box, row) at the current scale: the
-  // box is centred on the row, so the union extends slot/2 from the row
-  // center. Tiling the slots with a 0.01px clearance keeps BOTH the
-  // label boxes AND the drawn rows non-overlapping - the box-only
-  // tiling (first attempt) piled the small bottom rows into the tall
-  // rows above them (the node bodies must stay disjoint too). A
-  // non-colliding, on-canvas column is left byte-identical. Shifting the
-  // row keeps every band attached to its own node: the round-19 B pass
-  // re-derives the anchors from the drawn geometry afterwards. If even
-  // the 0.5x slots do not fit (canvas too short for the label count),
-  // the residual collision is accepted - the labels stay fully
-  // readable, nothing is hidden or truncated.
-  #resolveManageLabelOverlaps(layout, height) {
+  // Round 24 (owner directive): the manage-mode row-gap re-stack.
+  // The owner's round-24 spec (r24-notes.md, 2026-11-03): visible padding
+  // between EVERY DRAWN row in the bank column AND the allocation/surplus
+  // column (fixed ROW_GAP), the individual drawn block heights
+  // (_fy1-_fy0) UNCHANGED — no Freedom-Mortgage-style ballooning — and the
+  // overall diagram height ALLOWED to grow to accommodate the padding.
+  // This pass (MANAGE only; view returns early and stays byte-identical):
+  //   1. re-stacks the bank column and the allocation/surplus column
+  //      top-down, DRAWN-anchored: the drawn rect of row 0 starts at
+  //      HEADER_SPACE and the drawn rect of row i+1 starts exactly
+  //      ROW_GAP below the DRAWN bottom of row i (top_{i+1} = top_i +
+  //      drawnH_i + ROW_GAP) — the DRAWN heights (read-only: the owner's
+  //      block-size constraint) are the row pitch, so the VISIBLE block
+  //      gap between every two adjacent drawn rows is the fixed ROW_GAP.
+  //      The node y0/y1 layout heights are preserved (h = y1-y0) and
+  //      CENTERED on the drawn center (y0 = top + (drawnH-h)/2), so every
+  //      downstream consumer that reads the layout center (labels, the
+  //      sub-account pass, #commitLayout's sub-pixel filter) sees a center
+  //      identical to the drawn center. (Slot-anchoring the layout rect
+  //      instead leaves the drawn gap at ROW_GAP only when h == drawnH;
+  //      for sub-pixel rows (h << drawnH) the visible gap degrades to
+  //      ~4-8px, which the owner's spec forbids.)
+  //   2. grows this.lastChartHeight to
+  //      HEADER_SPACE + EXTENT_MARGIN + max(allocSpan, bankSpan,
+  //      incomeSpan) when the re-stacked span exceeds the design canvas.
+  //      Incomes (column 0) keep their d3 positions (top-anchored at
+  //      HEADER_SPACE by the flat-top re-anchoring; their span = 420 on the
+  //      live plan) — NOT re-stacked, because #resolveManageLinkOrder's
+  //      column-0 income outgoing re-stack assumes the income-side anchors
+  //      span their d3 span; the Un-Allocated pillars bottom-anchor on the
+  //      income bottoms, so they need no extra room. Pillars (column 1)
+  //      are likewise excluded.
+  // Column sets are discovered from the layout, not hardcoded (the live
+  // plan: banks col 2 / allocations col 3; a four-column sub-account plan:
+  // banks col 2 / children col 3 / allocations col 4). Sub-account
+  // children (kind "bank" + subAccount) are NOT re-stacked here: their
+  // group was centered on the PRE-re-stack parent centers by the earlier
+  // #placeSubAccountRows call, so when any exist the pass re-runs it on
+  // the FINAL parent centers + grown extent (idempotent: the children are
+  // unmoved between the two calls, so the group gap/total recompute to
+  // the same values; the re-centered #restackAnchors results are
+  // superseded by #realignManageBands / #resolveManageLinkOrder anyway).
+  // This pass runs AFTER #applyManageFloors (the drawn _fy0/_fy1 are
+  // final) and BEFORE #realignManageBands / #resolveManageLinkOrder, which
+  // re-derive every band anchor from these FINAL centers, so the flow
+  // ribbons stay attached to their rows. The old tiling pass
+  // (#resolveManageLabelOverlaps — 0.01px gaps + 0.7682x font shrink +
+  // overlapping 20px rects) is retired by removing its call site (round
+  // 24): its label-clearance goal is now met by the grown canvas itself,
+  // and #ensureAllocationLabelGaps runs afterwards against the GROWN
+  // height as a no-op safety net (8px block gaps + 16px label boxes leave
+  // >= 12px between every pair of label boxes -> all _labelDy stay 0 ->
+  // the typed label + color block + ribbons center-align to the row).
+  #manageRowGapsAndExtent(layout, height) {
     if (this.mode === "view") return;
-    const { EXTENT_MARGIN, HEADER_SPACE, LABEL_FLOOR_PADDING, LABEL_BLOCK_PADDING } = this.constructor;
-    const canvasBottom = height - EXTENT_MARGIN;
-    const scaleOf = (n) => Math.min(n._labelScale ?? 1, n._manageScale ?? 1);
-    const floorOf = (n) => this.#labelFloorHeight(n) + LABEL_FLOOR_PADDING;
-    const cols = new Map();
+    const { ROW_GAP, HEADER_SPACE, EXTENT_MARGIN } = this.constructor;
+    const bankCols = new Set();
+    const allocCols = new Set();
+    const incomeNodes = [];
     layout.nodes.forEach((n) => {
-      if (n.label === false) return;
-      if (n.nodeType !== "allocation" && n.nodeType !== "surplus") return;
-      const list = cols.get(n.column) || [];
-      list.push(n);
-      cols.set(n.column, list);
+      if (n.column === undefined || n.label === false) return;
+      if (n.kind === "bank" && !n.subAccount) bankCols.add(n.column);
+      if (n.nodeType === "allocation" || n.nodeType === "surplus") allocCols.add(n.column);
+      if ((n.column ?? 0) === 0) incomeNodes.push(n);
     });
-    cols.forEach((list) => {
-      list.sort((a, b) => a.y0 - b.y0);
-      const n = list.length;
-      const floors = list.map((x) => floorOf(x));
-      const hs = list.map((x) => x.y1 - x.y0);
-      const scales = list.map(scaleOf);
-      const slot = (i, s) => Math.max(floors[i] * s, hs[i]);
-      const cOf = (x) => (x.y0 + x.y1) / 2;
-      // 1. Scan at the current scales: label-box overlap, a shortfall of
-      //    the reference inter-label padding (round 20 T1), OR a box past
-      //    the canvas bottom / header line.
-      let triggered = false;
-      for (let i = 1; i < n; i += 1) {
-        const prevBot = cOf(list[i - 1]) + (floors[i - 1] * scales[i - 1]) / 2;
-        const curTop = cOf(list[i]) - (floors[i] * scales[i]) / 2;
-        const need = LABEL_BLOCK_PADDING * Math.min(scales[i - 1], scales[i]);
-        if (curTop - prevBot < need - 0.01) {
-          triggered = true;
-          break;
-        }
-      }
-      if (!triggered) {
-        for (let i = 0; i < n; i += 1) {
-          const c = cOf(list[i]);
-          const h = (floors[i] * scales[i]) / 2;
-          if (c + h > canvasBottom + 0.01 || c - h < HEADER_SPACE - 0.01) {
-            triggered = true;
-            break;
-          }
-        }
-      }
-      if (!triggered) return; // byte-identical: the d3 geometry already
-      // keeps every label box clear and on-canvas.
-      // 2. The uniform column scale: compact slot tiling from the first
-      //    node's (header-clamped) center; the span below it,
-      //    sum_{i>=2} ((slot_{i-1} + slot_i) / 2 + 0.01) + slot_n / 2,
-      //    is monotone in s, so a bisection finds the largest s in
-      //    [0.5, 1] whose slots fit the canvas (the per-node draw-level
-      //    caps, e.g. the round-16 off-canvas _labelScale, bound the
-      //    scale too).
-      const cap = Math.min(1, ...scales);
-      const firstCenterAt = (s) => {
-        const c0 = cOf(list[0]);
-        return Math.max(c0, HEADER_SPACE + slot(0, s) / 2);
-      };
-      const slotSpanAt = (s, scalesArr) => {
-        let span = 0;
-        for (let i = 1; i < n; i += 1) {
-          span += (slot(i - 1, scalesArr[i - 1]) + slot(i, scalesArr[i])) / 2;
-        }
-        return span + slot(n - 1, scalesArr[n - 1]) / 2;
-      };
-      const spanAt = (s) => {
-        let span = 0;
-        for (let i = 1; i < n; i += 1) {
-          span += (slot(i - 1, s) + slot(i, s)) / 2 + 0.01;
-        }
-        return span + slot(n - 1, s) / 2;
-      };
-      const fits = (s) => firstCenterAt(s) + spanAt(s) <= canvasBottom;
-      let sCol;
-      if (fits(1)) {
-        sCol = 1;
-      } else if (fits(Math.max(0.5, cap))) {
-        sCol = Math.max(0.5, cap);
-      } else {
-        let lo = 0.5;
-        let hi = 1;
-        if (!fits(lo)) {
-          sCol = 0.5; // residual: even the 0.5x slots do not fit.
-        } else {
-          for (let it = 0; it < 40; it += 1) {
-            const mid = (lo + hi) / 2;
-            if (fits(mid)) lo = mid;
-            else hi = mid;
-          }
-          sCol = lo;
-        }
-      }
-      const finalS = list.map((x, i) => {
-        const s = Math.min(scales[i], Math.max(0.5, sCol));
-        if (s < scales[i] - 1e-9) x._manageScale = s;
-        return s;
+    if (bankCols.size === 0 && allocCols.size === 0) return;
+    const spans = [];
+    const restackCol = (col) => {
+      const rows = layout.nodes
+        .filter((n) => n.column === col && this.#visibleNode(n))
+        .sort((a, b) => a.y0 - b.y0);
+      if (rows.length === 0) return;
+      let top = HEADER_SPACE;
+      rows.forEach((n) => {
+        const h = n.y1 - n.y0; // layout height (preserved as-is)
+        const fy0 = n._fy0 ?? n.y0;
+        const fy1 = n._fy1 ?? n.y1;
+        const hDrawn = fy1 - fy0; // drawn height (READ ONLY - owner constraint)
+        // DRAWN-anchored: the drawn rect occupies [top, top+hDrawn) so the
+        // gap to the next drawn rect is exactly ROW_GAP; the layout rect
+        // (height h) is centered on the drawn center.
+        n._fy0 = top;
+        n._fy1 = top + hDrawn;
+        n.y0 = top + (hDrawn - h) / 2;
+        n.y1 = n.y0 + h;
+        top += hDrawn + ROW_GAP;
       });
-      // 3. Compact top-down slot tiling: node i sits (slot_{i-1} +
-      //    slot_i) / 2 + the inter-label gap below node i-1. Round 20
-      //    (T1): the gap targets the reference-dashboard padding
-      //    (LABEL_BLOCK_PADDING, scaled to the column scale); when the
-      //    canvas cannot hold the full padding at the 0.5x font floor
-      //    (the round-19 residual case - canvas too short for the label
-      //    count), the gap degrades toward the 0.01px no-overlap floor
-      //    instead of breaking row order: slot >= row and >= box, so
-      //    rows AND label boxes stay disjoint and on-canvas (the final
-      //    clamp is a float safety net for the residual 0.5x case).
-      let gap = LABEL_BLOCK_PADDING * sCol;
-      {
-        const slotSpan = slotSpanAt(0, finalS);
-        const avail = canvasBottom - firstCenterAt(finalS[0]) - slotSpan;
-        gap = Math.min(gap, Math.max(0.01, avail / (n - 1)));
-      }
-      let center = firstCenterAt(finalS[0]);
-      const d0 = center - cOf(list[0]);
-      list[0].y0 += d0;
-      list[0].y1 += d0;
-      for (let i = 1; i < n; i += 1) {
-        center += (slot(i - 1, finalS[i - 1]) + slot(i, finalS[i])) / 2 + gap;
-        if (center + slot(i, finalS[i]) / 2 > canvasBottom) {
-          center = canvasBottom - slot(i, finalS[i]) / 2;
-        }
-        const d = center - cOf(list[i]);
-        list[i].y0 += d;
-        list[i].y1 += d;
-      }
-    });
-  }
-
-  // Round 19 (B, owner round 19): the band re-alignment onto the DRAWN
-  // geometry, MANAGE mode only. The d3 link anchors (l.y0/l.y1) sit at
-  // the pre-floor LAYOUT geometry (and the sub-account child's d3 height
-  // covers only its fixedValue = fan-out base, so its incoming stack
-  // overflows the node); the labels, by contrast, sit at the DRAWN
-  // centers (the round-16.7 symmetric floors). This pass re-derives every
-  // anchor for labelled nodes at column >= 2 (banks, sub-accounts,
-  // allocations, surplus): incoming anchors (l.y1) are re-stacked inside
-  // the drawn body (_fy0.._fy1) ordered by the SOURCE's drawn center-y,
-  // outgoing anchors (l.y0) by the TARGET's drawn center-y — the d3
-  // reorderNodeLinks rule, the same convention as #restackAnchors. Band
-  // WIDTHS are the strictly-proportional drawn widths (l._fw; the ONLY
-  // floor is the 3px Q3 visibility floor for zero-value minBand ribbons)
-  // and are untouched. Income/pillar/bridge (columns 0/1) are excluded so
-  // the pillar-tail contract (G) and the tail anchoring stay untouched.
-  #realignManageBands(layout) {
-    if (this.mode === "view") return;
-    const centerOf = (n) => (n._fy0 != null ? (n._fy0 + n._fy1) / 2 : (n.y0 + n.y1) / 2);
-    layout.nodes.forEach((n) => {
-      if (n.label === false) return;
-      if ((n.column ?? 0) < 2) return;
-      const top = n._fy0 ?? n.y0;
-      const widthOf = (l) => l._fw ?? l.width;
-      const bodyH = (n._fy1 ?? n.y1) - top;
-      // When the stack is narrower than the drawn body (a labelled node
-      // floored above its band sum — the allocation/surplus slivers), the
-      // stack is CENTERED in the body: a single band then lands exactly on
-      // the label center (the round-16.7 symmetric floor keeps the label
-      // center == the body center). A stack that fills the body (banks,
-      // sub-account children floored by their band sums) is unchanged —
-      // centering is a no-op there.
-      const stackOffset = (links) =>
-        Math.max(0, (bodyH - links.reduce((s, l) => s + widthOf(l), 0)) / 2);
-      const ins = [...(n.targetLinks || [])].sort((a, b) => centerOf(a.source) - centerOf(b.source));
-      let e = top + stackOffset(ins);
-      ins.forEach((l) => {
-        const w = widthOf(l);
-        l.y1 = e + w / 2;
-        e += w;
-      });
-      const outs = [...(n.sourceLinks || [])].sort((a, b) => centerOf(a.target) - centerOf(b.target));
-      e = top + stackOffset(outs);
-      outs.forEach((l) => {
-        const w = widthOf(l);
-        l.y0 = e + w / 2;
-        e += w;
-      });
-    });
-  }
-
-  // Round 20 (T4, owner round 20): the LINK-ANCHOR stacking contract,
-  // enforced AFTER the final layout/floor/realign passes. Within every
-  // labelled node's edge (column >= 2; income/pillar/bridge excluded -
-  // the pillar-tail contract G owns columns 0/1 and the hatched-last
-  // income stacking is #placeUnallocatedNearTails' contract) the bands must
-  // leave/enter in the order of their FAR ENDPOINT's drawn y position
-  // (incoming: the source node's drawn center; outgoing: the target's).
-  // #realignManageBands already derives that order; this pass re-derives
-  // it over the CURRENT anchor span as the formal idempotent enforcement
-  // - byte-identical when the order holds (it always does after
-  // realign, so the no-sub-account cases stay byte-identical - J S6a-d
-  // verifies) and a fix-up if a future pass reorders the anchors.
-  // Bands that share an edge in this order cannot cross inside that
-  // edge; a crossing that remains (the REAL fixture's income->subaccount
-  // x bank->allocation braid, 1 pair at both 1200px and 998px) is
-  // data-induced: the two bands share NO edge, and untangling them
-  // requires re-ordering a NODE (Sammi Parent Loan to the bottom), which
-  // the owner's contract forbids (node geometry unchanged).
-  #resolveManageLinkOrder(layout) {
-    if (this.mode === "view") return;
-    const centerOf = (n) => (n._fy0 != null ? (n._fy0 + n._fy1) / 2 : (n.y0 + n.y1) / 2);
-    const widthOf = (l) => l._fw ?? l.width;
-    const restack = (links, far, anchor) => {
-      if (links.length < 2) return;
-      const spanTop = Math.min(...links.map((l) => l[anchor] - widthOf(l) / 2));
-      const sorted = [...links].sort((a, b) => centerOf(a[far]) - centerOf(b[far]));
-      let e = spanTop;
-      sorted.forEach((l) => {
-        const w = widthOf(l);
-        l[anchor] = e + w / 2;
-        e += w;
-      });
+      const last = rows[rows.length - 1];
+      spans.push(last._fy1 - HEADER_SPACE);
     };
+    bankCols.forEach((col) => restackCol(col));
+    allocCols.forEach((col) => restackCol(col));
+    if (incomeNodes.length > 0) {
+      spans.push(Math.max(...incomeNodes.map((n) => n.y1)) - HEADER_SPACE);
+    }
+    const needExtent = Math.max(...spans);
+    const usableNow = height - HEADER_SPACE - EXTENT_MARGIN;
+    if (needExtent > usableNow + 1e-9) {
+      this.lastChartHeight = HEADER_SPACE + EXTENT_MARGIN + needExtent;
+    }
+    if (layout.nodes.some((n) => n.subAccount)) {
+      this.#placeSubAccountRows(layout, this.lastChartHeight ?? height);
+      // #placeSubAccountRows moves the children's LAYOUT rects (y0/y1) but
+      // not their DRAWN rects (_fy0/_fy1 — set by #applyManageFloors
+      // symmetric about the PRE-move centers): re-center each child's drawn
+      // rect (drawn height preserved — the owner's block-size constraint
+      // extends to the children) on its new layout center so the labels and
+      // the fan-out bands stay aligned with the blocks.
+      layout.nodes.forEach((c) => {
+        if (!c.subAccount) return;
+        const hDrawn = (c._fy1 ?? c.y1) - (c._fy0 ?? c.y0);
+        c._fy0 = (c.y0 + c.y1) / 2 - hDrawn / 2;
+        c._fy1 = c._fy0 + hDrawn;
+      });
+    }
+    // The LAST pipeline pass (#placeUnallocatedNearTails, guarded: not
+    // touched here) re-stacks each income's outgoing bands in the d3
+    // sourceLinks ARRAY order — which was the target-y order of d3's
+    // PRE-pass positions. Round 24 re-orders the bank/child drawn centers
+    // (this re-stack + the sub-account re-centering above), so that d3
+    // order can be stale — e.g. a child's col-3 d3 slot sits above its
+    // parent's col-2 row while the child's final center lands BELOW the
+    // parent's re-stacked center — and stacking the income solid bands in
+    // the stale order breaks the round-20 T4 invariant (the anchor stack
+    // must be ordered by far-endpoint drawn center) and adds crossings.
+    // Pre-sorting each income's sourceLinks by the FINAL target drawn
+    // center (stable; the hatched Un-Allocated tail's anchor is set by
+    // #placeUnallocatedNearTails itself, not by array position) hands the
+    // last pass the final order. ARRAY reorder only: node geometry, the
+    // layout.links order, and view mode (early return above) are
+    // untouched, and #resolveManageLinkOrder's col-0 re-stack (the same
+    // final-center order) stays idempotent.
     layout.nodes.forEach((n) => {
-      if (n.label === false) return;
-      if ((n.column ?? 0) < 2) return;
-      restack(n.targetLinks || [], "source", "y1");
-      restack(n.sourceLinks || [], "target", "y0");
-    });
-    // Round 20 (T4, owner round 20): the income (column 0) outgoing gets
-    // the same treatment. d3's original order (the #placeUnallocatedNearTails
-    // comment: "the bank bands keep d3's (target-y ordered,
-    // crossing-free) relative order") goes STALE in manage: the passes
-    // after d3 (the T1 slot tiling, the sub-account stagger) shift the
-    // target centers, and the income re-stack (column 0 - excluded from
-    // #realignManageBands) keeps the pre-shift order. This pass runs
-    // LAST, so it re-sorts the SOLID income outgoing by the FINAL target
-    // drawn centers. The hatched Un-Allocated tail is excluded: its
-    // source anchor is the income's bottom sliver set by
-    // #placeUnallocatedNearTails (the G pillar contract) and the solid stack
-    // sum leaves exactly its width below (d3 value conservation).
-    layout.nodes.forEach((n) => {
-      if ((n.column ?? 0) !== 0) return;
-      // The SOLID value-carrying bands only. The hatched Un-Allocated
-      // tail is the income's bottom sliver (fixed by
-      // #placeUnallocatedNearTails - the G pillar contract), and the
-      // zero-width scaffolding (bridge/anchor) links keep their d3 /
-      // round-14 positions: they carry no value and no visual, and
-      // moving them would perturb the manage==view scaffolding
-      // byte-identity ((f) checks the bridge/anchor links too).
-      const solid = (n.sourceLinks || []).filter(
-        (x) => !x.hatched && x.value > 1e-9 && (x._fw ?? x.width) > 0.01);
-      if (solid.length < 2) return;
-      restack(solid, "target", "y0");
-    });
-  }
-
-  // Round 16 (owner notes A/B): BOTH label boxes for this node's label
-  // text — the compact single-line box (< 24px rows render) and the full
-  // two-line box — measured with the shared probe (#writeLabelText with a
-  // forced variant into a hidden probe <g>, getBBox) or the deterministic
-  // mirror (headless). The box is geometry-independent (the label text
-  // never changes with layout), so it is cached on _labelBoxes (inherited
-  // by the layout copies through the shallow spread in runLayout).
-  #labelBoxHeights(d) {
-    const { NODE_WIDTH } = this.constructor;
-    const probeNode = { ...d, x0: 0, x1: NODE_WIDTH, _labelScale: 1 };
-    const measure = (variant) => {
-      try {
-        const g = this.#labelProbeHost().append("g");
-        const el = typeof g.node === "function" ? g.node() : g;
-        this.#writeLabelText(probeNode, el, 0, variant);
-        let box = null;
-        if (el && typeof el.getBBox === "function") {
-          const b = el.getBBox();
-          if (Number.isFinite(b.height) && b.height > 0) box = { w: b.width, h: b.height };
-        }
-        if (typeof g.remove === "function") g.remove();
-        return box;
-      } catch {
-        return null; // no live layout engine (harness) -> the mirror below
-      }
-    };
-    let compact = measure(true);
-    let full = measure(false);
-    if (!compact || !full) {
-      const mirror = this.#mirrorLabelBoxHeights(probeNode);
-      const widths = this.#mirrorLabelWidths(probeNode);
-      if (!compact) compact = { w: widths.compact, h: mirror.compact };
-      if (!full) full = { w: widths.full, h: mirror.full };
-    }
-    return { compact, full };
-  }
-
-  // The deterministic mirror of #writeLabelText's line geometry (k = 1),
-  // BOTH variants: one 12px line (compact), or the 12px name line + 10.4px
-  // amount line (+ a 9.6px shortfall / marker line when present), with
-  // sans-serif ascent/descent (0.93em / 0.25em) and the tspan dy offsets
-  // (name -0.2em, second line +1.2em of the previous font).
-  #mirrorLabelBoxHeights(d) {
-    const compact = 12 * (0.93 + 0.25); // one 12px line
-    const top = 2.4 + 12 * 0.93; // name line baseline 0.2em above center
-    let bottom = 2.4 + 12 * 1.2 + 10.4 * 0.25; // amount line below it
-    if (Number(d.shortfall || 0) > 0.005 || d.unassigned) {
-      bottom = 2.4 + 12 * 1.2 + 10.4 * 1.2 + 9.6 * 0.25;
-    }
-    return { compact, full: top + bottom };
-  }
-
-  // The deterministic width mirror of #writeLabelText's text (headless
-  // label floors): 12px sans ~6.6px/char (text-xs), 10.4px mono
-  // ~7.2px/char; compact is one single line, full the wider of the name
-  // line and the amount line.
-  #mirrorLabelWidths(d) {
-    const shortText = Number(d.shortfall || 0) > 0.005 ? ` · short ${this.#format(d.shortfall)}` : "";
-    const marker = d.unassigned ? ` · ${this.labelsValue.unassigned || "No Assignment"}` : "";
-    // Round 16 (owner note 4): the FINAL label text (the last4 suffix via
-    // #displayName) is PART of the measured box — the floors adapt to the
-    // suffix automatically. Round 19 (P2, owner round 18b): the chip is
-    // drawn OVERLAPPING the node bar (centered on the bar midline — node
-    // geometry, not label space), so it no longer adds to the HORIZONTAL
-    // label footprint: the chip term is dropped from both variants
-    // (LOGO_CHIP_SIZE/GAP constants stay for the draw path). Round 19
-    // (P2, owner round 18a): the single-line $ portion renders at the
-    // two-line $ size, so the compact line prices the amount at the
-    // 10.4px mono ~7.2px/char (this mirror's own mono constant) instead
-    // of the 12px sans 6.6px/char.
-    const baseName = this.#displayName(d) || "";
-    const name = d.labelPrefix ? `${d.labelPrefix}${baseName}` : baseName;
-    const amount = this.#format(d.displayValue ?? d.value ?? 0);
-    return {
-      // 6.6 = the single space between name and $ on the compact line.
-      compact: name.length * 6.6 + 6.6 + amount.length * 7.2 + shortText.length * 6.6 + marker.length * 6.6,
-      full: Math.max((name.length + shortText.length + marker.length) * 6.6, amount.length * 7.2),
-    };
-  }
-
-  // The legacy single-variant estimate (kept for API stability): the
-  // draw-time variant of the mirrored box.
-  #estimateLabelHeight(d) {
-    const boxes = this.#mirrorLabelBoxHeights(d);
-    const compact = d.y1 - d.y0 < 24 && d.nodeType !== "income";
-    return compact ? boxes.compact : boxes.full;
-  }
-
-  // The hidden probe <svg> that carries the label measure-probe <g> (the
-  // real shared measure box behind #labelFloorHeight AND the view-mode
-  // small-label hide in #prepareDraw). Created once per instance;
-  // visibility:hidden keeps it out of the page while getBBox still works
-  // (display:none would not lay the text out).
-  #labelProbeHost() {
-    if (!this._labelProbe) {
-      this._labelProbe = d3
-        .select(this.element)
-        .append("svg")
-        .attr("width", 1)
-        .attr("height", 1)
-        .style("position", "absolute")
-        .style("left", "-9999px")
-        .style("visibility", "hidden")
-        .style("pointer-events", "none");
-    }
-    return this._labelProbe;
-  }
-
-  // Round 10 (owner: "keep the names always"): the FULL label (name +
-  // amount + short) must always be visible — no ellipsis, no clip at the
-  // SVG edge, at any data scale (including the round-9 3px-floor bands,
-  // whose 22px floor nodes carry the compact single-line label). The
-  // default side faces the chart middle (the house rule); when the
-  // measured width overflows it, the label flips to the opposite node side
-  // if that has room, and as a last resort the font scales down to
-  // EXACTLY the available space (round 16.7: the old 0.5x floor could push
-  // the box past the canvas edge — the label then scaled to the room
-  // instead, so it stays on-canvas, drawn against the node) so the full
-  // name still fits on-screen.
-  #placeLabel(d, measuredWidth, width) {
-    const { EXTENT_MARGIN, LABEL_GUTTER } = this.constructor;
-    const gap = LABEL_GUTTER; // Round 20 (T1): the reference-dashboard gutter
-    const availStart = width - EXTENT_MARGIN - (d.x1 + gap); // label right of the node
-    const availEnd = d.x0 - gap - EXTENT_MARGIN; // label left of the node
-
-    // Round 22 (N4): an owner-locked label side (the bank column — see
-    // #pinBankColumn) keeps its side no matter what the heuristic below
-    // would derive; the last-resort scale-to-fit still applies, for the
-    // locked side.
-    if (d._labelSideLocked) {
-      const lockedAvail = d._labelSide === "start" ? availStart : availEnd;
-      d._labelScale = lockedAvail >= measuredWidth ? 1 : Math.max(0.1, lockedAvail / measuredWidth);
-      return;
-    }
-
-    const defaultSide = d.x0 < width / 2 ? "start" : "end";
-    const defaultAvail = defaultSide === "start" ? availStart : availEnd;
-    let side = defaultSide;
-    if (defaultAvail < measuredWidth) {
-      const otherSide = defaultSide === "start" ? "end" : "start";
-      const otherAvail = otherSide === "start" ? availStart : availEnd;
-      side = otherAvail >= measuredWidth ? otherSide : availStart >= availEnd ? "start" : "end";
-    }
-    const avail = side === "start" ? availStart : availEnd;
-    d._labelSide = side;
-    // Round 16.7 off-canvas guard: `avail < measuredWidth` is only reached
-    // when the default side AND the flip are both too short, so scale to
-    // EXACTLY the available space (no 0.5x font floor — that floor let the
-    // box run past the canvas edge and clip at the svg boundary, the bank
-    // names the owner saw cut off at the left edge). The box then always
-    // stays inside [EXTENT_MARGIN, width - EXTENT_MARGIN]; against the node
-    // it renders at the reduced scale (drawn "inside" the node's side).
-    d._labelScale = avail >= measuredWidth ? 1 : Math.max(0.1, avail / measuredWidth);
-  }
-
-  // Round 16.8: the round 16/16.7 min-width overlap probe (the label-gap
-  // gutter probe and its one-candidate helper) is REMOVED with the
-  // min-width search: the manage chart is locked at the container width,
-  // labels may overlap where the container is tight (owner directive).
-
-  // Round 16 (owner note 4): the LABEL-visible name — the bank rows'
-  // "Name [last4]" suffix (labelName, set in #buildGraph), plain d.name
-  // for everything else (and for banks without a last4). The label text,
-  // the <title>, the tooltip and the headless width mirror all consume
-  // this; d.name itself stays plain for the sorts, the dialog lookups and
-  // the planner identity.
-  #displayName(d) {
-    return d.labelName ?? d.name;
-  }
-
-  // Round 15 (owner note 1) + Round 16 (owner note A): the MANAGE floor
-  // input — the height of this node's REAL label box in the variant the
-  // draw pass renders at d's current geometry (compact single-line for
-  // < 24px rows, full two-line otherwise), measured with the same shared
-  // measure probe the view-mode hide consumes: #writeLabelText (the exact
-  // label the draw pass writes, same tspans / font sizes / marker rules)
-  // into a hidden probe <g>, read with getBBox. Headless environments
-  // without a live getBBox (harnesses) fall back to the deterministic
-  // mirror of #writeLabelText's line geometry, so the mechanism (not just
-  // the pixels) is exercised identically. Both variants are measured once
-  // per node (cached on _labelBoxes) and reused by the draw-level floor
-  // pass (#applyManageFloors via #labelFloorHeight) and the draw pass's
-  // own measure probe.
-  #labelFloorHeight(d) {
-    const isCompact = d.y1 - d.y0 < 24 && d.nodeType !== "income";
-    const boxes = d._labelBoxes || (d._labelBoxes = this.#labelBoxHeights(d));
-    return (isCompact ? boxes.compact : boxes.full).h;
-  }
-
-  // Round 20 (T3, owner round 20 drawing): the Un-Allocated label is
-  // TOP-ANCHORED on its pillar (2px clearance below the pillar top - the
-  // income bottom edge where the hatched ribbon enters) instead of centered
-  // on it. The owner's spec: "much closer to the Income label, so that its
-  // number label is there before the other Sankey Flow Visuals start to
-  // move up or down. So it never overlaps" - the position is a fixed
-  // pre-fan-out point (income bottom edge + 2px), independent of where
-  // the flow ribbons curve, in BOTH modes.
-  #unallocLabelCenterY(d) {
-    const k = Math.min(d._labelScale ?? 1, d._manageScale ?? 1);
-    return d._y0 + 2 + (this.#labelFloorHeight(d) * k) / 2;
-  }
-
-  // Round 16.7 (owner directive): the MANAGE minimums, applied WITHOUT
-  // rescaling the layout. The layout is the view's strictly-proportional
-  // fit (shared path — see #generateSankeyData); this pass only extends
-  // the DRAWN geometry:
-  //   * every labelled node's drawn rect is extended SYMMETRICALLY about
-  //     its layout center to at least its measured label floor
-  //     (#labelFloorHeight + LABEL_FLOOR_PADDING, the variant the layout
-  //     height renders) — the symmetric extension keeps the label center
-  //     and every band's y anchor on the layout geometry that
-  //     #setLabelGeoms / #setLinkGeom consume, so only the rect grows
-  //     (equal up/down; at a phone height the bottom rows would otherwise
-  //     draw past the svg and the top rows would eat the header room —
-  //     symmetric keeps both inside the canvas);
-  //   * every band is STRICTLY PROPORTIONAL again (round 16.8): the drawn
-  //     thickness = the layout width (d3's single scale), no label floor —
-  //     the round 16.7 "labelled bands at the target's label floor" is
-  //     GONE (it made the zero-value unsatisfied-bucket ribbons fat; the
-  //     small lines just go into the larger labels). The ONLY surviving
-  //     band floor: the round-9 Q3 3px visibility floor (MIN_BAND_WIDTH)
-  //     for ZERO-VALUE minBand ribbons (max(layout width, 3px) as a FLOOR,
-  //     not a forced value) so the unsatisfied bucket stays visible as a
-  //     small line;
-  //   * hatched Un-Allocated ribbons and the unlabelled scaffolding
-  //     (bridge/anchor) keep their layout width (the manage tail-fit
-  //     ribbon width comes from #placeUnallocatedTails).
-  // When a node's floor exceeds the room between its neighbours at the
-  // view scale the extended rect overlaps its neighbours vertically —
-  // accepted per the owner's directive (the view geometry wins; the
-  // minimums are the only change). No rescaling to avoid it, ever.
-  // VIEW mode is a no-op here (byte-identical view rendering).
-  #applyManageFloors(layout) {
-    if (this.mode === "view") return;
-    const { LABEL_FLOOR_PADDING, MIN_BAND_WIDTH } = this.constructor;
-    const floorOf = (n) => this.#labelFloorHeight(n) + LABEL_FLOOR_PADDING;
-    // Round 16.8: bands are strictly proportional — drawn width = layout
-    // width, no label floor. The only floor: the 3px Q3 visibility floor
-    // for zero-value minBand ribbons. (Round 19: the _fw loop runs FIRST so
-    // the node floor below can size the drawn body against the DRAWN band
-    // stack — see #realignManageBands.)
-    layout.links.forEach((l) => {
-      l._fw = l.minBand && l.value <= 1e-9 ? Math.max(l.width, MIN_BAND_WIDTH) : l.width;
-    });
-    layout.nodes.forEach((n) => {
-      if (n.label === false) return;
-      const h = n.y1 - n.y0;
-      // Round 19 (B): the drawn body must also cover the incoming AND
-      // outgoing DRAWN band stack (sums of _fw). A node whose d3 height
-      // covers only part of its inflow (the sub-account child: fixedValue
-      // = the fan-out base only, while the income inflow band AND the
-      // fan-out band both enter it) would otherwise let the re-stacked
-      // anchors spill past the body and miss the label.
-      const inSum = (n.targetLinks || []).reduce((s, l) => s + (l._fw ?? l.width), 0);
-      const outSum = (n.sourceLinks || []).reduce((s, l) => s + (l._fw ?? l.width), 0);
-      const ext = Math.max(0, Math.max(floorOf(n), inSum, outSum) - h) / 2;
-      n._fy0 = n.y0 - ext;
-      n._fy1 = n.y1 + ext;
-    });
-  }
-
-  // Round 19 (A, owner round 19): the allocation / surplus label
-  // de-overlap pass, MANAGE mode only (the view hide path is untouched).
-  // The round-16 side-flip + font-floor machinery is kept; MANAGE keeps
-  // every label FULLY READABLE (no truncation, no hiding) and no two
-  // allocation/surplus labels may overlap each other (or spill
-  // off-canvas) at the locked container width.
-  //
-  // Round 20 (T1, owner round 20): the trigger is no longer collision-only
-  // — consecutive label blocks must also keep the reference-dashboard
-  // inter-label padding (LABEL_BLOCK_PADDING = 15px at scale 1, scaled
-  // with the column font scale; measured from the Main Front-Dashboard
-  // reference chart). A padding shortfall tiles the column exactly like a
-  // collision does.
-  //
-  // Mechanism (order-preserving, NO band rescale): within each
-  // allocation/surplus column the nodes keep their d3 order and their
-  // proportional ROW heights; when the measured label boxes collide (or
-  // spill the canvas edge, or fall short of the reference inter-label
-  // padding) the column gets ONE uniform font scale
-  // (d._manageScale, consumed by #writeLabelText as
-  // min(_labelScale, _manageScale); the round-16 0.5x font floor
-  // applies) found by bisection on the slot span, and a compact
-  // top-down SLOT tiling places the nodes.
-  //
-  // The SLOT of a node is max(label box, row) at the current scale: the
-  // box is centred on the row, so the union extends slot/2 from the row
-  // center. Tiling the slots with a 0.01px clearance keeps BOTH the
-  // label boxes AND the drawn rows non-overlapping - the box-only
-  // tiling (first attempt) piled the small bottom rows into the tall
-  // rows above them (the node bodies must stay disjoint too). A
-  // non-colliding, on-canvas column is left byte-identical. Shifting the
-  // row keeps every band attached to its own node: the round-19 B pass
-  // re-derives the anchors from the drawn geometry afterwards. If even
-  // the 0.5x slots do not fit (canvas too short for the label count),
-  // the residual collision is accepted - the labels stay fully
-  // readable, nothing is hidden or truncated.
-  #resolveManageLabelOverlaps(layout, height) {
-    if (this.mode === "view") return;
-    const { EXTENT_MARGIN, HEADER_SPACE, LABEL_FLOOR_PADDING, LABEL_BLOCK_PADDING } = this.constructor;
-    const canvasBottom = height - EXTENT_MARGIN;
-    const scaleOf = (n) => Math.min(n._labelScale ?? 1, n._manageScale ?? 1);
-    const floorOf = (n) => this.#labelFloorHeight(n) + LABEL_FLOOR_PADDING;
-    const cols = new Map();
-    layout.nodes.forEach((n) => {
-      if (n.label === false) return;
-      if (n.nodeType !== "allocation" && n.nodeType !== "surplus") return;
-      const list = cols.get(n.column) || [];
-      list.push(n);
-      cols.set(n.column, list);
-    });
-    cols.forEach((list) => {
-      list.sort((a, b) => a.y0 - b.y0);
-      const n = list.length;
-      const floors = list.map((x) => floorOf(x));
-      const hs = list.map((x) => x.y1 - x.y0);
-      const scales = list.map(scaleOf);
-      const slot = (i, s) => Math.max(floors[i] * s, hs[i]);
-      const cOf = (x) => (x.y0 + x.y1) / 2;
-      // 1. Scan at the current scales: label-box overlap, a shortfall of
-      //    the reference inter-label padding (round 20 T1), OR a box past
-      //    the canvas bottom / header line.
-      let triggered = false;
-      for (let i = 1; i < n; i += 1) {
-        const prevBot = cOf(list[i - 1]) + (floors[i - 1] * scales[i - 1]) / 2;
-        const curTop = cOf(list[i]) - (floors[i] * scales[i]) / 2;
-        const need = LABEL_BLOCK_PADDING * Math.min(scales[i - 1], scales[i]);
-        if (curTop - prevBot < need - 0.01) {
-          triggered = true;
-          break;
-        }
-      }
-      if (!triggered) {
-        for (let i = 0; i < n; i += 1) {
-          const c = cOf(list[i]);
-          const h = (floors[i] * scales[i]) / 2;
-          if (c + h > canvasBottom + 0.01 || c - h < HEADER_SPACE - 0.01) {
-            triggered = true;
-            break;
-          }
-        }
-      }
-      if (!triggered) return; // byte-identical: the d3 geometry already
-      // keeps every label box clear and on-canvas.
-      // 2. The uniform column scale: compact slot tiling from the first
-      //    node's (header-clamped) center; the span below it,
-      //    sum_{i>=2} ((slot_{i-1} + slot_i) / 2 + 0.01) + slot_n / 2,
-      //    is monotone in s, so a bisection finds the largest s in
-      //    [0.5, 1] whose slots fit the canvas (the per-node draw-level
-      //    caps, e.g. the round-16 off-canvas _labelScale, bound the
-      //    scale too).
-      const cap = Math.min(1, ...scales);
-      const firstCenterAt = (s) => {
-        const c0 = cOf(list[0]);
-        return Math.max(c0, HEADER_SPACE + slot(0, s) / 2);
+      if ((n.column ?? 0) !== 0 || !Array.isArray(n.sourceLinks)) return;
+      const cOf = (l) => {
+        const t = l.target;
+        if (!t || !Number.isFinite(t.y0) || !Number.isFinite(t.y1)) return 0;
+        return t._fy0 != null ? (t._fy0 + t._fy1) / 2 : (t.y0 + t.y1) / 2;
       };
-      const slotSpanAt = (s, scalesArr) => {
-        let span = 0;
-        for (let i = 1; i < n; i += 1) {
-          span += (slot(i - 1, scalesArr[i - 1]) + slot(i, scalesArr[i])) / 2;
-        }
-        return span + slot(n - 1, scalesArr[n - 1]) / 2;
-      };
-      const spanAt = (s) => {
-        let span = 0;
-        for (let i = 1; i < n; i += 1) {
-          span += (slot(i - 1, s) + slot(i, s)) / 2 + 0.01;
-        }
-        return span + slot(n - 1, s) / 2;
-      };
-      const fits = (s) => firstCenterAt(s) + spanAt(s) <= canvasBottom;
-      let sCol;
-      if (fits(1)) {
-        sCol = 1;
-      } else if (fits(Math.max(0.5, cap))) {
-        sCol = Math.max(0.5, cap);
-      } else {
-        let lo = 0.5;
-        let hi = 1;
-        if (!fits(lo)) {
-          sCol = 0.5; // residual: even the 0.5x slots do not fit.
-        } else {
-          for (let it = 0; it < 40; it += 1) {
-            const mid = (lo + hi) / 2;
-            if (fits(mid)) lo = mid;
-            else hi = mid;
-          }
-          sCol = lo;
-        }
-      }
-      const finalS = list.map((x, i) => {
-        const s = Math.min(scales[i], Math.max(0.5, sCol));
-        if (s < scales[i] - 1e-9) x._manageScale = s;
-        return s;
-      });
-      // 3. Compact top-down slot tiling: node i sits (slot_{i-1} +
-      //    slot_i) / 2 + the inter-label gap below node i-1. Round 20
-      //    (T1): the gap targets the reference-dashboard padding
-      //    (LABEL_BLOCK_PADDING, scaled to the column scale); when the
-      //    canvas cannot hold the full padding at the 0.5x font floor
-      //    (the round-19 residual case - canvas too short for the label
-      //    count), the gap degrades toward the 0.01px no-overlap floor
-      //    instead of breaking row order: slot >= row and >= box, so
-      //    rows AND label boxes stay disjoint and on-canvas (the final
-      //    clamp is a float safety net for the residual 0.5x case).
-      let gap = LABEL_BLOCK_PADDING * sCol;
-      {
-        const slotSpan = slotSpanAt(0, finalS);
-        const avail = canvasBottom - firstCenterAt(finalS[0]) - slotSpan;
-        gap = Math.min(gap, Math.max(0.01, avail / (n - 1)));
-      }
-      let center = firstCenterAt(finalS[0]);
-      const d0 = center - cOf(list[0]);
-      list[0].y0 += d0;
-      list[0].y1 += d0;
-      for (let i = 1; i < n; i += 1) {
-        center += (slot(i - 1, finalS[i - 1]) + slot(i, finalS[i])) / 2 + gap;
-        if (center + slot(i, finalS[i]) / 2 > canvasBottom) {
-          center = canvasBottom - slot(i, finalS[i]) / 2;
-        }
-        const d = center - cOf(list[i]);
-        list[i].y0 += d;
-        list[i].y1 += d;
-      }
-    });
-  }
-
-  // Round 19 (B, owner round 19): the band re-alignment onto the DRAWN
-  // geometry, MANAGE mode only. The d3 link anchors (l.y0/l.y1) sit at
-  // the pre-floor LAYOUT geometry (and the sub-account child's d3 height
-  // covers only its fixedValue = fan-out base, so its incoming stack
-  // overflows the node); the labels, by contrast, sit at the DRAWN
-  // centers (the round-16.7 symmetric floors). This pass re-derives every
-  // anchor for labelled nodes at column >= 2 (banks, sub-accounts,
-  // allocations, surplus): incoming anchors (l.y1) are re-stacked inside
-  // the drawn body (_fy0.._fy1) ordered by the SOURCE's drawn center-y,
-  // outgoing anchors (l.y0) by the TARGET's drawn center-y — the d3
-  // reorderNodeLinks rule, the same convention as #restackAnchors. Band
-  // WIDTHS are the strictly-proportional drawn widths (l._fw; the ONLY
-  // floor is the 3px Q3 visibility floor for zero-value minBand ribbons)
-  // and are untouched. Income/pillar/bridge (columns 0/1) are excluded so
-  // the pillar-tail contract (G) and the tail anchoring stay untouched.
-  #realignManageBands(layout) {
-    if (this.mode === "view") return;
-    const centerOf = (n) => (n._fy0 != null ? (n._fy0 + n._fy1) / 2 : (n.y0 + n.y1) / 2);
-    layout.nodes.forEach((n) => {
-      if (n.label === false) return;
-      if ((n.column ?? 0) < 2) return;
-      const top = n._fy0 ?? n.y0;
-      const widthOf = (l) => l._fw ?? l.width;
-      const bodyH = (n._fy1 ?? n.y1) - top;
-      // When the stack is narrower than the drawn body (a labelled node
-      // floored above its band sum — the allocation/surplus slivers), the
-      // stack is CENTERED in the body: a single band then lands exactly on
-      // the label center (the round-16.7 symmetric floor keeps the label
-      // center == the body center). A stack that fills the body (banks,
-      // sub-account children floored by their band sums) is unchanged —
-      // centering is a no-op there.
-      const stackOffset = (links) =>
-        Math.max(0, (bodyH - links.reduce((s, l) => s + widthOf(l), 0)) / 2);
-      const ins = [...(n.targetLinks || [])].sort((a, b) => centerOf(a.source) - centerOf(b.source));
-      let e = top + stackOffset(ins);
-      ins.forEach((l) => {
-        const w = widthOf(l);
-        l.y1 = e + w / 2;
-        e += w;
-      });
-      const outs = [...(n.sourceLinks || [])].sort((a, b) => centerOf(a.target) - centerOf(b.target));
-      e = top + stackOffset(outs);
-      outs.forEach((l) => {
-        const w = widthOf(l);
-        l.y0 = e + w / 2;
-        e += w;
-      });
-    });
-  }
-
-  // Round 20 (T4, owner round 20): the LINK-ANCHOR stacking contract,
-  // enforced AFTER the final layout/floor/realign passes. Within every
-  // labelled node's edge (column >= 2; income/pillar/bridge excluded -
-  // the pillar-tail contract G owns columns 0/1 and the hatched-last
-  // income stacking is #placeUnallocatedTails' contract) the bands must
-  // leave/enter in the order of their FAR ENDPOINT's drawn y position
-  // (incoming: the source node's drawn center; outgoing: the target's).
-  // #realignManageBands already derives that order; this pass re-derives
-  // it over the CURRENT anchor span as the formal idempotent enforcement
-  // - byte-identical when the order holds (it always does after
-  // realign, so the no-sub-account cases stay byte-identical - J S6a-d
-  // verifies) and a fix-up if a future pass reorders the anchors.
-  // Bands that share an edge in this order cannot cross inside that
-  // edge; a crossing that remains (the REAL fixture's income->subaccount
-  // x bank->allocation braid, 1 pair at both 1200px and 998px) is
-  // data-induced: the two bands share NO edge, and untangling them
-  // requires re-ordering a NODE (Sammi Parent Loan to the bottom), which
-  // the owner's contract forbids (node geometry unchanged).
-  #resolveManageLinkOrder(layout) {
-    if (this.mode === "view") return;
-    const centerOf = (n) => (n._fy0 != null ? (n._fy0 + n._fy1) / 2 : (n.y0 + n.y1) / 2);
-    const widthOf = (l) => l._fw ?? l.width;
-    const restack = (links, far, anchor) => {
-      if (links.length < 2) return;
-      const spanTop = Math.min(...links.map((l) => l[anchor] - widthOf(l) / 2));
-      const sorted = [...links].sort((a, b) => centerOf(a[far]) - centerOf(b[far]));
-      let e = spanTop;
-      sorted.forEach((l) => {
-        const w = widthOf(l);
-        l[anchor] = e + w / 2;
-        e += w;
-      });
-    };
-    layout.nodes.forEach((n) => {
-      if (n.label === false) return;
-      if ((n.column ?? 0) < 2) return;
-      restack(n.targetLinks || [], "source", "y1");
-      restack(n.sourceLinks || [], "target", "y0");
-    });
-    // Round 20 (T4, owner round 20): the income (column 0) outgoing gets
-    // the same treatment. d3's original order (the #placeUnallocatedTails
-    // comment: "the bank bands keep d3's (target-y ordered,
-    // crossing-free) relative order") goes STALE in manage: the passes
-    // after d3 (the T1 slot tiling, the sub-account stagger) shift the
-    // target centers, and the income re-stack (column 0 - excluded from
-    // #realignManageBands) keeps the pre-shift order. This pass runs
-    // LAST, so it re-sorts the SOLID income outgoing by the FINAL target
-    // drawn centers. The hatched Un-Allocated tail is excluded: its
-    // source anchor is the income's bottom sliver set by
-    // #placeUnallocatedTails (the G pillar contract) and the solid stack
-    // sum leaves exactly its width below (d3 value conservation).
-    layout.nodes.forEach((n) => {
-      if ((n.column ?? 0) !== 0) return;
-      // The SOLID value-carrying bands only. The hatched Un-Allocated
-      // tail is the income's bottom sliver (fixed by
-      // #placeUnallocatedTails - the G pillar contract), and the
-      // zero-width scaffolding (bridge/anchor) links keep their d3 /
-      // round-14 positions: they carry no value and no visual, and
-      // moving them would perturb the manage==view scaffolding
-      // byte-identity ((f) checks the bridge/anchor links too).
-      const solid = (n.sourceLinks || []).filter(
-        (x) => !x.hatched && x.value > 1e-9 && (x._fw ?? x.width) > 0.01);
-      if (solid.length < 2) return;
-      restack(solid, "target", "y0");
-    });
-  }
-
-  // Round 16 (owner notes A/B): BOTH label boxes for this node's label
-  // text — the compact single-line box (< 24px rows render) and the full
-  // two-line box — measured with the shared probe (#writeLabelText with a
-  // forced variant into a hidden probe <g>, getBBox) or the deterministic
-  // mirror (headless). The box is geometry-independent (the label text
-  // never changes with layout), so it is cached on _labelBoxes (inherited
-  // by the layout copies through the shallow spread in runLayout).
-  #labelBoxHeights(d) {
-    const { NODE_WIDTH } = this.constructor;
-    const probeNode = { ...d, x0: 0, x1: NODE_WIDTH, _labelScale: 1 };
-    const measure = (variant) => {
-      try {
-        const g = this.#labelProbeHost().append("g");
-        const el = typeof g.node === "function" ? g.node() : g;
-        this.#writeLabelText(probeNode, el, 0, variant);
-        let box = null;
-        if (el && typeof el.getBBox === "function") {
-          const b = el.getBBox();
-          if (Number.isFinite(b.height) && b.height > 0) box = { w: b.width, h: b.height };
-        }
-        if (typeof g.remove === "function") g.remove();
-        return box;
-      } catch {
-        return null; // no live layout engine (harness) -> the mirror below
-      }
-    };
-    let compact = measure(true);
-    let full = measure(false);
-    if (!compact || !full) {
-      const mirror = this.#mirrorLabelBoxHeights(probeNode);
-      const widths = this.#mirrorLabelWidths(probeNode);
-      if (!compact) compact = { w: widths.compact, h: mirror.compact };
-      if (!full) full = { w: widths.full, h: mirror.full };
-    }
-    return { compact, full };
-  }
-
-  // The deterministic mirror of #writeLabelText's line geometry (k = 1),
-  // BOTH variants: one 12px line (compact), or the 12px name line + 10.4px
-  // amount line (+ a 9.6px shortfall / marker line when present), with
-  // sans-serif ascent/descent (0.93em / 0.25em) and the tspan dy offsets
-  // (name -0.2em, second line +1.2em of the previous font).
-  #mirrorLabelBoxHeights(d) {
-    const compact = 12 * (0.93 + 0.25); // one 12px line
-    const top = 2.4 + 12 * 0.93; // name line baseline 0.2em above center
-    let bottom = 2.4 + 12 * 1.2 + 10.4 * 0.25; // amount line below it
-    if (Number(d.shortfall || 0) > 0.005 || d.unassigned) {
-      bottom = 2.4 + 12 * 1.2 + 10.4 * 1.2 + 9.6 * 0.25;
-    }
-    return { compact, full: top + bottom };
-  }
-
-  // The deterministic width mirror of #writeLabelText's text (headless
-  // label floors): 12px sans ~6.6px/char (text-xs), 10.4px mono
-  // ~7.2px/char; compact is one single line, full the wider of the name
-  // line and the amount line.
-  #mirrorLabelWidths(d) {
-    const shortText = Number(d.shortfall || 0) > 0.005 ? ` · short ${this.#format(d.shortfall)}` : "";
-    const marker = d.unassigned ? ` · ${this.labelsValue.unassigned || "No Assignment"}` : "";
-    // Round 16 (owner note 4): the FINAL label text (the last4 suffix via
-    // #displayName) is PART of the measured box — the floors adapt to the
-    // suffix automatically. Round 19 (P2, owner round 18b): the chip is
-    // drawn OVERLAPPING the node bar (centered on the bar midline — node
-    // geometry, not label space), so it no longer adds to the HORIZONTAL
-    // label footprint: the chip term is dropped from both variants
-    // (LOGO_CHIP_SIZE/GAP constants stay for the draw path). Round 19
-    // (P2, owner round 18a): the single-line $ portion renders at the
-    // two-line $ size, so the compact line prices the amount at the
-    // 10.4px mono ~7.2px/char (this mirror's own mono constant) instead
-    // of the 12px sans 6.6px/char.
-    const baseName = this.#displayName(d) || "";
-    const name = d.labelPrefix ? `${d.labelPrefix}${baseName}` : baseName;
-    const amount = this.#format(d.displayValue ?? d.value ?? 0);
-    return {
-      // 6.6 = the single space between name and $ on the compact line.
-      compact: name.length * 6.6 + 6.6 + amount.length * 7.2 + shortText.length * 6.6 + marker.length * 6.6,
-      full: Math.max((name.length + shortText.length + marker.length) * 6.6, amount.length * 7.2),
-    };
-  }
-
-  // The legacy single-variant estimate (kept for API stability): the
-  // draw-time variant of the mirrored box.
-  #estimateLabelHeight(d) {
-    const boxes = this.#mirrorLabelBoxHeights(d);
-    const compact = d.y1 - d.y0 < 24 && d.nodeType !== "income";
-    return compact ? boxes.compact : boxes.full;
-  }
-
-  // The hidden probe <svg> that carries the label measure-probe <g> (the
-  // real shared measure box behind #labelFloorHeight AND the view-mode
-  // small-label hide in #prepareDraw). Created once per instance;
-  // visibility:hidden keeps it out of the page while getBBox still works
-  // (display:none would not lay the text out).
-  #labelProbeHost() {
-    if (!this._labelProbe) {
-      this._labelProbe = d3
-        .select(this.element)
-        .append("svg")
-        .attr("width", 1)
-        .attr("height", 1)
-        .style("position", "absolute")
-        .style("left", "-9999px")
-        .style("visibility", "hidden")
-        .style("pointer-events", "none");
-    }
-    return this._labelProbe;
-  }
-
-  // Round 10 (owner: "keep the names always"): the FULL label (name +
-  // amount + short) must always be visible — no ellipsis, no clip at the
-  // SVG edge, at any data scale (including the round-9 3px-floor bands,
-  // whose 22px floor nodes carry the compact single-line label). The
-  // default side faces the chart middle (the house rule); when the
-  // measured width overflows it, the label flips to the opposite node side
-  // if that has room, and as a last resort the font scales down to
-  // EXACTLY the available space (round 16.7: the old 0.5x floor could push
-  // the box past the canvas edge — the label then scaled to the room
-  // instead, so it stays on-canvas, drawn against the node) so the full
-  // name still fits on-screen.
-  #placeLabel(d, measuredWidth, width) {
-    const { EXTENT_MARGIN, LABEL_GUTTER } = this.constructor;
-    const gap = LABEL_GUTTER; // Round 20 (T1): the reference-dashboard gutter
-    const availStart = width - EXTENT_MARGIN - (d.x1 + gap); // label right of the node
-    const availEnd = d.x0 - gap - EXTENT_MARGIN; // label left of the node
-    const defaultSide = d.x0 < width / 2 ? "start" : "end";
-    const defaultAvail = defaultSide === "start" ? availStart : availEnd;
-    let side = defaultSide;
-    if (defaultAvail < measuredWidth) {
-      const otherSide = defaultSide === "start" ? "end" : "start";
-      const otherAvail = otherSide === "start" ? availStart : availEnd;
-      side = otherAvail >= measuredWidth ? otherSide : availStart >= availEnd ? "start" : "end";
-    }
-    const avail = side === "start" ? availStart : availEnd;
-    d._labelSide = side;
-    // Round 16.7 off-canvas guard: `avail < measuredWidth` is only reached
-    // when the default side AND the flip are both too short, so scale to
-    // EXACTLY the available space (no 0.5x font floor — that floor let the
-    // box run past the canvas edge and clip at the svg boundary, the bank
-    // names the owner saw cut off at the left edge). The box then always
-    // stays inside [EXTENT_MARGIN, width - EXTENT_MARGIN]; against the node
-    // it renders at the reduced scale (drawn "inside" the node's side).
-    d._labelScale = avail >= measuredWidth ? 1 : Math.max(0.1, avail / measuredWidth);
-  }
-
-  // Round 16.8: the round 16/16.7 min-width overlap probe (the label-gap
-  // gutter probe and its one-candidate helper) is REMOVED with the
-  // min-width search: the manage chart is locked at the container width,
-  // labels may overlap where the container is tight (owner directive).
-
-  // Round 16 (owner note 4): the LABEL-visible name — the bank rows'
-  // "Name [last4]" suffix (labelName, set in #buildGraph), plain d.name
-  // for everything else (and for banks without a last4). The label text,
-  // the <title>, the tooltip and the headless width mirror all consume
-  // this; d.name itself stays plain for the sorts, the dialog lookups and
-  // the planner identity.
-  #displayName(d) {
-    return d.labelName ?? d.name;
-  }
-
-  // Round 15 (owner note 1) + Round 16 (owner note A): the MANAGE floor
-  // input — the height of this node's REAL label box in the variant the
-  // draw pass renders at d's current geometry (compact single-line for
-  // < 24px rows, full two-line otherwise), measured with the same shared
-  // measure probe the view-mode hide consumes: #writeLabelText (the exact
-  // label the draw pass writes, same tspans / font sizes / marker rules)
-  // into a hidden probe <g>, read with getBBox. Headless environments
-  // without a live getBBox (harnesses) fall back to the deterministic
-  // mirror of #writeLabelText's line geometry, so the mechanism (not just
-  // the pixels) is exercised identically. Both variants are measured once
-  // per node (cached on _labelBoxes) and reused by the draw-level floor
-  // pass (#applyManageFloors via #labelFloorHeight) and the draw pass's
-  // own measure probe.
-  #labelFloorHeight(d) {
-    const isCompact = d.y1 - d.y0 < 24 && d.nodeType !== "income";
-    const boxes = d._labelBoxes || (d._labelBoxes = this.#labelBoxHeights(d));
-    return (isCompact ? boxes.compact : boxes.full).h;
-  }
-
-  // Round 20 (T3, owner round 20 drawing): the Un-Allocated label is
-  // TOP-ANCHORED on its pillar (2px clearance below the pillar top - the
-  // income bottom edge where the hatched ribbon enters) instead of centered
-  // on it. The owner's spec: "much closer to the Income label, so that its
-  // number label is there before the other Sankey Flow Visuals start to
-  // move up or down. So it never overlaps" - the position is a fixed
-  // pre-fan-out point (income bottom edge + 2px), independent of where
-  // the flow ribbons curve, in BOTH modes.
-  #unallocLabelCenterY(d) {
-    const k = Math.min(d._labelScale ?? 1, d._manageScale ?? 1);
-    return d._y1 - 2 - (this.#labelFloorHeight(d) * k) / 2;
-  }
-
-  // Round 16.7 (owner directive): the MANAGE minimums, applied WITHOUT
-  // rescaling the layout. The layout is the view's strictly-proportional
-  // fit (shared path — see #generateSankeyData); this pass only extends
-  // the DRAWN geometry:
-  //   * every labelled node's drawn rect is extended SYMMETRICALLY about
-  //     its layout center to at least its measured label floor
-  //     (#labelFloorHeight + LABEL_FLOOR_PADDING, the variant the layout
-  //     height renders) — the symmetric extension keeps the label center
-  //     and every band's y anchor on the layout geometry that
-  //     #setLabelGeoms / #setLinkGeom consume, so only the rect grows
-  //     (equal up/down; at a phone height the bottom rows would otherwise
-  //     draw past the svg and the top rows would eat the header room —
-  //     symmetric keeps both inside the canvas);
-  //   * every band is STRICTLY PROPORTIONAL again (round 16.8): the drawn
-  //     thickness = the layout width (d3's single scale), no label floor —
-  //     the round 16.7 "labelled bands at the target's label floor" is
-  //     GONE (it made the zero-value unsatisfied-bucket ribbons fat; the
-  //     small lines just go into the larger labels). The ONLY surviving
-  //     band floor: the round-9 Q3 3px visibility floor (MIN_BAND_WIDTH)
-  //     for ZERO-VALUE minBand ribbons (max(layout width, 3px) as a FLOOR,
-  //     not a forced value) so the unsatisfied bucket stays visible as a
-  //     small line;
-  //   * hatched Un-Allocated ribbons and the unlabelled scaffolding
-  //     (bridge/anchor) keep their layout width (the manage stub-band width comes from #placeUnallocatedNearTails).
-  // When a node's floor exceeds the room between its neighbours at the
-  // view scale the extended rect overlaps its neighbours vertically —
-  // accepted per the owner's directive (the view geometry wins; the
-  // minimums are the only change). No rescaling to avoid it, ever.
-  // VIEW mode is a no-op here (byte-identical view rendering).
-  #applyManageFloors(layout) {
-    if (this.mode === "view") return;
-    const { LABEL_FLOOR_PADDING, MIN_BAND_WIDTH } = this.constructor;
-    const floorOf = (n) => this.#labelFloorHeight(n) + LABEL_FLOOR_PADDING;
-    // Round 16.8: bands are strictly proportional — drawn width = layout
-    // width, no label floor. The only floor: the 3px Q3 visibility floor
-    // for zero-value minBand ribbons. (Round 19: the _fw loop runs FIRST so
-    // the node floor below can size the drawn body against the DRAWN band
-    // stack — see #realignManageBands.)
-    layout.links.forEach((l) => {
-      l._fw = l.minBand && l.value <= 1e-9 ? Math.max(l.width, MIN_BAND_WIDTH) : l.width;
-    });
-    layout.nodes.forEach((n) => {
-      if (n.label === false) return;
-      const h = n.y1 - n.y0;
-      // Round 19 (B): the drawn body must also cover the incoming AND
-      // outgoing DRAWN band stack (sums of _fw). A node whose d3 height
-      // covers only part of its inflow (the sub-account child: fixedValue
-      // = the fan-out base only, while the income inflow band AND the
-      // fan-out band both enter it) would otherwise let the re-stacked
-      // anchors spill past the body and miss the label.
-      const inSum = (n.targetLinks || []).reduce((s, l) => s + (l._fw ?? l.width), 0);
-      const outSum = (n.sourceLinks || []).reduce((s, l) => s + (l._fw ?? l.width), 0);
-      const ext = Math.max(0, Math.max(floorOf(n), inSum, outSum) - h) / 2;
-      n._fy0 = n.y0 - ext;
-      n._fy1 = n.y1 + ext;
+      n.sourceLinks = [...n.sourceLinks].sort((a, b) => cOf(a) - cOf(b));
     });
   }
 
@@ -3830,7 +2546,6 @@ export default class extends Controller {
   // measured in #prepareDraw via #placeLabel, and d._labelScale is the
   // last-resort font shrink (1 = the house sizes below).
   #writeLabelText(d, g, centerY, compactOverride = null) {
-  #writeLabelText(d, g, centerY) {
     const { x, anchor } = this.#labelPosition(d);
     // Round 16 (owner note A): compactOverride forces the label variant for
     // the measure probes (both boxes are measured BEFORE the layout exists,
@@ -3856,23 +2571,6 @@ export default class extends Controller {
     // measures the <text> box only). NODE_WIDTH (15) > CHIP (14), so the
     // chip sits fully on the bar and the text never touches it.
     const { LOGO_CHIP_SIZE: CHIP } = this.constructor;
-    // Round 16.6: logo OR the default kind icon — a bank always chips.
-    const hasChip = d.logoSlug != null || d.kindIcon != null;
-    const textX = x;
-    const chipX = (d.x0 + d.x1) / 2 - CHIP / 2;
-    // Round 19 (A): the vertical de-overlap scale (d._manageScale, set by
-    // #resolveManageLabelOverlaps when a bottom-clamped label still
-    // collides) stacks UNDER the round-16 horizontal fit (_labelScale);
-    // both honor the round-16 0.5x font floor.
-    const k = Math.min(d._labelScale ?? 1, d._manageScale ?? 1);
-    const name = d.labelPrefix ? `${d.labelPrefix}${d.name}` : d.name;
-    // Round 16 (owner note 3b): the chip is PART of the label box — for a
-    // start-anchored label (right of the node) it sits at the box's left
-    // edge, closest to the node, and the text starts chip+gap in; for an
-    // end-anchored label (left of the node) it sits at the box's right
-    // edge and the text ends chip+gap before it. The text + every x-reset
-    // tspan therefore keep a chip+gap offset from #labelPosition's x.
-    const { LOGO_CHIP_SIZE: CHIP, LOGO_CHIP_GAP: CHIP_GAP } = this.constructor;
     // Round 16.6: logo OR the default kind icon — a bank always chips.
     const hasChip = d.logoSlug != null || d.kindIcon != null;
     const textX = x;
@@ -3921,7 +2619,6 @@ export default class extends Controller {
         .attr("width", bw + pad * 2)
         .attr("height", bh + pad * 2);
     }
-    d3.select(g).selectAll(":scope > text, :scope > image.planflow-logo, :scope > g.planflow-kind-icon").remove();
     const text = d3.select(g)
       .append("text")
       .attr("x", textX)
@@ -3984,11 +2681,6 @@ export default class extends Controller {
     // (identical placement rule, parity kept) — and no longer occupies the
     // gutter between bar and text. Omitted entirely when the slug is absent
     // or not in the payload's available set — never a broken <img>.
-    // Round 16 (owner note 3b): the bank favicon chip — INSIDE the label
-    // group (it blurs with the label under the house privacy rule via the
-    // shared privacy-sensitive class, and the measured box includes it),
-    // node-side of the text. Omitted entirely when the slug is absent or
-    // not in the payload's available set — never a broken <img>.
     if (hasChip) {
       if (d.logoSlug != null) {
         d3
@@ -3999,7 +2691,6 @@ export default class extends Controller {
           .attr("width", CHIP)
           .attr("height", CHIP)
           .attr("x", chipX)
-          .attr("x", anchor === "start" ? x : x - CHIP)
           .attr("y", centerY - CHIP / 2)
           .attr("preserveAspectRatio", "xMidYMid meet");
       } else {
@@ -4007,13 +2698,11 @@ export default class extends Controller {
         // space, scaled to the chip footprint, tinted with the node's kind
         // fill. INSIDE the label group like the logo (privacy blur + measured
         // box cover it identically; round 19 (P2): same chipX on the bar).
-        // box cover it identically).
         d3
           .select(g)
           .append("g")
           .attr("class", "planflow-kind-icon privacy-sensitive")
           .attr("transform", `translate(${chipX}, ${centerY - CHIP / 2}) scale(${CHIP / 24})`)
-          .attr("transform", `translate(${anchor === "start" ? x : x - CHIP}, ${centerY - CHIP / 2}) scale(${CHIP / 24})`)
           .attr("fill", "none")
           .attr("stroke", d.color || "currentColor")
           .attr("stroke-width", 2)
@@ -4025,7 +2714,6 @@ export default class extends Controller {
     // Round 11 issue 8: the sub-account tooltip names its parent.
     const subAccountNote = d.subAccount && d.parentName ? ` · Sub-account of ${d.parentName}` : "";
     text.append("title").text(`${this.#displayName(d)} — ${this.#format(d.displayValue ?? d.value ?? 0)}${subAccountNote}`);
-    text.append("title").text(`${d.name} — ${this.#format(d.displayValue ?? d.value ?? 0)}${subAccountNote}`);
   }
 
   // ---- Geometry application ----------------------------------------------
@@ -4104,14 +2792,6 @@ export default class extends Controller {
       const y = d.kind === "unallocated"
         ? this.#unallocLabelCenterY(d)
         : (d._y0 + d._y1) / 2 + (d._labelDy ?? 0);
-      // Round 20 (T3): the Un-Allocated label top-anchors on its pillar
-      // (the pre-fan-out position, see #unallocLabelCenterY); every other
-      // label centers on the drawn rect.
-      // Round 22 (N2): + the label-only min-padding offset (see
-      // #ensureAllocationLabelGaps — the label shifts, the bar does not).
-      const y = d.kind === "unallocated"
-        ? this.#unallocLabelCenterY(d)
-        : (d._y0 + d._y1) / 2 + (d._labelDy ?? 0);
       const text = a.labelEl.querySelector("text");
       if (!text) return;
       // Round 19 (P2, owner round 18b): the text keeps the plain gutter x
@@ -4122,16 +2802,6 @@ export default class extends Controller {
       const { LOGO_CHIP_SIZE: CHIP } = this.constructor;
       const textX = x;
       const chipX = (d.x0 + d.x1) / 2 - CHIP / 2;
-      const y = (d._y0 + d._y1) / 2;
-      // Round 16 (owner note 3b): the text keeps its chip+gap offset from
-      // the box edge (same computation as #writeLabelText); the chip tracks
-      // the node-side edge of the label box as the node animates.
-      const { LOGO_CHIP_SIZE: CHIP, LOGO_CHIP_GAP: CHIP_GAP } = this.constructor;
-      // Round 16.6: the chip tracks the node-side edge — logo image OR kind
-      // icon (the g is positioned by transform, not x/y attributes).
-      const hasChip = d.logoSlug != null || d.kindIcon != null;
-      const chipStep = hasChip ? CHIP + CHIP_GAP : 0;
-      const textX = anchor === "start" ? x + chipStep : x - chipStep;
       text.setAttribute("x", textX);
       text.setAttribute("y", y);
       text.querySelectorAll("tspan").forEach((ts) => {
@@ -4149,9 +2819,6 @@ export default class extends Controller {
       // Round 20 (T3), re-anchored by Round 23 (note 3): the Un-Allocated
       // dotted outline re-centers on the (bottom-anchored) label y every
       // draw frame - same box as #writeLabelText, only the center moves.
-      // Round 20 (T3): the Un-Allocated dotted outline re-centers on the
-      // (top-anchored) label y every draw frame - same box as
-      // #writeLabelText, only the center moves.
       const outline = a.labelEl.querySelector("rect.planflow-ua-outline");
       if (outline) {
         const k = Math.min(d._labelScale ?? 1, d._manageScale ?? 1);
@@ -4166,9 +2833,6 @@ export default class extends Controller {
         outline.setAttribute("width", bw + pad * 2);
         outline.setAttribute("height", bh + pad * 2);
       }
-        const ix = anchor === "start" ? x : x - CHIP;
-          chip.setAttribute("transform", `translate(${ix}, ${y - CHIP / 2}) scale(${CHIP / 24})`);
-          chip.setAttribute("x", ix);
       const fade = a.dying ? 1 - e : a.spawn ? e : 1;
       a.labelEl.setAttribute("opacity", (fade * (a.labelFinalOpacity ?? 1)).toFixed(3));
     });
@@ -4404,15 +3068,26 @@ export default class extends Controller {
     // vertical center) - the same post-flatten pattern on purpose: the
     // flat-top re-anchoring above would undo any pre-flatten shift.
     this.#placeSubAccountRows(layout, height);
-    // Round 19 (A): the allocation-column label de-overlap (MANAGE only;
-    // order-preserving row shifts, no rescale) — BEFORE the floors so the
-    // symmetric extension grows about the FINAL centers.
-    this.#resolveManageLabelOverlaps(layout, height);
+    // Round 24 (owner): the #resolveManageLabelOverlaps call is RETIRED
+    // here (defect factory: 0.01px-gap re-tiling + 0.7682x font shrink +
+    // overlapping drawn rects). The method body below stays dead/inert
+    // until a future round explicitly re-activates it. Its label-clearance
+    // goal is now met by #manageRowGapsAndExtent's grown canvas plus the
+    // #ensureAllocationLabelGaps no-op safety net further below.
     // Round 16.7: the manage draw-level floors (label-floor node rects +
     // band thicknesses) — the layout above is already the view's
     // strictly-proportional geometry; this extends the DRAWN rect/band
     // only. No-op in view mode.
     this.#applyManageFloors(layout);
+    // Round 24 (owner): the MANAGE-only row-gap re-stack — fixed ROW_GAP
+    // between every DRAWN row of the bank and allocation/surplus columns,
+    // drawn heights (_fy1-_fy0) unchanged, overall height allowed to grow
+    // (lastChartHeight is grown in place; the callers re-read it AFTER
+    // this pass, so #draw sizes the svg to the grown canvas). Runs AFTER
+    // the floors (drawn _fy0/_fy1 are final) and BEFORE the band
+    // re-derivation so #realignManageBands / #resolveManageLinkOrder
+    // re-derive anchors from the FINAL centers. View mode returns early.
+    this.#manageRowGapsAndExtent(layout, height);
     // Round 23 (note 2, owner reversal): the VIEW-mode 3px sliver for real
     // sub-pixel allocation/surplus rows (VIEW only; #applyManageFloors is
     // the no-op in view that this complements — after this line _fy0/_fy1
@@ -4428,295 +3103,13 @@ export default class extends Controller {
     // Round 22 (N2, owner): the allocation/surplus label min-padding pass
     // (MANAGE only; LABEL-ONLY — it never moves a node or a band: it
     // enforces the visible inter-label gap by shifting label y only, and
-    // forces the compact one-line variant in dense columns).
-    this.#ensureAllocationLabelGaps(layout, height);
-    // Round 21 (T1) + Round 22 (N3, owner): the Un-Allocated stubs sit a
-    // short STRAIGHT stub flush at their income's right edge (bottom-anchored,
-    // gap 0) instead of sweeping the full chart width. Round 22: ONE rule
-    // for EVERY plan (allocating AND empty — the round-21 empty-plan gate
-    // and the round-14/15 #placeUnallocatedTails pass are unified into this
-    // one). LAST on purpose: it overrides the pillar x/y and the hatched
-    // band anchors after every pass that could have moved them (it also
-    // runs after #applyManageFloors, so its _fy0/_fy1 win for the manage
-    // rect).
-    this.#placeUnallocatedNearTails(layout);
-    // Round 22 (N4, owner): the bank column is pinned dead-center on the
-    // diagram (mode-independent x override — node.column is unchanged).
-    this.#pinBankColumn(layout, width);
-  }
-
-  // Round 15 (owner note 2, 2026-11-07): a sub-account row belongs IN-LINE
-  // with its parent bank row - the owner's "smooth fan out from the Account
-  // to the Sub-Account to the Savings Item". d3-sankey stacks the dedicated
-  // sub-account column (column 3) top-down from the extent top, so the
-  // children would otherwise land at the CHART TOP no matter where the
-  // parent bank row sits (round-15 screenshots: top-stacked children, the
-  // long crossing fan-out band, child labels spilling into the bank column
-  // and overlapping the bank labels). This pass re-centers each parent's
-  // child group on the parent's vertical center:
-  //   - the children keep their laid-out heights, the laid-out inter-child
-  //     gap (the column padding d3 used between them), and their ROW ORDER
-  //     = the fan-out target order, so band order = row order (no crossing
-  //     inside the group, and the child -> allocation bands keep grouping
-  //     under the child row);
-  //   - the group is clamped inside the extent (an extreme parent slides
-  //     the group; nothing clips);
-  //   - two different parents' groups that would collide are pushed
-  //     apart (first group keeps its in-line position);
-  //   - the PARENT's outgoing anchors (its own allocation/surplus/anchor
-  //     bands + the fan-out bands) and each child's incoming/outgoing
-  //     anchors are re-stacked in d3's crossing-free order (ascending
-  //     counterpart center-y, the reorderNodeLinks invariant), so every
-  //     band stays attached after the move.
-  // Runs at the end of #flattenColumns (after #placeUnallocatedNearTails): the
-  // flat-top re-anchoring undoes pre-flatten shifts (G's lesson), and the
-  // two post-flatten passes touch disjoint node sets (pillars/incomes vs
-  // children/parents), so their order is safe.
-  #placeSubAccountRows(layout, height) {
-    const { EXTENT_MARGIN, HEADER_SPACE } = this.constructor;
-    const top = HEADER_SPACE;
-    const bottom = height - EXTENT_MARGIN;
-    const nodeById = new Map(layout.nodes.map((n) => [n.id, n]));
-    const groups = new Map();
-    layout.nodes.forEach((n) => {
-      if (!n.subAccount || !n.parentAccount) return;
-      const list = groups.get(n.parentAccount) || [];
-      list.push(n);
-      groups.set(n.parentAccount, list);
-    });
-    if (groups.size === 0) return;
-    // Row order = fan-out order = target order (the order d3 already laid
-    // the column out in: sortKey = parentIdx + (rank+1)/(count+1)).
-    const placed = [];
-    groups.forEach((children, parentId) => {
-      const parent = nodeById.get(`bank:${parentId}`);
-      if (!parent) return;
-      children.sort((a, b) => (a.sortKey ?? 0) - (b.sortKey ?? 0));
-      // The gap d3 left between the children in their (old, top-stacked)
-      // column: preserve it so the group keeps its laid-out spacing.
-      let gap = 0;
-      for (let i = 1; i < children.length; i += 1) {
-        gap = Math.max(gap, children[i].y0 - children[i - 1].y1);
-      }
-      // Round 19 (C, MANAGE only): the sibling labels stand taller than
-      // the rows — widen the inter-row gap to the label clearance so the
-      // child labels (which sit LEFT of the col-3 nodes, in the same
-      // x-zone as the parent labels right of the col-2 nodes) never stack
-      // into each other. The view path keeps the legacy gap (byte-identity).
-      // Round 19 (C, MANAGE only): the sibling labels stand taller than
-      // the rows (label = row center +/- floor/2, floor > row height).
-      const labelFloorOf = (n) =>
-        this.#labelFloorHeight(n) + this.constructor.LABEL_FLOOR_PADDING;
-      const overhang = (n) =>
-        Math.max(0, labelFloorOf(n) - (n.y1 - n.y0)) / 2;
-      if (this.mode !== "view") {
-        for (let i = 1; i < children.length; i += 1) {
-          const a = children[i - 1];
-          const b = children[i];
-          const need =
-            labelFloorOf(a) / 2 + labelFloorOf(b) / 2 -
-            (a.y1 - a.y0) / 2 - (b.y1 - b.y0) / 2 + 2;
-          gap = Math.max(gap, need);
-        }
-      }
-      const totalH =
-        children.reduce((s, c) => s + (c.y1 - c.y0), 0) + gap * (children.length - 1);
-      let y = (parent.y0 + parent.y1) / 2 - totalH / 2;
-      if (y < top) y = top;
-      if (y + totalH > bottom) y = Math.max(top, bottom - totalH);
-      // Round 19 (C, MANAGE only): stagger the group off the parent's
-      // label band. The child labels (left of the col-3 nodes, x ~ the
-      // col2/col3 gap) and the parent bank labels (right of the col-2
-      // nodes) share an x-zone, so a child row centered on the parent
-      // makes the texts overlap (owner round 19: "slightly move down the
-      // sub-account"). The group therefore starts BELOW the parent's
-      // label box (clearance: the FIRST child's label stands above its
-      // row by overhang(first)); only when that overflows the canvas
-      // bottom does the group alternate ABOVE the parent's label box
-      // (clearance: the LAST child's label stands below its row by
-      // overhang(last)). The VIEW path keeps the exact legacy centered
-      // placement (byte-identity contract).
-      let overTop = 0;
-      if (this.mode !== "view") {
-        const first = children[0];
-        const last = children[children.length - 1];
-        overTop = overhang(first);
-        const overBot = overhang(last);
-        const lf = labelFloorOf(parent);
-        const pc = (parent.y0 + parent.y1) / 2;
-        const pBoxBot = pc + lf / 2;
-        const pBoxTop = pc - lf / 2;
-        const downY = Math.max(pBoxBot + 2 + overTop, top);
-        if (downY + totalH > bottom) {
-          // Alternating pattern: place ABOVE the parent's label box
-          // instead (still off its y-band), then clamp to the canvas.
-          y = Math.max(top, Math.min(pBoxTop - 2 - overBot - totalH, bottom - totalH));
-        } else {
-          y = downY;
-        }
-      }
-      // De-overlap: a later group may not cover an earlier one (the child
-      // rows share the column). Round 19 (manage): the clearance is the
-      // previous group's LABEL-box bottom (the child labels are taller
-      // than the rows) plus this group's own upward label overhang; the
-      // view keeps the legacy row-bottom clearance.
-      let clash = false;
-      placed.forEach((p) => {
-        const need =
-          this.mode === "view" ? p.end + 0.5 : p.endLabel + 2 + overTop;
-        if (y < need) {
-          y = need;
-      // rows share the column).
-        if (y < p.end + 0.5) {
-          y = p.end + 0.5;
-          clash = true;
-        }
-      });
-      if (clash && y + totalH > bottom) y = Math.max(top, bottom - totalH);
-      children.forEach((c) => {
-        const h = c.y1 - c.y0;
-        c.y0 = y;
-        c.y1 = y + h;
-        y += h + gap;
-      });
-      let endLabel = children[0].y0 + totalH;
-      if (this.mode !== "view") {
-        // The bottom-most child's label box bottom (its box stands taller
-        // than its row) is the group's label clearance for the next group.
-        const last = children[children.length - 1];
-        const lf = this.#labelFloorHeight(last) + this.constructor.LABEL_FLOOR_PADDING;
-        endLabel = last.y0 + (last.y1 - last.y0) / 2 + lf / 2;
-      }
-      placed.push({ end: children[0].y0 + totalH, endLabel });
-      this.#restackAnchors(parent);
-      children.forEach((c) => this.#restackAnchors(c));
-    });
-  }
-
-  // The d3 reorderNodeLinks invariant applied to one node after a
-  // post-layout y move (same anchor convention as the Un-Allocated
-  // outflow re-stack: cumulative widths from the node top, each band's
-  // anchor at the middle
-  // of its slice): outgoing links ordered by target center-y, incoming
-  // links ordered by source center-y. Zero-width pins order by the same
-  // key; their width 0 adds no space.
-  #restackAnchors(node) {
-    const centerOf = (n) => (n.y0 + n.y1) / 2;
-    const outgoing = [...(node.sourceLinks || [])].sort((a, b) => centerOf(a.target) - centerOf(b.target));
-    let e = node.y0;
-    outgoing.forEach((l) => {
-      l.y0 = e + l.width / 2;
-      e += l.width;
-    });
-    const incoming = [...(node.targetLinks || [])].sort((a, b) => centerOf(a.source) - centerOf(b.source));
-    e = node.y0;
-    incoming.forEach((l) => {
-      l.y1 = e + l.width / 2;
-      e += l.width;
-    });
-  }
-
-  // Round 22 (N3, owner): ONE Un-Allocated stub rule for EVERY plan —
-  // allocating AND empty (the round-21 `allocations.length === 0` gate and
-  // the round-14/15 #placeUnallocatedTails view/deficit passes are GONE;
-  // this is the only Un-Allocated pass left). Owner intent: "it shouldn't
-  // move down or bend. It should be straight out and stop super early."
-  // Per income (income order, top first):
-  //   h = (pillar.value / income.value) * incomeH — value-proportional on
-  //       d3's single global scale (= the pillar's natural height at the
-  //       income's post-flatten height), FLOORED at the label height
-  //       (#labelFloorHeight + LABEL_FLOOR_PADDING) so the always-show
-  //       label fits. NO 0.25·incomeH cap (the round-21 T1 cap is removed:
-  //       value-proportional IS the "stop super early" intent — the live
-  //       plan renders Kurt 55.01px / Sammi 129.06px).
-  //   bottom-anchored: pillar.y1 = income.y1, pillar.y0 = y1 - h (stub
-  //       bottoms align with the income bottoms). Collision-safe: stub_i
-  //       ⊆ [income_i.y0, income_i.y1] and the d3 incomes are disjoint
-  //       with >= 5px padding, so the stubs never overlap each other.
-  //   flush, gap 0: pillar.x0 = income.x1 (the stub touches the income's
-  //       right edge; UA_GAP is now 0), x1 = x0 + NODE_WIDTH. The label
-  //       stays right of the stub (#placeLabel default for x0 < W/2).
-  //   straight band: l.nearTail -> #straightRibbonPath (4-point M/L, no
-  //       bend). l.width = l._fw = h — set BOTH (manage's
-  //       #applyManageFloors read the old _fw earlier, view leaves _fw
-  //       undefined). With gap 0 the band is a zero-span straight sliver;
-  //       the visible unallocated mark is the hatched stub node itself
-  //       (the hatched pattern stays — it is the unallocated visual).
-  //   the income-outflow re-stack is kept: the solid bank bands keep d3's
-  //       (target-y ordered, crossing-free) relative order from
-  //       income.y0, the hatched band is LAST (the income's bottom
-  //       sliver), anchors l.y0 = income.y1 - l.width/2 (source),
-  //       l.y1 = pillar.y0 + l.width/2 (stub top).
-  // Runs LAST in #flattenColumns on purpose: it overrides the pillar x/y
-  // and the hatched band anchors after every pass that could have moved
-  // them, and after #applyManageFloors so its _fy0/_fy1 win the manage
-  // drawn rect (view mode: _fy0/_fy1 equal the layout geometry, so the
-  // same stub renders in view too). #ribbonPath (the cubic) and the
-  // #placeLabel probe guard stay byte-untouched; every hatched
-  // income->pillar link sets nearTail, so the cubic is no longer
-  // reachable for them.
-  #placeUnallocatedNearTails(layout) {
-    const tails = [];
-    layout.links.forEach((l) => {
-      if (!l.hatched || !l.target || l.target.kind !== "unallocated") return;
-      tails.push(l);
-    });
-    if (tails.length === 0) return;
-    const { NODE_WIDTH, LABEL_FLOOR_PADDING } = this.constructor;
-    // hatched links are built in income order by #buildGraph -> income
-    // order here (top income first).
-    tails.forEach((l) => {
-      const income = l.source;
-      const pillar = l.target;
-      const incomeH = income.y1 - income.y0;
-      const naturalH = (pillar.value / income.value) * incomeH;
-      const labelFloorH = this.#labelFloorHeight(pillar) + LABEL_FLOOR_PADDING;
-      const h = Math.max(naturalH, labelFloorH);
-      const y1 = income.y1; // bottom-anchored: stub bottoms align with
-      const y0 = y1 - h; // the income bottoms
-      const x0 = income.x1; // flush at the income's right edge (gap 0)
-      const x1 = x0 + NODE_WIDTH;
-      // 1) Re-stack the income's outgoing anchors: the bank bands keep
-      // d3's (target-y ordered, crossing-free) relative order, the hatched
-      // band is LAST (its source anchor is the bottom sliver of the
-      // outflow stack).
-    const { EXTENT_MARGIN } = this.constructor;
-      // band is LAST so its source anchor is the bottom sliver of the
-      // outflow stack. The stack fills the income node (its value equals
-      // its outflow sum), so the hatched band is the bottom band.
-      // d3's (target-y ordered, crossing-free) relative order, the
-      // hatched band is LAST so its source anchor is the bottom sliver
-      // of the outflow stack.
-    // Round 14 (issue 5b): AFTER the flat-top re-anchoring above - the
-    // Un-Allocated pillars hang as small tails off their source income's
-    // bottom edge.
-    this.#placeUnallocatedTails(layout, height);
-    // Round 15 (owner note 2): sub-account rows sit IN-LINE with their
-    // parent bank row (each parent's child group centered on the parent's
-    // vertical center) - the same post-flatten pattern on purpose: the
-    // flat-top re-anchoring above would undo any pre-flatten shift.
-    this.#placeSubAccountRows(layout, height);
-    // Round 19 (A): the allocation-column label de-overlap (MANAGE only;
-    // order-preserving row shifts, no rescale) — BEFORE the floors so the
-    // symmetric extension grows about the FINAL centers.
-    this.#resolveManageLabelOverlaps(layout, height);
-    // Round 16.7: the manage draw-level floors (label-floor node rects +
-    // band thicknesses) — the layout above is already the view's
-    // strictly-proportional geometry; this extends the DRAWN rect/band
-    // only. No-op in view mode.
-    this.#applyManageFloors(layout);
-    // Round 19 (B): re-derive the band anchors from the DRAWN geometry
-    // (MANAGE only) — LAST, after the floors set the drawn bodies.
-    this.#realignManageBands(layout);
-    // Round 20 (T4): the link-anchor stacking contract (far-endpoint y
-    // order per edge) enforced AFTER the final passes — idempotent, so the
-    // no-sub-account cases stay byte-identical (J S6a-d verifies).
-    this.#resolveManageLinkOrder(layout);
-    // Round 22 (N2, owner): the allocation/surplus label min-padding pass
-    // (MANAGE only; LABEL-ONLY — it never moves a node or a band: it
-    // enforces the visible inter-label gap by shifting label y only, and
-    // forces the compact one-line variant in dense columns).
-    this.#ensureAllocationLabelGaps(layout, height);
+    // forces the compact one-line variant in dense columns). Round 24:
+    // runs against the GROWN canvas height (this.lastChartHeight — grown
+    // in place by #manageRowGapsAndExtent in manage, the design height in
+    // view) so the 8px block gaps + 16px boxes leave >= 12px of label
+    // clearance everywhere and the pass degrades to a no-op safety net
+    // (all _labelDy stay 0; labels center exactly on the block centers).
+    this.#ensureAllocationLabelGaps(layout, this.lastChartHeight);
     // Round 21 (T1) + Round 22 (N3, owner): the Un-Allocated stubs sit a
     // short STRAIGHT stub flush at their income's right edge (bottom-anchored,
     // gap 0) instead of sweeping the full chart width. Round 22: ONE rule
@@ -4900,21 +3293,6 @@ export default class extends Controller {
     });
   }
 
-  // Round 14 (issue 5b, owner sketch 2026-11-04): each Un-Allocated pillar
-  // is a SMALL TAIL off its source income - top edge at the income's bottom
-  // edge (mid-chart for the top income, the very bottom for the last
-  // income), in its OWN column between the incomes and the banks - and the
-  // hatched ribbon exits the BOTTOM of the income's outflow stack, so it
-  // stays below every income -> bank band (zero crossings, including the
-  // bank -> allocation bands, which live right of the banks and never pass
-  // the pillar column). Runs at the end of #flattenColumns on purpose: that
-  // method re-anchors every column to the flat top (and scales columns), so
-  // anything applied before it is undone - the exact failure of the round
-  // 10 shift. Only pillars, hatched links and the incomes' outgoing anchors
-  // are touched; bank node positions are left alone.
-  #placeUnallocatedTails(layout, height) {
-    const extentBottom = height - EXTENT_MARGIN;
-    const { EXTENT_MARGIN, HEADER_SPACE } = this.constructor;
   // Round 22 (N3, owner): ONE Un-Allocated stub rule for EVERY plan —
   // allocating AND empty (the round-21 `allocations.length === 0` gate and
   // the round-14/15 #placeUnallocatedTails view/deficit passes are GONE;
@@ -4985,225 +3363,6 @@ export default class extends Controller {
         x.y0 = e + x.width / 2;
         e += x.width;
       });
-      pillar.y0 = y0;
-      pillar.y1 = y1;
-      pillar.x0 = x0;
-      pillar.x1 = x1;
-      // The manage drawn rect follows the stub: #applyManageFloors ran
-      // earlier, so these (this pass is LAST in #flattenColumns) win.
-      // View mode is unaffected — _fy0/_fy1 equal the layout geometry.
-      pillar._fy0 = y0;
-      pillar._fy1 = y1;
-      // 2) Straight band, flush at the income edge: source anchor = the
-      // income's bottom sliver, target anchor = the stub top sliver.
-      l.width = h;
-      l._fw = h;
-      l.y0 = income.y1 - l.width / 2;
-      l.y1 = pillar.y0 + l.width / 2;
-      l.nearTail = true;
-      // 2) The tail: top edge at the income's bottom edge, the value-
-      // proportional height, clamped at the extent bottom so an
-      // unallocated-dominant chart never draws past the container.
-      const natural = Math.max(0, pillar.y1 - pillar.y0);
-      const y0 = income.y1;
-      const y1 = Math.min(y0 + natural, extentBottom);
-      // The band can never be wider than the tail it feeds.
-      l.width = Math.min(l.width, Math.max(0.5, y1 - y0));
-      // 2) Anchors: the income's bottom sliver -> the pillar's top sliver
-      // (identical to the round-14 anchors whenever the tail hangs below
-      // the income's bottom edge).
-      l.y0 = income.y1 - l.width / 2;
-      l.y1 = pillar.y0 + l.width / 2;
-    });
-  }
-
-  // Round 22 (N4, owner): the bank (accounts) column is pinned dead-center
-  // on the diagram — center-x == width/2 — in BOTH modes. Owner ask:
-  // "Accounts are not Center Aligned properly, they should be dead center,
-  // aligned with the 'Add Account' button." The button sits top-center at
-  // the container center, so pinning at width/2 aligns both, and the
-  // income->bank / bank->allocation ribbon spans become symmetric
-  // ((bank.x0 - income.x1) == (allocation.x0 - bank.x1)).
-  // Mode-independent on purpose: both modes run the same #flattenColumns
-  // pipeline, so the manage==view byte-identity holds. node.column is
-  // UNCHANGED (an x override, not a column reassignment), so the d3
-  // column-index asserts keep passing; labels, logo chips, hit rects,
-  // node paths and link gradients/anchors all derive from x0/x1 every
-  // frame and follow automatically.
-  // Label side: the owner asked only for centering; the labels stay where
-  // they were (toward the income side, the 'end' side as before the pin).
-  // At the new x the #placeLabel heuristic would flip them to 'start'
-  // (right of the bar), so _labelSide is locked here and #placeLabel
-  // keeps the locked side (still fitting _labelScale for it).
-  // Sub-account children keep their own d3 column x (only top-level
-  // banks are pinned).
-  #pinBankColumn(layout, width) {
-    const { NODE_WIDTH } = this.constructor;
-    const x0 = width / 2 - NODE_WIDTH / 2;
-    layout.nodes.forEach((n) => {
-      if (n.kind !== "bank" || n.subAccount) return;
-      n.x0 = x0;
-      n.x1 = x0 + NODE_WIDTH;
-      n._labelSide = "end";
-      n._labelSideLocked = true;
-    });
-  }
-
-  // Round 22 (N2, owner): the allocation/surplus/bank label min-padding
-  // pass, MANAGE mode only, LABEL-ONLY — it never moves a node or a band
-  // (the bands must stay strictly proportional), it shifts the LABEL y
-  // only. Owner ask: "the Labels on the right for Allocations ... are
-  // still overlapping, they should have some padding between each
-  // colored label." Round 23 (note 1, owner): the BANK column now also
-  // runs the pass — the 6 small bank rows drew 20px rects carrying 16px
-  // label boxes only 10-14px apart (measured minGap -5.93px, 5 of 7
-  // adjacent pairs overlapping) — and the minimum gap grew from 4px to
-  // 8px. Fit budget (verified at the owner's 1754px viewport, ~430px
-  // canvas): the bank column fits (353 + 28 < 430) and the allocation
-  // column's extra +60px over the old 4px floor is absorbed by the
-  // existing bottom clamp.
-  // Root cause: #resolveManageLabelOverlaps tiles the NODES with
-  // a gap that degrades to the 0.01px floor when the canvas can't hold
-  // the 15px reference padding, so the drawn label boxes end up touching
-  // (and at the owner's window size, two-line 27px boxes collide) while
-  // the node bars keep the tiling grid.
-  //   1. Dense columns — the two-line box budget n*fullH + (n-1)*MIN_GAP
-  //      at the final column scale exceeds the canvas — get the COMPACT
-  //      one-line label variant forced (d._forceCompactLabel, consumed
-  //      by #writeLabelText's compactOverride at the draw + measure
-  //      probes): 16 one-line boxes fit with room to spare, 16 two-line
-  //      boxes cannot (16*27 + 15*8 = 552 > ~430).
-  //   2. A 1-D order-preserving pass over the column's label boxes
-  //      (drawn centers on the post-floor _fy0/_fy1, measured box
-  //      heights at the final scale) enforces a MINIMUM 8px gap between
-  //      adjacent boxes by shifting the label y only (d._labelDy,
-  //      consumed by #setLabelGeoms ON TOP of the drawn _fy0/_fy1
-  //      centering — labels stay centered on their band except as far as
-  //      the padding forces), with a final bottom clamp so the last box
-  //      stays on-canvas. The gap is a hard 8px (not 15px * scale): the
-  //      tiling grid (15.36px pitch on the live 16-allocation column)
-  //      plus the column's natural group gaps fit the ~8px minimum —
-  //      demanding the 15px reference padding makes the stack ~120px
-  //      taller than the canvas and pushes the bottom labels off it.
-  #ensureAllocationLabelGaps(layout, height) {
-    if (this.mode === "view") return;
-    const { EXTENT_MARGIN, HEADER_SPACE } = this.constructor;
-    const canvasTop = HEADER_SPACE;
-    const canvasBottom = height - EXTENT_MARGIN;
-    // Round 23 (note 1, owner): 8px minimum (was 4px) — the owner wants
-    // visible padding, and the fit budget at 1754px holds (see the pass
-    // comment above).
-    const MIN_GAP = 8;
-    const cols = new Map();
-    layout.nodes.forEach((n) => {
-      if (n.label === false) return;
-      // Round 23 (note 1, owner): the bank column now runs the pass too.
-      // Banks (incl. sub-accounts) have kind:"bank" and no nodeType, so
-      // the old allocation/surplus filter excluded them — that was the
-      // overlap root cause (20px rows, 16px label boxes 10-14px apart).
-      if (n.nodeType !== "allocation" && n.nodeType !== "surplus" && n.kind !== "bank") return;
-      const list = cols.get(n.column) || [];
-      list.push(n);
-      cols.set(n.column, list);
-    });
-    cols.forEach((list) => {
-      list.sort((a, b) => a.y0 - b.y0);
-      const n = list.length;
-      if (n === 0) return;
-      const kOf = (x) => Math.min(x._labelScale ?? 1, x._manageScale ?? 1);
-      const boxesOf = (x) => x._labelBoxes || (x._labelBoxes = this.#labelBoxHeights(x));
-      // 1) Dense columns render the compact one-line variant instead.
-      const fullBudget =
-        list.reduce((s, x) => s + boxesOf(x).full.h * kOf(x), 0) + (n - 1) * MIN_GAP;
-      if (fullBudget > canvasBottom - canvasTop) {
-        list.forEach((x) => {
-          x._forceCompactLabel = true;
-        });
-      }
-      // 2) Label-only min-gap pass (order-preserving, top to bottom).
-      const compactOf = (x) =>
-        x._forceCompactLabel === true || (x.y1 - x.y0 < 24 && x.nodeType !== "income");
-      const hOf = (x) => (compactOf(x) ? boxesOf(x).compact : boxesOf(x).full).h * kOf(x);
-      const cOf = (x) => ((x._fy0 ?? x.y0) + (x._fy1 ?? x.y1)) / 2;
-      const hs = list.map(hOf);
-      const cs = list.map(cOf);
-      const dys = [0];
-      for (let i = 1; i < n; i += 1) {
-        const gapNow = cs[i] - cs[i - 1] - (hs[i] + hs[i - 1]) / 2;
-        // Hard 8px minimum (owner R23 note 1): anything larger does not
-        // fit the 16-label column (see the pass comment above).
-        dys[i] = dys[i - 1] + Math.max(0, MIN_GAP - gapNow);
-      }
-      // Final extent clamp: the last box may not run past the canvas
-      // bottom (shift the whole column's labels up — label y only).
-      const lastBottom = cs[n - 1] + dys[n - 1] + hs[n - 1] / 2;
-      const overflow = Math.max(0, lastBottom - canvasBottom);
-      if (overflow > 0) {
-        for (let i = 0; i < n; i += 1) dys[i] -= overflow;
-      }
-      // Top clamp (the pass only pushes down; a clamped column moves up,
-      // so the first box top stays on-canvas — verified, not re-clamped).
-      const firstTop = cs[0] + dys[0] - hs[0] / 2;
-      if (firstTop < canvasTop && canvasTop > 0) {
-        // defensive: shift back down if the up-shift crossed the header
-        list.forEach((x, i) => {
-          x._labelDy = dys[i] + (canvasTop + hs[0] / 2 - firstTop);
-        });
-        return;
-      }
-      list.forEach((x, i) => {
-        if (dys[i] !== 0) x._labelDy = dys[i];
-      });
-  // Round 21 (T1, owner): on plans with NO allocations at all the
-  // Un-Allocated tails must not sweep the full chart width (d3-sankey
-  // spreads the 2-layer empty chart so the pillar column lands at the
-  // RIGHT EDGE, and whenever a bank column exists the curved ribbons
-  // cross the chart middle — the r21-img1 / r21-img4 defects). Each
-  // income keeps a SHORT STRAIGHT stub a fixed gap off its own right
-  // edge, bottom-anchored on the income's bottom band:
-  //   stubH  = min(naturalH, max(labelFloorH, 0.25 * incomeH))
-  //   pillar y0 = income.y1 - stubH, y1 = income.y1 (bottoms aligned;
-  //            works identically in view and manage)
-  //   pillar x0 = income.x1 + UA_GAP, x1 = x0 + NODE_WIDTH
-  //   link     = straight horizontal band at the stub center
-  //              (l.nearTail -> #straightRibbonPath in #setLinkGeom)
-  // Gate (load-bearing): zero allocations. this.graph is assigned before
-  // #buildGraph/#flattenColumns on all three re-render paths (#doRedraw,
-  // #graphUpdated, #rerenderForMode), so the gate is stable here. Every
-  // allocating layout passes untouched — the gate is what keeps the
-  // battery fixtures byte-identical (they all carry allocations).
-  #placeUnallocatedNearTails(layout) {
-    if ((this.graph?.allocations || []).length !== 0) return;
-    const tails = [];
-    layout.links.forEach((l) => {
-      if (!l.hatched || !l.target || l.target.kind !== "unallocated") return;
-      tails.push(l);
-    if (tails.length === 0) return;
-    const { NODE_WIDTH, UA_GAP, LABEL_FLOOR_PADDING } = this.constructor;
-    // hatched links are built in income order by #buildGraph -> income
-    // order here (top income first), matching #placeUnallocatedTails.
-    tails.forEach((l) => {
-      const income = l.source;
-      const pillar = l.target;
-      const incomeH = income.y1 - income.y0;
-      // d3's single global value scale (every node height = value * k):
-      // while the gate holds each income's unallocated remainder is its
-      // FULL amount (pillar.value == income.value) and the pillar column
-      // shares the income column's total value, so the natural
-      // proportional height at the income's post-flatten height is
-      // exactly this ratio.
-      const naturalH = (pillar.value / income.value) * incomeH;
-      // The label floor that keeps the always-show label readable (the
-      // same fallback formula the manage branch of #placeUnallocatedTails
-      // uses for these same tails; _labelFloorH is never assigned in
-      // this file).
-      const labelFloorH = this.#estimateLabelHeight(pillar) + LABEL_FLOOR_PADDING;
-      const stubH = Math.min(naturalH, Math.max(labelFloorH, 0.25 * incomeH));
-      const y0 = income.y1 - stubH;
-      const y1 = income.y1; // bottom-anchored: stub bottoms align with
-      // the income bottoms
-      const x0 = income.x1 + UA_GAP;
-      const x1 = x0 + NODE_WIDTH;
       pillar.y0 = y0;
       pillar.y1 = y1;
       pillar.x0 = x0;
@@ -5479,7 +3638,6 @@ export default class extends Controller {
           : "";
       this.tooltip.innerHTML = `
         <div class="${CHART_TOOLTIP_CONTEXT_CLASSES}">${this.#esc(this.#displayName(d))}</div>
-        <div class="${CHART_TOOLTIP_CONTEXT_CLASSES}">${this.#esc(d.name)}</div>
         <div class="${CHART_TOOLTIP_VALUE_CLASSES}">${this.#format(d.displayValue ?? d.value ?? 0)}</div>${subAccountLine}`;
     } else {
       const pct = d.source.value > 0 ? ((d.value / d.source.value) * 100).toFixed(0) : "0";

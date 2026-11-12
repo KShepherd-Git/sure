@@ -44,7 +44,7 @@ class PaycheckFlowPlanner
                         .joins(:recurring_transaction)
                         .where(recurring_transactions: { status: :active, bill_type: :income, manual: true })
                         .includes(recurring_transaction: { account: :owner })
-                        # ( fix): deterministic tie-break. Two
+                        # R6 (Round 27 T4 fix): deterministic tie-break. Two
                         # income series sharing a due_on date previously
                         # ordered by physical (heap) position, leaking into
                         # the incomes array order. :created_at keeps the
@@ -97,14 +97,28 @@ class PaycheckFlowPlanner
   # The family's income -> bank edge rows in the planner's key shape (the
   # draft-able `allocations` set). Shared by inputs_for and the controller's
   # draft merge so the two can never drift.
+  # R6 (Round 27 T4 fix, R25 item h): this read had NO ORDER BY, so the
+  # physical (heap) order of the table leaked into the graph — the R5 SHA
+  # drift (the upserted po5 edge row re-serialized at banks[5] instead of
+  # banks[3]). Ordered by the natural key (income series, account): an
+  # upserted edge (destroy + recreate) keeps its position, so the
+  # serialization is byte-stable across upserts. R25 h proposed
+  # .order(:created_at, :id), but creation order cannot satisfy that
+  # property (a recreate gets the newest created_at and moves to the end),
+  # so the natural key supersedes it.
   def self.edge_rows(family)
-    family.income_account_allocations.to_a.map do |allocation|
+    family.income_account_allocations.order(:income_series_id, :account_id).to_a.map do |allocation|
       {
         income_id: allocation.income_series_id,
         account_id: allocation.account_id,
         mode: allocation.mode,
         value_cents: allocation.mode == "specific" ? allocation.value * CENTS : nil,
-        value_percent: allocation.mode == "percent" ? allocation.value : nil
+        value_percent: allocation.mode == "percent" ? allocation.value : nil,
+        # Round 30: a required-mode edge carries the stored percent of the
+        # bank's required amount this income funds (2 dp major units; nil =
+        # the equal split, today's behavior). The legacy plan() path ignores
+        # the key (its resolve_edges call passes no split map).
+        required_percent: allocation.mode == "required" ? allocation.value : nil
       }
     end
   end
@@ -151,6 +165,10 @@ class PaycheckFlowPlanner
     # income nodes show a configured-but-silent paycheck.
     series_by_id = family.recurring_transactions
                          .where(status: :active, bill_type: "income", manual: true)
+                         # R6 (Round 27 T4 fix): `missing` series are
+                         # appended to the incomes array in read order; the
+                         # unordered read leaked the heap order.
+                         .order(:id)
                          .index_by(&:id)
     enriched = base[:incomes].map do |income|
       series = series_by_id[income[:id]]
@@ -253,7 +271,25 @@ class PaycheckFlowPlanner
         auto_transfer: allocation.auto_transfer,
         # Round 16: the Sure category the diagram colors the band with.
         # nil = no category (the row carries category_name/color nil too).
-        category_id: allocation.category_id
+        category_id: allocation.category_id,
+        # Round 25 (Item 2): the account the row dresses ("Make Allocated
+        # Sub-Account"). The diagram draws the node with the account's
+        # identity (name + logo, the bank's resolution order: explicit
+        # slug first, then keyword match); nil = a plain allocation row.
+        target_account_id: allocation.target_account_id,
+        target_account_name: allocation.target_account&.name,
+        target_account_logo: allocation.target_account ?
+          BankLogoSlugs.resolve(allocation.target_account.name, explicit: allocation.target_account.bank_logo_slug) : nil,
+        # Round 31A (Fun Money v2): the fun_money row's configuration —
+        # ownership ("household" or a family user id; nil = legacy
+        # Household), distribution (equal | rational | percent |
+        # individual_leftover), matching (equalize | per_income) and the
+        # jsonb params (per-member percents + the C14 input snapshot).
+        # nil for every non-fun_money row (additive keys only).
+        ownership: allocation.ownership,
+        distribution: allocation.distribution,
+        matching: allocation.matching,
+        distribution_params: allocation.distribution_params
       }
     end
   end
@@ -325,13 +361,17 @@ class PaycheckFlowPlanner
     # the "bank as allocation" case (round 20: any of the five roles). Debt
     # roles (CC / loan payoff) autofill a "Pay off <name>" debt row; the
     # rest (savings bucket / checking / investment) are money destinations
-    # and autofill a plain savings-style row. The frozen allocation schema
-    # carries no target-account column, so "already planned" = an allocation
-    # sourced from the account OR named after it (the autofill name, below);
-    # source bank stays a user choice.
+    # and autofill a plain savings-style row. "Already planned" = an
+    # allocation sourced from the account, named after it (the autofill
+    # name, below), OR DRESSING it (round 25 Item 2: a target allocation
+    # draws the account as its own node in the allocation pillar — never
+    # recommend a second row for a dressed account). Source bank stays a
+    # user choice.
     alloc_names = family.plan_allocations.pluck(:name).map { |name| name.to_s.strip.downcase }.to_set
     family.accounts.visible.where.not(plan_role: nil).order(:name, :id).each do |account|
       next if family.plan_allocations.exists?(account_id: account.id)
+      # Round 25 (Item 2): the account's row is dressed — skip it.
+      next if family.plan_allocations.exists?(target_account_id: account.id)
       next if alloc_names.include?(account.name.to_s.strip.downcase)
 
       rows << {
@@ -356,7 +396,9 @@ class PaycheckFlowPlanner
              .joins(:category)
              .where(categories: { parent_id: nil })
              .where("budgeted_spending > 0")
-             .order("categories.name")
+             # R6 (Round 27 T4 fix): :id tie-break — a same-name category
+             # pair previously ordered by physical position.
+             .order("categories.name", "budget_categories.id")
              .each do |budget_category|
           category_name = budget_category.category.name.to_s.strip.downcase
           next if names.include?(category_name)
@@ -420,8 +462,6 @@ class PaycheckFlowPlanner
                  recommendations: [], sub_account_links: {}, auto_transfer_targets: {},
                  account_names: {}, account_last4s: {}, account_bank_logos: {},
                  bank_logo_keywords: [], bank_logos: {}, categories: {}, draft: nil)
-                 plan_roles: {}, auto_transfers: {}, plan_ordered: {}, linked_bank_counts: {}, recommendations: [], draft: nil)
-                 account_names: {}, draft: nil)
     @month = month
     @incomes = incomes
     @allocations = allocations
@@ -564,7 +604,15 @@ class PaycheckFlowPlanner
       per_paycheck[account_id] = funding.positive? ? monthly / funding : BigDecimal(0)
     end
 
-    resolve_edges(required_per_paycheck:)
+    # Round 30 (D-RECON): the stored per-income required split (required
+    # edges carrying a percent). The task formula (percent of the displayed
+    # per-paycheck figure) governs the UI readouts only — the
+    # monthly-preserving charge computed here is the settlement: charging
+    # the readout figure would fund only base * sum(pct_i * occ_i) / (100 * F)
+    # per month. An empty map (no stored percents) leaves the legacy line
+    # byte-identical (the stop-rule property).
+    required_splits = required_split_charges(required_monthly: required_monthly)
+    resolve_edges(required_per_paycheck:, required_splits: required_splits)
     attribution = compute_attribution
     # Unassigned allocations (owner review round 3, R3: a bank was removed
     # from the plan, the allocation persisted without a source bank) take no
@@ -574,13 +622,32 @@ class PaycheckFlowPlanner
                                            .group_by { |allocation| allocation[:account_id] }
     graph = resolve_graph(allocations_by_bank: allocations_by_bank, divisor: divisor)
 
+    # Round 31A (Fun Money v2): the per-income reconciliation (B_k / S_k /
+    # L_k / FM_k + the Un-Allocated discrepancies). Runs AFTER resolve_graph
+    # (it reads @resolved, the bank inflows and the per-date allocation
+    # results) and adds ADDITIVE payload keys only (income reconciliation,
+    # the fun_money row's per_member/config echo, root discrepancies).
+    # `plan` is untouched: it derives required amounts only from
+    # @obligations_by_account, so the new fields never reach the
+    # paycheck-plans payload (stop-rule, asserted in the tests).
+    @fun_money = fun_money_reconciliation(graph)
+
     build_graph_report(
       graph: graph,
       allocations_by_bank: allocations_by_bank,
       divisor: divisor,
       total_occurrences: total_occurrences,
-      fix: attribution[:fix]
+      fix: attribution[:fix],
+      fun_money: @fun_money
     )
+  end
+
+  # Round 31A (C14): the reconciliation's current input totals
+  # (per-income I_k / B_k / S_k, integer cents) — the controller persists
+  # them into the fun_money row's distribution_params as the drift snapshot
+  # at save time (nil until plan_graph ran; no fun_money row -> nil).
+  def fun_money_inputs
+    @fun_money && @fun_money[:inputs]
   end
 
   private
@@ -592,9 +659,12 @@ class PaycheckFlowPlanner
     # occurrences (the PR#1 behavior); `plan_graph` derives it as monthly
     # over the paychecks that fund the account (see
     # required_edge_funding_counts), so summing the figure over the account's
-    # funding paychecks lands on its monthly required base. Sets @resolved,
-    # keyed [income_id, date].
-    def resolve_edges(required_per_paycheck:)
+    # funding paychecks lands on its monthly required base.
+    # `required_splits` (Round 30, plan_graph only): per-occurrence required
+    # charges for stored per-income percent splits, keyed
+    # [income_id, account_id, date]; the default {} keeps the legacy plan()
+    # path on today's line exactly. Sets @resolved, keyed [income_id, date].
+    def resolve_edges(required_per_paycheck:, required_splits: {})
       resolved = {}
       @incomes.each do |income|
         edges = @allocations.select { |edge| edge[:income_id] == income[:id] }
@@ -605,7 +675,14 @@ class PaycheckFlowPlanner
           edges.each do |edge|
             case edge[:mode]
             when "required"
-              amounts[edge[:account_id]] = required_per_paycheck.fetch(edge[:account_id], BigDecimal(0))
+              # Round 30: a stored per-income percent split of the bank's
+              # required base takes the edge (one charge per occurrence, the
+              # last absorbing so the income's monthly share is preserved
+              # exactly — see required_split_charges). No entry (empty map,
+              # the legacy plan() path, or an unfunded account) falls
+              # through to today's line exactly.
+              split_charge = required_splits[[ income[:id], edge[:account_id], occurrence[:date] ]]
+              amounts[edge[:account_id]] = split_charge || required_per_paycheck.fetch(edge[:account_id], BigDecimal(0))
               spent += amounts[edge[:account_id]]
             when "specific"
               amounts[edge[:account_id]] = edge[:value_cents]
@@ -630,6 +707,60 @@ class PaycheckFlowPlanner
         end
       end
       @resolved = resolved
+    end
+
+    # Round 30 (D-RECON / D-UNDER): the stored per-income required split,
+    # resolved to per-occurrence charges keyed [income_id, account_id,
+    # date]. Only accounts with at least one required edge carrying a
+    # stored percent participate — an empty result makes resolve_edges fall
+    # through to the legacy line exactly (the stop-rule byte-identity
+    # property). Per account (edge order = income_series_id, the edge_rows
+    # order): each funded income's MONTHLY share is its rounded percent of
+    # the base (round-half-up integer cents), and the LAST funded income
+    # absorbs the residual ONLY when the percents sum to exactly 100.00 —
+    # under-100 (D-UNDER: the shortfall stays visible via the existing
+    # report fields) and over-100 (overfunded, no clamp) take no absorb.
+    # Each monthly share then spreads over the income's occurrences
+    # round-half-up, the last occurrence absorbing so the per-paycheck
+    # charges sum exactly to the share (the monthly invariants are both
+    # test-pinned). A zero base makes the percents inert (no division), and
+    # a zero-occurrence income never funds (the
+    # required_edge_funding_counts rule).
+    def required_split_charges(required_monthly:)
+      splits = {}
+      required_edges = @allocations.select do |edge|
+        edge[:mode] == "required" && !edge[:required_percent].nil?
+      end
+      return splits if required_edges.empty?
+
+      required_edges.group_by { |edge| edge[:account_id] }.each do |account_id, edges|
+        base = required_monthly.fetch(account_id, BigDecimal(0))
+        next if base.zero?
+
+        funded = edges.map do |edge|
+          income = @incomes.find { |i| i[:id] == edge[:income_id] }
+          [ edge, income ] if income && income[:occurrences].size.positive?
+        end.compact
+        next if funded.empty?
+
+        percents = funded.map { |(edge, _income)| BigDecimal(edge[:required_percent]) }
+        absorb = percents.sum == BigDecimal("100.00")
+
+        monthly = []
+        funded.each_with_index do |(edge, income), i|
+          last = i == funded.size - 1 && absorb
+          share = last ? base - monthly.sum : (base * percents[i] / 100).round(0, half: :up)
+          monthly << share
+
+          occs = income[:occurrences].size
+          per_occurrence = (share / occs).round(0, half: :up)
+          occs.times do |j|
+            charge = j == occs - 1 ? share - per_occurrence * (occs - 1) : per_occurrence
+            splits[[ income[:id], account_id, income[:occurrences][j][:date] ]] = charge
+          end
+        end
+      end
+      splits
     end
 
     # Per-partner leftover attribution, shared by `plan` and `plan_graph`:
@@ -1163,7 +1294,325 @@ class PaycheckFlowPlanner
       amount || BigDecimal(0)
     end
 
-    def build_graph_report(graph:, allocations_by_bank:, divisor:, total_occurrences:, fix:)
+    # Round 31A (Fun Money v2, design section 3): the owner's per-income
+    # reconciliation for the plan's fun_money row (the FIRST one in
+    # sort order, C15 — same precedent as fun_targets_by_bank).
+    #
+    #   I_k  the income's monthly total;
+    #   B_k  the income's share of the required-mode bill demand = the sum
+    #        of its resolved required EDGE charges over the month
+    #        (@resolved; the Round 30 stored percents participate via the
+    #        same machinery — required_split_charges feeds @resolved);
+    #   S_k  for each savings-kind allocation on bank b: share_k(b) x the
+    #        per-date wanted, share = the over-plan formula (band/inflow
+    #        when both positive, 1 when band > 0, 0 otherwise);
+    #   L_k  I_k - B_k - S_k (may be negative).
+    #
+    # Matching + Mode turn L into FM (member ownership): Per Income applies
+    # the mode function per income (leftover -> max(0, L), percent ->
+    # round(p * L) with 0 when L <= 0, Hard Number / required -> the stored
+    # value PER MEMBER, C5); Equalize (the member-ownership default) sets
+    # T = max(0, min L_k) over members with an income occurrence this month
+    # (C4/M1 — a negative residual clamps the target to 0, never negative)
+    # and FM_k = T. Household ownership (including legacy NULL rows, C11):
+    # FM_total = the row's resolved got_month from the UNCHANGED bank-level
+    # resolution; Distribution governs the per-member DISPLAY split only;
+    # reconciliation runs at the aggregate level only (C6).
+    #
+    # RED LABEL: Un-Allocated_k = I_k - (B_k + S_k + FM_k) STRICTLY above
+    # the 100-cent tolerance -> a discrepancy row naming the income (an
+    # unlabeled income reads "an income"); household mode emits the single
+    # aggregate row ("Household"). Over-allocation is NOT labeled here —
+    # the existing over-plan flag covers it (no double rendering).
+    #
+    # Pure core: reads only the input hashes + @resolved. Returns nil when
+    # the plan has no fun_money row (the payload keys stay nil — additive).
+    # Returns { per_member:, reconciliation_by_income:, discrepancies:,
+    #           inputs_stale:, inputs: } — inputs (per-income I/B/S cents)
+    # feeds the C14 drift snapshot the controller persists at save time.
+    FUN_MONEY_LABEL_TOLERANCE_CENTS = 100
+
+    def fun_money_reconciliation(graph)
+      fun_row = @plan_allocations.find { |allocation| allocation[:kind] == "fun_money" }
+      return nil unless fun_row
+
+      income_ids_with_occurrences = @incomes.filter_map do |income|
+        income[:occurrences].any? ? income[:id] : nil
+      end
+      return nil if income_ids_with_occurrences.empty?
+
+      income_month = {}
+      @incomes.each do |income|
+        income_month[income[:id]] = income[:occurrences].sum { |occ| BigDecimal(occ[:amount_cents]) }
+      end
+
+      # B_k: the sum of the income's resolved required edge charges over the
+      # month (edge-level — a required edge's per-paycheck figure prorates
+      # over the funding paychecks and sums to the monthly share).
+      bills_month = Hash.new { |h, k| h[k] = BigDecimal(0) }
+      @incomes.each do |income|
+        next unless income[:occurrences].any?
+
+        income[:occurrences].each do |occurrence|
+          entry = @resolved[[ income[:id], occurrence[:date] ]]
+          next unless entry
+
+          entry[:edges].each do |edge|
+            next unless edge[:mode] == "required"
+
+            bills_month[income[:id]] += entry[:amounts].fetch(edge[:account_id], BigDecimal(0))
+          end
+        end
+      end
+
+      # S_k: the income's band share of the savings-kind demand, per date —
+      # the SAME share formula the over-plan path uses (resolve_graph).
+      savings_month = Hash.new { |h, k| h[k] = BigDecimal(0) }
+      bank_inflow = graph[:bank_inflow]
+      allocation_results = graph[:allocation_results]
+      @incomes.each do |income|
+        next unless income[:occurrences].any?
+
+        income[:occurrences].each do |occurrence|
+          date = occurrence[:date]
+          entry = @resolved[[ income[:id], date ]]
+          next unless entry
+
+          leftover_edge = entry[:edges].find { |e| e[:mode] == "leftover" }
+          bank_ids = entry[:amounts].keys
+          bank_ids << leftover_edge[:account_id] if leftover_edge
+          bank_ids.uniq.each do |bank_id|
+            band = entry[:amounts].fetch(bank_id, BigDecimal(0))
+            band += entry[:leftover] if leftover_edge && leftover_edge[:account_id] == bank_id
+            inflow = (bank_inflow[date] || {})[bank_id] || BigDecimal(0)
+            share = if inflow.positive? && band.positive?
+                      band / inflow
+                    elsif band.positive?
+                      BigDecimal(1)
+                    else
+                      BigDecimal(0)
+                    end
+            next if share.zero?
+
+            rows = (allocation_results[date] || {})[bank_id]
+            next unless rows
+
+            rows.each_value do |result|
+              next unless result[:kind] == "savings"
+
+              savings_month[income[:id]] += share * BigDecimal(result[:wanted])
+            end
+          end
+        end
+      end
+
+      # L_k: the residual after bills + savings (may be negative).
+      leftover = {}
+      income_month.each do |income_id, total|
+        leftover[income_id] = total - bills_month[income_id] - savings_month[income_id]
+      end
+
+      # Member attribution: a member's L = the sum of their labeled
+      # incomes' residuals; members with no income occurrence this month
+      # drop out of the per-member matching set (C8) but their display
+      # rows still appear where the design says (Equalize / Household).
+      member_leftover = Hash.new { |h, k| h[k] = BigDecimal(0) }
+      @incomes.each do |income|
+        next unless income[:occurrences].any? && income[:owner_id]
+
+        member_leftover[income[:owner_id]] += leftover[income[:id]]
+      end
+      members = @partners.select { |partner| member_leftover.key?(partner) }
+
+      ownership = fun_row[:ownership].presence || "household"
+      distribution = fun_row[:distribution]
+      matching = fun_row[:matching].presence
+      mode = fun_row[:mode]
+      value_cents = BigDecimal(fun_row[:value_cents] || 0)
+      value_percent = BigDecimal(fun_row[:value_percent] || 0)
+      raw_params = fun_row[:distribution_params]
+      params = raw_params.is_a?(Hash) ? raw_params : {}
+      stored_percents = (params["percents"] || params[:percents] || {}).to_h
+
+      household = ownership == "household"
+
+      # C10: Distribution "Individual Leftover by Allocations" — each
+      # member's FM is funded from own leftover only, which IS the per
+      # income matching semantics. The dialog locks the Matching select to
+      # Per Income for that option; the planner coerces the same way for
+      # rows saved before the lock existed.
+      matching = "per_income" if distribution == "individual_leftover"
+
+      # Per-member Fun Money (member ownership): the mode function on the
+      # member's L. Per Income (C5): leftover -> max(0, L), percent ->
+      # round(p * L) with 0 when L <= 0, Hard Number / required -> the
+      # stored value H, PER MEMBER. Equalize (the member-ownership default,
+      # C11): T = max(0, min member L) over members with an income
+      # occurrence this month (C4/M1 — a negative residual clamps to 0,
+      # never negative), FM_k = T.
+      fun_money_by_member = {}
+      equalize_target = BigDecimal(0)
+      unless household
+        if matching == "per_income"
+          members.each do |partner|
+            l = member_leftover[partner]
+            fun_money_by_member[partner] =
+              case mode
+              when "leftover" then [ l, BigDecimal(0) ].max
+              when "percent" then l.positive? ? (value_percent * l).round : BigDecimal(0)
+              else [ value_cents, BigDecimal(0) ].max
+              end
+          end
+        else
+          equalize_target = members.empty? ? BigDecimal(0) :
+            [ members.map { |partner| member_leftover[partner] }.min, BigDecimal(0) ].max
+          members.each { |partner| fun_money_by_member[partner] = equalize_target }
+        end
+      end
+
+      # Attribute a member's FM to their PRIMARY income (first occurrence
+      # date, then id) so a member with several streams is not charged
+      # twice — the reconciliation sums per income.
+      primary_income_by_member = {}
+      @incomes.select { |income| income[:occurrences].any? && income[:owner_id] }
+              .sort_by { |income| [ income[:occurrences].map { |occ| occ[:date] }.min, income[:id].to_s ] }
+              .each { |income| primary_income_by_member[income[:owner_id]] ||= income[:id] }
+
+      fun_money_by_income = {}
+      unless household
+        @incomes.each do |income|
+          next unless income[:occurrences].any? && income[:owner_id]
+
+          fun_money_by_income[income[:id]] =
+            primary_income_by_member[income[:owner_id]] == income[:id] ?
+              (fun_money_by_member[income[:owner_id]] || BigDecimal(0)) : BigDecimal(0)
+        end
+      end
+
+      # Household: FM_total = the row's resolved got_month (unchanged
+      # bank-level resolution) + the Distribution display split (M2: the
+      # pool is shared; the split is a display, not a settlement).
+      fun_money_total = BigDecimal(0)
+      allocation_results.each_value do |by_bank|
+        by_bank.each_value do |rows|
+          result = rows[fun_row[:id]]
+          fun_money_total += BigDecimal(result[:got]) if result
+        end
+      end
+
+      per_member = if household
+        member_totals = Hash.new { |h, k| h[k] = BigDecimal(0) }
+        @incomes.each do |income|
+          next unless income[:occurrences].any? && income[:owner_id]
+
+          member_totals[income[:owner_id]] += income_month[income[:id]]
+        end
+        income_sum = member_totals.values.sum
+        @partners.map do |partner|
+          display =
+            if @partners.empty?
+              BigDecimal(0)
+            elsif distribution == "rational"
+              income_sum.positive? ? (fun_money_total * member_totals[partner]) / income_sum : BigDecimal(0)
+            elsif distribution == "percent"
+              stored_percents.key?(partner) ? (fun_money_total * BigDecimal(stored_percents[partner].to_d)) / 100 : BigDecimal(0)
+            else
+              fun_money_total / @partners.size
+            end
+          {
+            member_id: partner,
+            leftover_month: money([ member_leftover[partner], BigDecimal(0) ].max),
+            fun_money_month: money(display.round),
+            un_allocated_month: money(0)
+          }
+        end
+      else
+        # Member ownership: Equalize lists every member (a member with no
+        # income occurrence shows the target display only, C8); Per Income
+        # lists the members with an income.
+        listed = matching == "per_income" ? members : @partners
+        listed.map do |partner|
+          l = member_leftover[partner]
+          fm = member_leftover.key?(partner) ?
+            (fun_money_by_member[partner] || BigDecimal(0)) :
+            (matching == "per_income" ? BigDecimal(0) : equalize_target)
+          {
+            member_id: partner,
+            leftover_month: money(l),
+            fun_money_month: money(fm.round),
+            un_allocated_month: money([ l - fm, BigDecimal(0) ].max)
+          }
+        end
+      end
+
+      # Reconciliation by income (member ownership only; C6: household
+      # reconciles at the aggregate level).
+      reconciliation_by_income = {}
+      unless household
+        @incomes.each do |income|
+          next unless income[:occurrences].any?
+
+          fm = BigDecimal(fun_money_by_income[income[:id]] || 0)
+          allocated = bills_month[income[:id]] + savings_month[income[:id]] + fm
+          reconciliation_by_income[income[:id]] = {
+            bills_month: bills_month[income[:id]],
+            savings_month: savings_month[income[:id]],
+            fun_money_month: fm,
+            allocated_month: allocated,
+            un_allocated_month: income_month[income[:id]] - allocated
+          }
+        end
+      end
+
+      # Discrepancies: STRICTLY above the tolerance (a 99-cent residual
+      # shows nothing — rounding headroom). Over-allocation stays with the
+      # existing over-plan flag.
+      discrepancies = []
+      if household
+        total_leftover = income_ids_with_occurrences.sum { |income_id| leftover[income_id] }
+        gap = total_leftover - fun_money_total
+        discrepancies << { income_id: nil, income_name: "Household", un_allocated_month: gap } if gap > FUN_MONEY_LABEL_TOLERANCE_CENTS
+      else
+        @incomes.each do |income|
+          next unless income[:occurrences].any?
+
+          row = reconciliation_by_income[income[:id]]
+          next unless row
+
+          gap = row[:un_allocated_month]
+          discrepancies << { income_id: income[:id], income_name: income[:name], un_allocated_month: gap } if gap > FUN_MONEY_LABEL_TOLERANCE_CENTS
+        end
+      end
+
+      # C14: the input snapshot the controller persisted at save time.
+      # Divergence (per income, any of I/B/S) => the config is stale — an
+      # amber prompt, never a red mismatch (no auto-rewrite).
+      snapshot = (params["inputs_snapshot"] || params[:inputs_snapshot] || {})
+      inputs = income_ids_with_occurrences.to_h do |income_id|
+        [ income_id, { "i" => income_month[income_id], "b" => bills_month[income_id], "s" => savings_month[income_id] } ]
+      end
+      inputs_stale = false
+      if snapshot.is_a?(Hash) && !snapshot.empty?
+        same = inputs.keys.all? do |income_id|
+          entry = snapshot[income_id]
+          entry.is_a?(Hash) &&
+            entry["i"] == inputs[income_id]["i"] &&
+            entry["b"] == inputs[income_id]["b"] &&
+            entry["s"] == inputs[income_id]["s"]
+        end && snapshot.keys.all? { |income_id| inputs.key?(income_id) }
+        inputs_stale = !same
+      end
+
+      {
+        per_member: per_member,
+        reconciliation_by_income: reconciliation_by_income,
+        discrepancies: discrepancies,
+        inputs_stale: inputs_stale,
+        inputs: inputs
+      }
+    end
+
+    def build_graph_report(graph:, allocations_by_bank:, divisor:, total_occurrences:, fix:, fun_money: nil)
       date_set = graph[:dates]
 
       # Incomes: occurrences, unallocated remainders, over-plan flags, and
@@ -1187,7 +1636,17 @@ class PaycheckFlowPlanner
           unallocated_month: money(unallocated_month),
           unallocated: unallocated_rows.map { |row| { date: row[:date].to_s, amount: money(row[:amount]) } },
           over_plan: over && { target: over[:target], target_id: over[:target_id], shortfall_month: money(over[:shortfall]) },
-          limit_warning: (limit && linked > limit) ? { linked_count: linked, limit: limit } : nil
+          limit_warning: (limit && linked > limit) ? { linked_count: linked, limit: limit } : nil,
+          # Round 31A (Fun Money v2): the per-income reconciliation
+          # (bills / savings / fun_money / allocated / un_allocated, 2-dp
+          # strings) — nil when the plan has no fun_money row or the mode
+          # reconciles at the aggregate level only (Household, C6).
+          reconciliation:
+            if fun_money && (row = fun_money[:reconciliation_by_income][income[:id]])
+              row.transform_keys(&:to_sym).transform_values { |value| money(value) }
+            else
+              nil
+            end
         }
       end
 
@@ -1201,6 +1660,21 @@ class PaycheckFlowPlanner
       # Round 11 issue 8: sub-accounts and fan-out targets get rows even
       # with no edge or allocation of their own — the sankey's child column
       # needs both endpoints of every fan-out band.
+      # Round 26 (item 4): an account with a target allocation is drawn ONLY
+      # as the dressed allocation-pillar node (round 25 Item 2's "never a
+      # second row for a dressed account", applied to the bank rows): it
+      # drops out of the banks array. It would otherwise be double-drawn —
+      # a small bank-column row (via the fan-out, below) AND the dressed
+      # allocation node. No band is lost: the allocation's own band
+      # (bank:source -> allocation node) already carries the source ->
+      # dressed connection.
+      dressed_target_ids = @plan_allocations.filter_map { |allocation| allocation[:target_account_id] }.to_set
+      # R6 (Round 27 T4 fix): every union source was an unordered read
+      # (allocation rows / pluck / hash keys), so the first-seen order of
+      # the union leaked physical table order into the banks array — the
+      # R5 SHA drift. Sorted once at the end by account id (the stable,
+      # meaningful key), the banks array order no longer depends on any
+      # read's row order.
       bank_ids = (@allocations.map { |edge| edge[:account_id] } |
                   @plan_allocations.map { |allocation| allocation[:account_id] }.compact |
                   @plan_roles.keys |
@@ -1208,7 +1682,8 @@ class PaycheckFlowPlanner
                   @plan_ordered.keys |
                   @sub_account_links.keys |
                   @auto_transfer_targets.values.flatten).uniq
-                  @plan_ordered.keys).uniq
+                 .reject { |bank_id| dressed_target_ids.include?(bank_id) }
+                 .sort
 
       banks = bank_ids.map do |bank_id|
         inflow_rows = graph[:bands].select { |band| band[:account_id] == bank_id }
@@ -1280,7 +1755,12 @@ class PaycheckFlowPlanner
             got_month: "0.00",
             shortfall_month: "0.00",
             status: "unassigned",
-            over_planned: false
+            over_planned: false,
+            # Round 25 (Item 2): the dressed account's identity (nil = a
+            # plain row; additive keys — zero-target payloads unchanged).
+            target_account_id: allocation[:target_account_id],
+            target_account_name: allocation[:target_account_name],
+            target_account_logo: allocation[:target_account_logo]
           }
         end
 
@@ -1327,7 +1807,32 @@ class PaycheckFlowPlanner
           status: allocation_status(allocation[:kind], got_month, shortfall_month),
           # The RED node: the fun money the over-plan flag names, when it is
           # actually short.
-          over_planned: over_plan_target_ids.include?(allocation[:id]) && shortfall_month.positive?
+          over_planned: over_plan_target_ids.include?(allocation[:id]) && shortfall_month.positive?,
+          # Round 25 (Item 2): the dressed account's identity (nil = a
+          # plain row; additive keys — zero-target payloads unchanged).
+          target_account_id: allocation[:target_account_id],
+          target_account_name: allocation[:target_account_name],
+          target_account_logo: allocation[:target_account_logo],
+          # Round 31A (Fun Money v2): the per-member reconciliation rows
+          # ({ member_id, leftover_month, fun_money_month,
+          # un_allocated_month }, 2-dp strings) — nil for every
+          # non-fun_money row and when no fun_money row exists.
+          per_member: allocation[:kind] == "fun_money" && fun_money ?
+            fun_money[:per_member].map do |row|
+              {
+                member_id: row[:member_id],
+                leftover_month: row[:leftover_month],
+                fun_money_month: row[:fun_money_month],
+                un_allocated_month: row[:un_allocated_month]
+              }
+            end : nil,
+          # The fun_money row's config echo (additive; nil for non-fun_money
+          # rows): ownership / distribution / matching / inputs_stale (C14
+          # drift snapshot divergence — the amber prompt).
+          ownership: allocation[:kind] == "fun_money" ? allocation[:ownership] : nil,
+          distribution: allocation[:kind] == "fun_money" ? allocation[:distribution] : nil,
+          matching: allocation[:kind] == "fun_money" ? allocation[:matching] : nil,
+          inputs_stale: allocation[:kind] == "fun_money" && fun_money ? fun_money[:inputs_stale] : nil
         }
       end
 
@@ -1349,7 +1854,14 @@ class PaycheckFlowPlanner
         limit_warnings: incomes.reject { |income| income[:limit_warning].nil? }
                               .map { |income| { income_id: income[:id], **income[:limit_warning] } },
         recommendations: @recommendations,
-        suggested_fix: format_fix(fix)
+        suggested_fix: format_fix(fix),
+        # Round 31A (Fun Money v2): the RED Un-Allocated lines ({ income_id,
+        # income_name, un_allocated_month } — income_id nil = the aggregate
+        # Household line) strictly above the 100-cent tolerance. Empty
+        # (never nil) when nothing exceeds it.
+        discrepancies: fun_money ? fun_money[:discrepancies].map do |row|
+          { income_id: row[:income_id], income_name: row[:income_name], un_allocated_month: money(row[:un_allocated_month]) }
+        end : []
       }
     end
 
