@@ -12,7 +12,15 @@ fi
 
 # If running the rails server then create or migrate existing database
 if [ "${1}" == "./bin/rails" ] && [ "${2}" == "server" ]; then
-  ./bin/rails db:prepare
+  # 2026-11-02 guard: db:prepare on a missing/empty database rebuilds it from
+  # schema + seed (first boot). On an existing database with data it must NOT
+  # run: only migrate. Without this, a boot into an empty database silently
+  # reseeds and loses the previous contents (wipe incident 2026-11-02 19:44Z).
+  if ./bin/rails runner 'exit(ActiveRecord::Base.connection.tables.empty? ? 0 : 1)' >/dev/null 2>&1; then
+    ./bin/rails db:prepare
+  else
+    ./bin/rails db:migrate
+  fi
 
   # Record which version migrated the database so the backup sidecar
   # (bin/sure-backup) can label backups without access to the Docker API.

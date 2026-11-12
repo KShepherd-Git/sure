@@ -306,6 +306,15 @@ export default class extends Controller {
     this.#openAllocationDialog(null);
   }
 
+  // Round 31B (Direct Deposit): the bottom action row's "Direct Deposit
+  // Review" button opens the paycheck-config dialog (one tab per existing
+  // member). Plain showModal — the dialog's own Stimulus controller
+  // (plan-flow-paycheck-config) drives the derived readouts in place.
+  openPaycheckConfig() {
+    const dialog = document.querySelector('dialog[data-node-id="paycheck-config"]');
+    if (dialog) dialog.showModal();
+  }
+
   // A "Known Allocations" row (detected bill / subscription): prefill the
   // SELECTED-allocation window's form with the bill details LOCKED to
   // read-only context (round 20 U) and open it as a separate window

@@ -145,6 +145,9 @@ class Family < ApplicationRecord
   has_many :recurring_transactions, dependent: :destroy
   has_many :recurring_occurrences, dependent: :destroy
   has_many :insights, dependent: :destroy
+  # Round 31B (Direct Deposit): per-member paycheck configs (the planner's
+  # overlay source — derived dates + gross, no stored occurrences).
+  has_many :family_paycheck_configs, dependent: :destroy
 
   # Families with at least one opted-in member. Lets a job filter in one
   # indexed query rather than loading every family and asking each in Ruby.

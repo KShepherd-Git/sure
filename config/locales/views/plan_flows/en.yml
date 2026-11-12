@@ -21,6 +21,13 @@ en:
       mode_aria: Diagram sizing mode
       mode_manage: Manage
       mode_view: View
+      # Round 33 (spec 2): the paycheck-unit kebab (right of Manage/View).
+      # Per Paycheck figures divide each income's monthly share by how many
+      # times THAT income lands in the month (income, the DEFAULT) — or by
+      # the month's total paycheck count (family, the old composite).
+      unit_aria: Per-paycheck unit
+      unit_income: Per income occurrence
+      unit_family: Per paycheck event (family)
       legend_income: Incomes
       legend_banks: Banks
       legend_spending: Spending
@@ -47,6 +54,9 @@ en:
       # removed from the plan (owner review round 3, R3).
       unassigned_node: No Assignment
       no_incomes: No income declared yet — add a paycheck income to start the map.
+      # Round 31B (Direct Deposit): the bottom action row's entry point
+      # (B1: the label is verbatim per the signed design).
+      direct_deposit_review: Direct Deposit Review
       add_income: Add Income
       add_allocation: Add Allocation
       recommended: Recommended
@@ -69,6 +79,13 @@ en:
       mode_specific: Fixed Amount
       mode_percent: Percent
       mode_leftover: Leftover
+      # Round 34 (spec 3): tooltip for the disabled "Leftover" option — a
+      # member's paycheck may have at most ONE leftover account.
+      leftover_single_hint: "One Leftover per member"
+      # Round 34 (spec 3): the server backstop's 422 message — a forced
+      # second leftover for the same paycheck (the UI greys the option, but
+      # a crafted/forced save is rejected with a clear message).
+      leftover_conflict: "One Leftover per member — %{name}'s paycheck already has a leftover account. Remove it there first."
       # Round 27 (owner item 4): the two-income Ratio trigger + the greyed
       # readouts/labels the dialog derives client-side (the ratio is never
       # submitted — it is re-derived from the stored per-income values).
@@ -182,6 +199,43 @@ en:
       max_links_hint: Blank = unlimited. A warning (not an error) shows when the limit is exceeded.
       add_family_member: Add a Family Member
       save: Save
+    # Round 31B (Direct Deposit): the Direct Deposit Review dialog — one
+    # tab per existing family member (B3). The form saves the member's
+    # paycheck config (gross / frequency / anchor); the pay dates are
+    # derived from the house Schedule engine (no occurrences stored).
+    paycheck_config_dialog:
+      title: Direct Deposit Review
+      subtitle: "How each member's paycheck lands, for %{month}."
+      no_series: "No income stream is labeled to %{name} yet."
+      label_one_first: Label one first on the Bills paycheck page
+      series_label: Income
+      landing_account: Lands in
+      gross_label: Gross per paycheck
+      frequency_label: Frequency
+      # B5 (owner flag): the frequency labels, and the default is
+      # semi_monthly (the signed flag applies to paycheck configs).
+      frequency_semi_monthly: Semi-monthly — 15th & last
+      frequency_biweekly: Bi-weekly — every 2 weeks (26x/yr)
+      anchor_label: Anchor date
+      anchor_hint: Bi-weekly paychecks fire every 14 days from this date's weekday.
+      derived_monthly: Derived monthly
+      upcoming_label: Next pay dates
+      upcoming_empty: Save a config to see the next pay dates.
+      save: Save
+      # Round 34 (spec 1): the STATIC READ-ONLY paycheck readout. The dialog is
+      # no longer a form — each member tab is a read-only table of the accounts
+      # the member's paycheck funds (per-paycheck amounts) plus the
+      # max-direct-deposit-connections note. The account rows render
+      # client-side from /plan/flow/graph; the header / note / series context
+      # are server-rendered from the tab's labeled income series.
+      header: "%{name} Paycheck"
+      max_dd_label: Max direct deposit connections
+      max_dd_not_set: Not Set
+      account_header: Account
+      amount_header: Direct Deposit Amount
+      leftover_amount: "Leftover - %{amount}"
+      leftover_only: Leftover
+      no_rows: This paycheck has no direct deposit rows in the current plan.
     allocation_dialog:
       title_new: New Allocation
       title_edit: "Edit %{name}"
@@ -321,6 +375,11 @@ en:
       removed: Custom logo removed.
     update_income:
       save_failed: The income update didn't pass the model's checks — check the values and try again.
+    # Round 31B (Direct Deposit): the paycheck-config save (HTML path
+    # flashes; the JSON path uses the model's field errors instead).
+    update_paycheck_config:
+      no_series: That member has no income stream labeled to them yet — label one on the Bills paycheck page first.
+      save_failed: The paycheck config didn't pass the model's checks — check the values and try again.
     create_allocation:
       saved: Allocation saved.
       save_failed: That allocation didn't pass the model's checks — check the amount and try again.

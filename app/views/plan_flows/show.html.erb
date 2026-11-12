@@ -24,9 +24,20 @@
 
   <div class="flex items-center justify-between gap-3 flex-wrap">
     <div class="flex items-center gap-3">
+      <%# Round 33 (spec 3): Per Paycheck <-> Per Month is now an IN-PLACE
+          toggle (plain buttons, no href — same house pattern as the
+          Manage/View sizing mode below): the sankey controller's
+          document-level delegation flips the active segment, morphs ONLY
+          the dollar values in place (tween + the value-label blur/fade),
+          PRESERVES the current Manage or View sizing mode (it used to
+          full-reload, which reset the mode to Manage), and persists the
+          choice as ?view= via replaceUrl (no history entry, no request).
+          The unit choice rides along: ?paycheck_unit= is kept/set by the
+          same replaceUrl, and the server-rendered segments above honor
+          ?view= on any full reload. %>
       <%= render DS::SegmentedControl.new(aria_label: t(".view_aria"), class: "bg-surface-inset") do |control| %>
-        <% control.with_segment(t(".view_paycheck"), active: @view == "paycheck", href: flow_plan_path(view: "paycheck")) %>
-        <% control.with_segment(t(".view_monthly"), active: @view == "monthly", href: flow_plan_path(view: "monthly")) %>
+        <% control.with_segment(t(".view_paycheck"), active: @view == "paycheck", data: { plan_flow_sankey_view: "paycheck" }) %>
+        <% control.with_segment(t(".view_monthly"), active: @view == "monthly", data: { plan_flow_sankey_view: "monthly" }) %>
       <% end %>
 
       <%# Issue 10 (View/Manage): the diagram sizing-mode toggle — styled
@@ -38,6 +49,22 @@
       <%= render DS::SegmentedControl.new(aria_label: t(".mode_aria"), class: "bg-surface-inset") do |control| %>
         <% control.with_segment(t(".mode_manage"), active: true, data: { plan_flow_sankey_mode: "manage" }) %>
         <% control.with_segment(t(".mode_view"), active: false, data: { plan_flow_sankey_mode: "view" }) %>
+      <% end %>
+
+      <%# Round 33 (spec 2): the paycheck-unit kebab — RIGHT of the
+          Manage/View segmented control. The Per Paycheck divisor choice:
+          per income occurrence (DEFAULT — each Per Paycheck figure
+          divides by how many times THAT income lands in the month) or the
+          old family composite (divide by the month's total paycheck
+          count). House DS::Menu (icon trigger, selectable menuitemradio
+          rows); the sankey controller's document-level delegation
+          intercepts the item links IN PLACE (capture-phase, before
+          Turbo), morphs the values, and persists ?paycheck_unit= via
+          replaceUrl — the hrefs keep a no-JS full-reload fallback. The
+          check gutter flips client-side (see #updateUnitToggleUI). %>
+      <%= render DS::Menu.new(variant: "icon", placement: "bottom-start", icon_vertical: true) do |menu| %>
+        <% menu.with_item(variant: "link", text: t(".unit_income"), selected: @paycheck_unit == "income", href: flow_plan_path(view: @view, paycheck_unit: "income"), data: { plan_flow_sankey_unit: "income" }) %>
+        <% menu.with_item(variant: "link", text: t(".unit_family"), selected: @paycheck_unit == "family", href: flow_plan_path(view: @view, paycheck_unit: "family"), data: { plan_flow_sankey_unit: "family" }) %>
       <% end %>
     </div>
 
@@ -96,10 +123,27 @@
          data-plan-flow-sankey-graph-url-value="<%= flow_graph_plan_path %>"
          data-plan-flow-sankey-view-value="<%= @view %>"
          data-plan-flow-sankey-mode-value="manage"
+         <%# Round 33: the active Per-Paycheck unit (income | family).
+             Toggled in place by the paycheck-unit kebab; ?paycheck_unit=
+             persists through replaceUrl and any full reload. %>
+         data-plan-flow-sankey-unit-value="<%= @paycheck_unit %>"
          data-plan-flow-sankey-currency-value="<%= Current.family.currency %>"
          data-plan-flow-sankey-accounts-value="<%= @account_names.to_json %>"
          data-plan-flow-sankey-in-plan-value="<%= @sankey_in_plan_ids.to_json %>"
          data-plan-flow-sankey-labels-value="<%= { "income" => t(".column_incomes"), "bank" => t(".column_banks"), "allocation" => t(".column_allocations"), "surplus" => t(".surplus_node"), "unallocated" => t(".unallocated_node"), "unassigned" => t(".unassigned_node"), "error" => t(".chart_error"), "empty" => t(".chart_empty") }.to_json %>">
+    </div>
+
+    <%# Round 31B (Direct Deposit): the bottom action row — the Direct
+        Deposit Review entry point (B1 label, verbatim; the pill pattern
+        from the segmented-control CSS). Both View and Manage sizing
+        modes; opens the paycheck-config dialog (one tab per existing
+        member, B3). %>
+    <div class="flex items-center gap-2 px-3 pb-2">
+      <button type="button"
+              class="segmented-control__segment focus-ring"
+              data-action="plan-flow#openPaycheckConfig">
+        <%= t(".direct_deposit_review") %>
+      </button>
     </div>
 
     <%# The absolutely-positioned chrome (banks empty state, allocations
@@ -127,11 +171,26 @@
                # Round 30: the per-income required-split readouts (greyed
                # 50/50 / Proportional readouts + the stored percents behind
                # the Percent behavior's inputs).
-               required_splits: (@bank_required_splits || {})[account.id] %>
+               required_splits: (@bank_required_splits || {})[account.id],
+               # Round 33: the active paycheck unit (the dialog's hidden
+               # paycheck_unit input — in-place saves re-render the
+               # readouts in the selected unit).
+               paycheck_unit: @paycheck_unit,
+               # Round 34 (spec 3): the Leftover guardrail — income series
+               # id -> the account id of its existing leftover edge. The
+               # dialog greys the "Leftover" option for a member's other
+               # allocations when that paycheck already has a leftover edge
+               # to a different account.
+               leftover_accounts: @leftover_accounts %>
   <% end %>
   <% @income_series.each do |series| %>
     <%= render "plan_flows/income_config_dialog", series: series %>
   <% end %>
+  <%# Round 31B (Direct Deposit): the Direct Deposit Review dialog — one
+      tab per existing family member (B3), in-place saves (the shared
+      #inPlaceSubmit handler), derived monthly + next-4 readouts. The
+      dialog re-renders through the in-place chrome after a save. %>
+  <%= render "plan_flows/paycheck_config_dialog", tabs: @paycheck_config_tabs, month: @month %>
   <%= render "plan_flows/allocation_dialog", allocation: nil, known_allocations: @known_allocations,
         known_hidden: @known_allocations_hidden %>
   <%# Round 21 T4: the "selected allocation" window — the SAME partial a

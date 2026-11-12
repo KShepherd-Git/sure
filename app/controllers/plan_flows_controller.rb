@@ -15,6 +15,13 @@ class PlanFlowsController < ApplicationController
   def show
     @month = Date.current
     @view = flow_view
+    # Round 33: the Per-Paycheck divisor unit (?paycheck_unit=). "income"
+    # (DEFAULT): each Per Paycheck figure divides by how many times THAT
+    # income lands in the month (the payload's per-income occurrences).
+    # "family": the old family composite — divide by the month's total
+    # paycheck count (Kurt 2 + Sammi 2 = 4). Display-only; the settlement
+    # math (the planner) is untouched.
+    @paycheck_unit = paycheck_unit
     @graph = PaycheckFlowPlanner.plan_graph(family: Current.family, month: @month)
     set_chrome_instance_vars
     # Static (non-plan-state) data the Sankey needs: account names and which
@@ -23,6 +30,10 @@ class PlanFlowsController < ApplicationController
     # "Known Allocations" list for the allocation dialog (owner round 2,
     # F3) — see #known_allocations (also feeds the in-place JSON chrome).
     @known_allocations = known_allocations
+    # Round 31B (Direct Deposit): the per-member paycheck-config tabs (one
+    # per EXISTING member, B3) — member, their labeled income series (or
+    # the empty state), the saved config, derived monthly + next-4.
+    @paycheck_config_tabs = paycheck_config_tabs
     @breadcrumbs = [
       [ t("breadcrumbs.home"), root_path ],
       [ t("breadcrumbs.plan"), plan_path ],
@@ -418,10 +429,58 @@ class PlanFlowsController < ApplicationController
     end
   end
 
+  # Round 31B (Direct Deposit): save one member's paycheck config (gross /
+  # frequency / anchor) against the member's labeled income series. The
+  # planner overlay derives the pay dates from the house Schedule engine —
+  # NO occurrences are written (B6: the allocation "wanted" amounts are
+  # immutable to this write). v1: a member with no labeled income series
+  # gets a 422 (the dialog shows the empty state + the bills link instead).
+  def update_paycheck_config
+    member = family_users.find { |user| user.id == params[:user_id] }
+    unless member
+      return render(json: { errors: { base: [ "not found" ] } }, status: :not_found) if json_request?
+      return redirect_to flow_plan_path
+    end
+
+    series = member_labeled_income_series(member)
+    if series.nil?
+      config = paycheck_config_for(member)
+      config.errors.add(:base, :no_labeled_series)
+      return render_flow_json(ok: false, error_object: config) if json_request?
+      return redirect_to flow_plan_path(view: flow_view), alert: t(".no_series")
+    end
+
+    config = paycheck_config_for(member)
+    config.assign_attributes(
+      family: Current.family,
+      user: member,
+      recurring_transaction: series,
+      gross_per_paycheck_cents: paycheck_gross_cents(params),
+      frequency: paycheck_frequency(params),
+      anchor_date: params.dig(:paycheck_config, :anchor_date).presence
+    )
+    result = config.save
+    return render_flow_json(ok: result, error_object: config, paycheck_config_member: member) if json_request?
+
+    if result
+      redirect_back_to_flow
+    else
+      redirect_to flow_plan_path(view: flow_view), alert: t(".save_failed")
+    end
+  end
+
   private
 
     def flow_view
       %w[paycheck monthly].include?(params[:view].to_s) ? params[:view] : "paycheck"
+    end
+
+    # Round 33: the Per-Paycheck unit choice (the kebab right of the
+    # Manage/View control). "income" is the DEFAULT (per-income occurrence
+    # count); "family" keeps the old family-composite divisor (the month's
+    # total paycheck count). Persisted as ?paycheck_unit= like ?view=.
+    def paycheck_unit
+      %w[income family].include?(params[:paycheck_unit].to_s) ? params[:paycheck_unit] : "income"
     end
 
     # In-place diagram updates (owner review round 3, R1/R7): the page's
@@ -435,7 +494,7 @@ class PlanFlowsController < ApplicationController
       request.format == Mime[:json]
     end
 
-    def render_flow_json(ok: true, allocation_changed: false, accounts: [], income: nil, removed_account: nil, error_object: nil)
+    def render_flow_json(ok: true, allocation_changed: false, accounts: [], income: nil, removed_account: nil, error_object: nil, paycheck_config_member: nil)
       return render(json: { errors: error_messages(error_object) }, status: :unprocessable_entity) unless ok
 
       graph = PaycheckFlowPlanner.plan_graph(family: Current.family, month: Date.current)
@@ -468,7 +527,33 @@ class PlanFlowsController < ApplicationController
             # Round 30: the per-income required-split readouts (the
             # greyed 50/50 / Proportional readouts + the stored percents
             # behind the Percent behavior's inputs).
-            required_splits: (@bank_required_splits || {})[account.id]
+            required_splits: (@bank_required_splits || {})[account.id],
+            # Round 33: the active paycheck unit (the dialog's hidden
+            # paycheck_unit input — in-place saves re-render the readouts
+            # in the selected unit; the save form posts it back).
+            paycheck_unit: paycheck_unit,
+            # Round 34 (spec 3): the Leftover guardrail (same local as the
+            # page-load render — recomputed in set_chrome_instance_vars so
+            # it is current after the just-saved change).
+            leftover_accounts: @leftover_accounts
+          })
+        }
+      end
+      # Round 34 (spec 1): the paycheck-config dialog is now a STATIC
+      # READ-ONLY paycheck readout derived from the live plan graph, so it
+      # must refresh after EVERY in-place save that changes the plan (a bank
+      # link / allocation / income save) — not only after a paycheck-config
+      # save (the old gate). render_flow_json runs after any in-place
+      # mutation and re-renders the graph, so re-render the readout whenever
+      # the bank dialogs are present (all saves except a removal); a fresh
+      # dialog element gets a fresh controller that re-fetches the graph and
+      # re-fills the per-member tables.
+      if bank_dialogs
+        bank_dialogs << {
+          node_id: "paycheck-config",
+          html: render_to_string(partial: "plan_flows/paycheck_config_dialog", locals: {
+            tabs: paycheck_config_tabs,
+            month: Date.current
           })
         }
       end
@@ -533,6 +618,15 @@ class PlanFlowsController < ApplicationController
       @account_last4s = PaycheckFlowPlanner.account_last4s_for(Current.family)
       @unplanned_count = @flow_accounts.count - @in_plan_accounts.count
       @plan_allocations = Current.family.plan_allocations.includes(:account).order(:name)
+      # Round 34 (spec 3): the Leftover guardrail — income series id -> the
+      # account id of its existing leftover edge (IncomeAccountAllocation
+      # mode "leftover"). The bank dialog greys the "Leftover" option for a
+      # member's other allocations when that paycheck already has a leftover
+      # edge to a different account (one Leftover per member's paycheck).
+      # Recomputed here (set_chrome_instance_vars runs in both show and the
+      # in-place JSON responses) so the guardrail is current after every
+      # save, not just at page load.
+      @leftover_accounts = leftover_accounts
       @over_plan_lines = over_plan_lines
       # Round 31A (Fun Money v2): the Un-Allocated discrepancy lines (the
       # second line group in _chrome_top.erb).
@@ -598,7 +692,24 @@ class PlanFlowsController < ApplicationController
                            .filter_map { |_, series_id| income_occurrences[series_id] }
                            .select(&:positive?)
         if flow_view == "paycheck"
-          if counts.any?
+          if paycheck_unit == "family"
+            # Round 33: the old family composite — the monthly base prorated
+            # over the month's TOTAL paycheck count (every income's
+            # occurrences summed; Kurt 2 + Sammi 2 = 4). The funding-sum
+            # fallback (no paycheck dates — the impossible case) keeps the
+            # pre-R30 defensive value.
+            family_total = @graph[:total_paychecks].to_i
+            if family_total.positive?
+              base / family_total / 100.0
+            elsif funding.positive?
+              base / funding / 100.0
+            else
+              nil
+            end
+          elsif counts.any?
+            # Round 33 default (the R30 line, kept verbatim): the base over
+            # the AVERAGE occurrences per linked income — the per-income
+            # occurrence unit in the composite dialog readout.
             base / (BigDecimal(counts.sum) / counts.size) / 100.0
           elsif funding.positive?
             base / funding / 100.0
@@ -753,6 +864,75 @@ class PlanFlowsController < ApplicationController
 
     def family_user_ids
       @family_user_ids ||= Current.family.users.pluck(:id).to_set
+    end
+
+    # Round 31B (Direct Deposit): the member's labeled income series —
+    # bill_type income, active, manual, explicitly labeled to the member
+    # (plan_owner_user_id == member.id). First by (name, id) so the overlay
+    # target is deterministic when a member labels more than one series.
+    # nil = the member has no labeled series (the dialog's empty state).
+    def member_labeled_income_series(member)
+      Current.family.recurring_transactions
+                   .where(bill_type: :income, status: :active, manual: true,
+                          plan_owner_user_id: member.id)
+                   .order(:name, :id)
+                   .first
+    end
+
+    # Round 31B: the member's existing paycheck config (one per member,
+    # unique (family_id, user_id)) or a new one ready to assign.
+    def paycheck_config_for(member)
+      Current.family.family_paycheck_configs.find_or_initialize_by(user: member)
+    end
+
+    # Round 31B: the paycheck-config dialog tabs — one per EXISTING family
+    # member (B3: no member creation here). Each tab carries the member,
+    # their labeled series (nil -> the panel's empty state), the saved
+    # config (or nil), and the derived monthly cents + next-4 pay dates
+    # (nil when there is no config to derive from).
+    def paycheck_config_tabs
+      family_users.map do |member|
+        config = paycheck_config_for(member)
+        saved = config.persisted?
+        {
+          member: member,
+          series: member_labeled_income_series(member),
+          config: saved ? config : nil,
+          derived_monthly_cents: saved ? config.derived_monthly_cents(Date.current) : nil,
+          upcoming: saved ? config.upcoming_dates : []
+        }
+      end
+    end
+
+    # Round 34 (spec 3): the Leftover guardrail — the map of income series
+    # id -> the account id of its existing leftover edge (IncomeAccountAllocation
+    # mode "leftover"). A member's paycheck may fund at most ONE account as
+    # its leftover (the per-paycheck remainder), so the bank dialog greys the
+    # "Leftover" option for the member's other allocations. Nil-valued entries
+    # never occur (mode "leftover" always carries an account_id).
+    def leftover_accounts
+      Current.family.income_account_allocations
+                   .where(mode: "leftover")
+                   .pluck(:income_series_id, :account_id)
+                   .to_h
+    end
+
+    # Round 31B: gross per paycheck in cents. The form submits a 2-dp
+    # major-unit amount (step 0.01); 1250.50 -> 125050. Blank/invalid ->
+    # nil (the model's presence + greater_than 0 validations reject it).
+    def paycheck_gross_cents(params)
+      gross = params.dig(:paycheck_config, :gross).presence
+      return nil if gross.blank?
+
+      (gross.to_d * 100).round
+    end
+
+    # Round 31B: the frequency, defaulting to semi_monthly (B5) when the
+    # param is blank. An out-of-set value falls through to the model's
+    # inclusion validation (a 422, not a silent default).
+    def paycheck_frequency(params)
+      frequency = params.dig(:paycheck_config, :frequency).presence
+      frequency.presence || FamilyPaycheckConfig::FREQUENCY_SEMI_MONTHLY
     end
 
     # The declared income series of the family, same scope as the Bills
@@ -1273,6 +1453,32 @@ class PlanFlowsController < ApplicationController
                                .index_by(&:income_series_id)
 
       begin
+        # Round 34 (spec 3): the Leftover guardrail — one account per member's
+        # paycheck may carry the leftover. If this save sets a leftover edge
+        # for an income series that ALREADY has a leftover edge to a
+        # DIFFERENT account, it would create a second leftover account for the
+        # member -> 422. save_bank_links only touches the opened account's
+        # edges, so a different-account leftover is never removed by this
+        # save and the conflict is real. The UI greys the option (the disabled
+        # per-row radio); this is the server backstop for a forced second
+        # leftover (runs before any write — the transaction rolls back).
+        links.each do |income_id, row|
+          guard_row = row.respond_to?(:to_unsafe_h) ? row.to_unsafe_h : row
+          next unless guard_row["enabled"].present?
+          next unless guard_row["mode"].to_s == "leftover"
+          series = income_series.find { |s| s.id == income_id }
+          next unless series
+          if Current.family.income_account_allocations
+               .where(income_series_id: series.id, mode: "leftover")
+               .where.not(account_id: account.id)
+               .exists?
+            record = IncomeAccountAllocation.new
+            record.errors.add(:base,
+              t("plan_flows.bank_config_dialog.leftover_conflict", name: series.name))
+            raise ActiveRecord::RecordInvalid.new(record)
+          end
+        end
+
         links.each do |income_id, row|
           series = income_series.find { |s| s.id == income_id }
           next unless series

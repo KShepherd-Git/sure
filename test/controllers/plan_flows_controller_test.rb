@@ -477,6 +477,13 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       bank = json["banks"].find { |b| b["id"] == @account.id }
       assert_equal "1800.00", bank["inflow_month"]
       assert_equal "1300.00", bank["surplus_month"] # 1800 - 500
+      # Round 34 (spec 4): the ADDITIVE mode field on every inflow row — the
+      # leftover edge's inflow carries mode "leftover" (the sankey icon + the
+      # DD leftover row derive from it). Additive-only: existing keys keep
+      # their order, mode is appended last.
+      assert bank["inflow"].all? { |row| row.key?("mode") },
+        "every inflow row must carry the additive mode field"
+      assert_equal "leftover", bank["inflow"].first["mode"]
       assert_equal [], json["over_plans"]
       # netflix_subscription (15.99/mo) is not allocated yet -> recommended.
       assert json["recommendations"].any? { |r| r["type"] == "recurring_transaction" }
@@ -2668,6 +2675,157 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # --- Round 34 (spec 3): the Leftover guardrail — one account per
+  # member's paycheck may carry the leftover. The UI greys the "Leftover"
+  # option for the member's other allocations; the server backstops a forced
+  # second leftover with a 422 (the unit test the spec calls out). ---
+
+  # A member's paycheck already has a leftover edge to @account (Checking);
+  # opening a DIFFERENT account (Savings) and forcing that paycheck's mode to
+  # leftover there would create a second leftover account -> 422, nothing
+  # written, the original leftover preserved.
+  test "leftover guardrail: a second leftover account for the same paycheck 422s (spec 3)" do
+    travel_to Date.new(2026, 11, 15) do
+      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      sammi.update!(plan_owner_user_id: @user.id)
+      savings = @family.accounts.create!(name: "Savings Bucket", owner: @user,
+        currency: "USD", balance: 0, accountable: Depository.new)
+      # Sammi's paycheck's leftover already lands in @account (Checking).
+      IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+        account: @account, mode: "leftover")
+
+      # Force a second leftover (Savings) for the same paycheck -> 422.
+      patch_bank_links(links: { sammi.id.to_s => { "enabled" => "1", "mode" => "leftover" } },
+        account: savings)
+      assert_response :unprocessable_entity
+      errors = JSON.parse(response.body)["errors"]
+      assert errors["base"].any? { |m| m.include?("One Leftover per member") },
+        "the 422 must carry the clear one-Leftover-per-member message"
+
+      # Nothing written: still exactly ONE leftover edge, and it is the
+      # original (@account), never Savings.
+      leftovers = @family.income_account_allocations.where(mode: "leftover",
+        income_series_id: sammi.id)
+      assert_equal 1, leftovers.count
+      assert_equal @account.id, leftovers.first.account_id
+      assert_equal 0, @family.income_account_allocations
+        .where(mode: "leftover", account_id: savings.id).count
+    end
+  end
+
+  # The allowed cases: the FIRST leftover (no existing one), re-saving the
+  # SAME account as leftover (idempotent), and a DIFFERENT member's paycheck
+  # taking its own leftover (one per member, not one per family).
+  test "leftover guardrail: first leftover, same-account re-save, and a different member are allowed (spec 3)" do
+    travel_to Date.new(2026, 11, 15) do
+      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      sammi.update!(plan_owner_user_id: @user.id)
+
+      # No existing leftover: setting @account as Sammi's leftover is allowed.
+      patch_bank_links(links: { sammi.id.to_s => { "enabled" => "1", "mode" => "leftover" } })
+      assert_response :success
+      assert_equal 1, @family.income_account_allocations
+        .where(mode: "leftover", income_series_id: sammi.id).count
+
+      # Re-saving the SAME account as leftover is allowed (idempotent).
+      patch_bank_links(links: { sammi.id.to_s => { "enabled" => "1", "mode" => "leftover" } })
+      assert_response :success
+      assert_equal 1, @family.income_account_allocations
+        .where(mode: "leftover", income_series_id: sammi.id).count
+
+      # A different member's paycheck can take its own leftover (one per
+      # member) on a different account.
+      kurt = create_income_series(account: @account, name: "Kurt Payroll", amount: 2700)
+      kurt.update!(plan_owner_user_id: @other.id)
+      savings = @family.accounts.create!(name: "Savings Bucket", owner: @user,
+        currency: "USD", balance: 0, accountable: Depository.new)
+      patch_bank_links(links: { kurt.id.to_s => { "enabled" => "1", "mode" => "leftover" } },
+        account: savings)
+      assert_response :success
+      assert_equal 1, @family.income_account_allocations
+        .where(mode: "leftover", income_series_id: kurt.id, account_id: savings.id).count
+    end
+  end
+
+  # spec 3 (UI half): when Sammi's paycheck already has a leftover edge to
+  # @account (Checking), the bank dialog opened on a DIFFERENT account greys
+  # the "Leftover" radio for that paycheck (disabled + tooltip), while the
+  # other three modes stay selectable. The same-account dialog keeps it
+  # enabled (it is the current leftover).
+  test "leftover guardrail: the bank dialog greys the Leftover option for the member's other accounts (spec 3)" do
+    travel_to Date.new(2026, 11, 15) do
+      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      sammi.update!(plan_owner_user_id: @user.id)
+      # plan_order puts Savings ON the plan so its bank dialog renders (the
+      # bank dialogs only render for in-plan accounts).
+      savings = @family.accounts.create!(name: "Savings Bucket", owner: @user,
+        currency: "USD", balance: 0, accountable: Depository.new)
+      savings.update!(plan_order: 99)
+      IncomeAccountAllocation.create!(family: @family, income_series: sammi,
+        account: @account, mode: "leftover")
+
+      get "/plan/flow"
+      assert_response :success
+
+      # Opened on Savings (NOT Sammi's leftover account): the Leftover radio
+      # is greyed out; the other three modes are still selectable.
+      assert_select "dialog[data-node-id='bank:#{savings.id}']" do
+        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=leftover][disabled]", 1
+        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=required][disabled]", 0
+        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=specific][disabled]", 0
+        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=percent][disabled]", 0
+      end
+
+      # Opened on @account (Sammi's leftover account): the Leftover radio
+      # stays enabled (it is the current leftover).
+      assert_select "dialog[data-node-id='bank:#{@account.id}']" do
+        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=leftover][disabled]", 0
+        assert_select "[data-bank-pull-panel-group='row-#{sammi.id}'] input[type=radio][value=leftover][checked]", 1
+      end
+    end
+  end
+
+  # spec 1: the Direct Deposit Review dialog is a STATIC READ-ONLY readout —
+  # no config form (gross / frequency / anchor / Save), one tab per member,
+  # the header + max-direct-deposit-connections note server-rendered, and the
+  # per-paycheck table shell (the rows fill client-side from the graph). The
+  # family_paycheck_configs PATCH endpoint stays in place (unused by this UI).
+  test "the DD review dialog is a static read-only readout, not a config form (spec 1)" do
+    travel_to Date.new(2026, 11, 15) do
+      sammi = create_income_series(account: @account, name: "Sammi Payroll", amount: 1400)
+      sammi.update!(plan_owner_user_id: @user.id, plan_max_account_links: 4)
+
+      get "/plan/flow"
+
+      assert_response :success
+      assert_select "dialog[data-node-id='paycheck-config']", 1 do
+        # One tab per existing family member (spec 2: the names render as
+        # buttons; nowrap is verified at 1729x1178 via CDP).
+        assert_select "button[role=tab]", @family.users.count
+        # The static readout: the header line + the max-DD-connections note
+        # (the member's series' plan_max_account_links = 4).
+        assert_includes response.body, I18n.t("plan_flows.paycheck_config_dialog.header", name: @user.display_name)
+        assert_includes response.body, I18n.t("plan_flows.paycheck_config_dialog.max_dd_label")
+        assert_includes response.body, "4"
+        # The table shell (Account | Direct Deposit Amount) + the member's
+        # tbody (the rows fill client-side from /plan/flow/graph).
+        assert_includes response.body, I18n.t("plan_flows.paycheck_config_dialog.account_header")
+        assert_includes response.body, I18n.t("plan_flows.paycheck_config_dialog.amount_header")
+        assert_select "tbody[data-paycheck-dd-member='#{@user.id}']", 1
+        # The config form is GONE: no gross/frequency/anchor inputs, no Save
+        # action targeting the paycheck-config PATCH endpoint.
+        assert_select "input[data-paycheck-gross-input]", 0
+        assert_select "input[data-paycheck-frequency-input]", 0
+        assert_select "input[data-paycheck-anchor-input]", 0
+        assert_select "form[action='/plan/flow/paycheck-config/#{@user.id}']", 0
+      end
+
+      # The endpoint stays in place (unused by this UI) — a GET to the plan
+      # page must not 404, and the route still resolves.
+      assert_response :success
+    end
+  end
+
   # BUG-R30-1 regression (Round 30 fix-round): the paycheck-view required
   # display must divide by the AVERAGE occurrences per linked income (the
   # composite paycheck), not by the sum of occurrences across all required
@@ -2860,5 +3018,140 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
     assert_includes body, I18n.t("plan_flows.allocation_dialog.ownership_label")
     assert_includes body, I18n.t("plan_flows.allocation_dialog.distribution_label")
     assert_includes body, I18n.t("plan_flows.allocation_dialog.matching_label")
+  end
+
+  # Round 31B (Direct Deposit): PATCH /plan/flow/paycheck-config/:user_id —
+  # the member's paycheck config, in-place (Accept: application/json).
+  # Same shape as create_income_series but with an explicit plan_owner (the
+  # labeled-series lookup keys on plan_owner_user_id, no account-owner
+  # fallback).
+  def create_member_income_series(member:, name:, amount:)
+    series = @family.recurring_transactions.create!(
+      name: name, account: @account, amount: amount, currency: "USD",
+      expected_day_of_month: 6, last_occurrence_date: Date.new(2026, 9, 6),
+      next_expected_date: Date.new(2026, 12, 20), status: "active",
+      bill_type: "income", manual: true, plan_owner: member
+    )
+    series.recurring_occurrences.destroy_all
+    [ Date.new(2026, 11, 6), Date.new(2026, 11, 20) ].each do |date|
+      series.recurring_occurrences.create!(family: @family, due_on: date,
+        original_due_on: date, currency: "USD", expected_amount: amount,
+        status: "scheduled")
+    end
+    series
+  end
+
+  test "Round 31B: the in-place paycheck-config save returns 200, writes ONLY the config row, and ships the re-rendered dialog" do
+    travel_to Date.new(2026, 11, 15) do
+      series = create_member_income_series(member: @other, name: "Jakob Paycheck", amount: 1200)
+      @family.income_account_allocations.create!(
+        income_series: series, account: @account, mode: "percent", value: 1.0)
+      allocation = @family.plan_allocations.create!(
+        account: @account, name: "Rent", cadence: "monthly",
+        kind: "bill", mode: "specific", value_cents: 50_000)
+
+      patch "/plan/flow/paycheck-config/#{@other.id}",
+            headers: { "Accept" => "application/json" },
+            params: { paycheck_config: { gross: "2000.00",
+                                         frequency: "semi_monthly",
+                                         anchor_date: "2026-11-02" } }
+
+      assert_response :success
+      body = JSON.parse(response.body)
+
+      # B6: the graph reflects the overlay (dates + gross replaced) while
+      # the allocation's wanted stays put.
+      income = body.dig("graph", "incomes").find { |row| row["id"] == series.id }
+      assert_equal [ "2026-11-15", "2026-11-30" ],
+                   income["occurrences"].map { |o| o["date"] }
+      assert income["occurrences"].all? { |o| o["amount"] == "2000.00" }
+      assert_equal [ "2026-11-15", "2026-11-30" ], body.dig("graph", "paycheck_dates")
+      bank = body.dig("graph", "banks").find { |row| row["id"] == @account.id }
+      assert_equal "4000.00", bank["inflow_month"] # 2000 x 2 pay dates
+      row = body.dig("graph", "allocations").find { |a| a["id"] == allocation.id }
+      assert_equal "1000.00", row["wanted_month"] # 500 x 2 paychecks (unchanged)
+
+      # Exactly one row written: the member's config. The series' stored
+      # occurrences and the allocation are untouched (read-only overlay).
+      config = @family.family_paycheck_configs.find_by(user: @other)
+      assert_equal 200_000, config.gross_per_paycheck_cents
+      assert_equal "semi_monthly", config.frequency
+      assert_equal Date.new(2026, 11, 2), config.anchor_date
+      assert_equal series.id, config.recurring_transaction_id
+      assert_equal 2, series.recurring_occurrences.count
+      assert_equal 50_000, allocation.reload.value_cents
+
+      # The re-rendered dialog ships through the bank_dialogs chrome slot
+      # (the #syncDialog node-swap path).
+      dialogs = body.dig("chrome", "bank_dialogs") || []
+      assert_includes dialogs.map { |d| d["node_id"] }, "paycheck-config"
+    end
+  end
+
+  test "Round 31B: a $0.00 gross 422s with the field error and writes nothing" do
+    travel_to Date.new(2026, 11, 15) do
+      series = create_member_income_series(member: @other, name: "Jakob Paycheck", amount: 1200)
+
+      patch "/plan/flow/paycheck-config/#{@other.id}",
+            headers: { "Accept" => "application/json" },
+            params: { paycheck_config: { gross: "0.00",
+                                         frequency: "semi_monthly",
+                                         anchor_date: "2026-11-02" } }
+
+      assert_response :unprocessable_entity
+      errors = JSON.parse(response.body).fetch("errors")
+      assert errors.key?("gross_per_paycheck_cents"), errors.inspect
+      assert_empty @family.family_paycheck_configs
+      assert_equal 2, series.recurring_occurrences.count
+    end
+  end
+
+  test "Round 31B: a missing anchor date 422s and writes nothing" do
+    travel_to Date.new(2026, 11, 15) do
+      create_member_income_series(member: @other, name: "Jakob Paycheck", amount: 1200)
+
+      patch "/plan/flow/paycheck-config/#{@other.id}",
+            headers: { "Accept" => "application/json" },
+            params: { paycheck_config: { gross: "2000.00",
+                                         frequency: "semi_monthly",
+                                         anchor_date: "" } }
+
+      assert_response :unprocessable_entity
+      errors = JSON.parse(response.body).fetch("errors")
+      assert errors.key?("anchor_date"), errors.inspect
+      assert_empty @family.family_paycheck_configs
+    end
+  end
+
+  test "Round 31B: a member with no labeled series 422s with the no-series error" do
+    travel_to Date.new(2026, 11, 15) do
+      # No series is labeled to @user (family_admin) — only @other has one.
+      create_member_income_series(member: @other, name: "Jakob Paycheck", amount: 1200)
+
+      patch "/plan/flow/paycheck-config/#{@user.id}",
+            headers: { "Accept" => "application/json" },
+            params: { paycheck_config: { gross: "2000.00",
+                                         frequency: "semi_monthly",
+                                         anchor_date: "2026-11-02" } }
+
+      assert_response :unprocessable_entity
+      errors = JSON.parse(response.body).fetch("errors")
+      assert errors.key?("base"), errors.inspect
+      assert_empty @family.family_paycheck_configs
+    end
+  end
+
+  test "Round 31B: a user_id outside the family 404s" do
+    travel_to Date.new(2026, 11, 15) do
+      patch "/plan/flow/paycheck-config/#{users(:empty).id}",
+            headers: { "Accept" => "application/json" },
+            params: { paycheck_config: { gross: "2000.00",
+                                         frequency: "semi_monthly",
+                                         anchor_date: "2026-11-02" } }
+
+      assert_response :not_found
+      assert_equal [ "not found" ],
+                   JSON.parse(response.body).dig("errors", "base")
+    end
   end
 end

@@ -69,6 +69,12 @@ class PaycheckFlowPlanner
       }
     end.values
 
+    # Round 31B (Direct Deposit): the paycheck-config overlay — derived pay
+    # dates + gross replace/appended per configured member series. ZERO
+    # config rows returns the SAME array untouched (the S0 no-op invariant:
+    # byte-identical planner output with no configs).
+    incomes = overlay_paycheck_configs(family: family, month: month, incomes: incomes)
+
     debt_accounts = Account.where(family_id: family.id, accountable_type: %w[CreditCard Loan]).select(:id)
     obligations = family.recurring_transactions
                         .where(status: :active, bill_type: %w[bill subscription installment])
@@ -92,6 +98,55 @@ class PaycheckFlowPlanner
       partners: family.users.order(:created_at, :id).pluck(:id),
       leftover_distribution: family.family_plan_settings&.leftover_distribution || "income_ratio"
     }
+  end
+
+  # Round 31B (Direct Deposit): the paycheck-config overlay. For each
+  # configured member it replaces (or appends) that member's labeled income
+  # series' occurrences with the pay dates + gross derived from the config,
+  # via PaycheckDates (the house Schedule engine — no new math).
+  #
+  # Idempotent, and a byte-identical NO-OP with ZERO config rows: it returns
+  # the SAME `incomes` array untouched (the S0 gate asserts exactly this).
+  #
+  # B6 invariant (design doc proof): this touches ONLY `incomes`. The
+  # allocation "wanted" amounts come from plan_allocations/obligations
+  # (edge_rows), which are IMMUTABLE to this overlay — income amount/dates
+  # flow only via @incomes -> resolve_edges -> bank_inflow. T3 asserts the
+  # wanted-immutable + inflow-delta behavior.
+  def self.overlay_paycheck_configs(family:, month:, incomes:)
+    configs = family.family_paycheck_configs.to_a
+    return incomes if configs.empty?
+
+    window = month.beginning_of_month..month.end_of_month
+    by_id = {}
+    incomes.each { |entry| by_id[entry[:id]] = entry }
+
+    appends = []
+    configs.each do |config|
+      series_id = config.recurring_transaction_id
+      next if series_id.nil? # nil series: nothing to map onto (v1 saves require one)
+
+      # Only a live, member-labeled income series is a valid overlay target
+      # (the model enforces family + bill_type + member; re-check here so a
+      # config pointing at a foreign/ended series is a no-op, not a 500).
+      series = family.recurring_transactions
+                     .find_by(id: series_id, status: :active, bill_type: :income, manual: true)
+      next if series.nil?
+
+      derived = PaycheckDates.occurrences(config, window.first, window.last)
+      if (entry = by_id[series.id])
+        entry[:occurrences] = derived # REPLACE the stored occurrences
+      else
+        appends << { id: series.id, owner_id: series.plan_owner_id, occurrences: derived }
+      end
+    end
+
+    return incomes if appends.empty?
+
+    # Append in series :id order (R6 byte-stable) — the stored-occurrence
+    # entries keep their (due_on, created_at, id) order ahead of them.
+    appends.sort_by! { |entry| entry[:id] }
+    incomes + appends
   end
 
   # The family's income -> bank edge rows in the planner's key shape (the
@@ -1715,8 +1770,15 @@ class PaycheckFlowPlanner
           sub_account: @sub_account_links.key?(bank_id),
           auto_transfer_target_ids: @auto_transfer_targets[bank_id],
           inflow_month: money(inflow_month),
+          # Round 34 (spec 4): ADDITIVE field — the edge's mode (required /
+          # specific / percent / leftover). The bands already carry it
+          # (resolve_graph, lines 981/987); exposing it lets the client mark
+          # the leftover bank node (the sankey icon) and the per-member
+          # Direct Deposit readout (the leftover row) without a new endpoint.
+          # Appended LAST so the existing keys keep their order (additive
+          # only — the graph sha re-pins).
           inflow: inflow_rows.map do |band|
-            { income_id: band[:income_id], date: band[:date].to_s, amount: money(band[:amount]) }
+            { income_id: band[:income_id], date: band[:date].to_s, amount: money(band[:amount]), mode: band[:mode] }
           end,
           surplus_month: money(surplus_month),
           surplus: surplus_raw.map { |date, amount| { date: date.to_s, amount: money(amount) } }

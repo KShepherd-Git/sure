@@ -9,6 +9,9 @@ import {
   createChartTooltip,
 } from "utils/chart_tooltip";
 import { hiddenSankeyLabels } from "utils/sankey_labels";
+import { restackManageRows } from "utils/plan_flow_sankey_layout";
+import { paycheckUnitScales } from "utils/plan_flow_sankey_unit";
+import replaceUrl from "utils/replace_url";
 
 let nextChartId = 0;
 
@@ -56,6 +59,7 @@ export default class PlanFlowSankeyController extends Controller {
     inPlan: Array, // account ids on the plan
     labels: Object, // income/bank/allocation/surplus/unallocated
     mode: String, // issue 10 (View/Manage): "manage" (default) | "view"
+    unit: String, // round 33 (spec 1/2): "income" (default) | "family"
   };
 
   // House visual constants (cf. preview_sankey_chart_controller).
@@ -142,6 +146,98 @@ export default class PlanFlowSankeyController extends Controller {
   // chip is the same icon language as the rest of the app. savings ->
   // piggy-bank, debt -> credit-card, checking -> wallet, everything else
   // (incl. nil kind) -> circle.
+  // Round 34 (spec 4): the LEFTOVER icon — a small line-vector glyph, 14px,
+  // stroke-only, stroke = the computed amount-text color so it inherits the
+  // dollar-amount text color. Drawn on a bank node whose inflow is a leftover
+  // (and on the Direct Deposit readout's leftover rows). Round 34b (owner
+  // complaint: "I can't even really see it, it almost looks like it's
+  // overlapping with the Text Label for the Bank"): the glyph now sits in a
+  // measured slot OUTSIDE the label text run (see #leftoverIconPlacement)
+  // and the owner gets FOUR glyph options behind ONE constant. Round 34c
+  // (owner pick): the default is now "wave" ("Let's go with the Wave") —
+  // the DD readout (plan_flow_paycheck_config_controller) imports these
+  // statics, so the variant switch is a ONE-LINE change for both surfaces.
+  // Glyph space is 14x14, stroke-only (no fill), drawn at the same
+  // stroke-width/linecap the round-34 glyph used.
+  static LEFTOVER_ICON_VARIANT = "wave";
+  static LEFTOVER_ICON_GLYPHS = {
+    // "tail" (round 34): horizontal line ending in a dot.
+    tail: '<line x1="1" y1="7" x2="9.5" y2="7"></line><circle cx="11.8" cy="7" r="1.6"></circle>',
+    // "wave": a small wavy tilde line (~3 humps, sine through the midline) —
+    // reads as "leftover / residual".
+    wave:
+      '<path d="M1 7C2 4.5 3 4.5 4.5 7C6 9.5 7 9.5 8.5 7C10 4.5 11 4.5 13 7"></path>',
+    // "bracket": a C arc OPENING toward the bank band (the band is always on
+    // the far side of the label text from the icon's preferred slot), reads
+    // as "pocket".
+    bracket: '<path d="M9.7 4A4.764 4.764 0 1 0 9.7 10"></path>',
+    // "loop": a small circle (the rest looped back) with a short tail stub
+    // on its left.
+    loop:
+      '<circle cx="8.5" cy="7" r="3.2"></circle><line x1="1" y1="7" x2="5.3" y2="7"></line>',
+  };
+  static LEFTOVER_ICON_SIZE = 14;
+  // Resolves LEFTOVER_ICON_VARIANT to its 14x14 glyph markup (an unknown
+  // variant falls back to "tail" so a typo never blanks the icon).
+  static get LEFTOVER_ICON() {
+    return this.LEFTOVER_ICON_GLYPHS[this.LEFTOVER_ICON_VARIANT] ?? this.LEFTOVER_ICON_GLYPHS.tail;
+  }
+  // Round 34b (T1): the leftover-icon slot geometry is a PURE function of
+  // the measured label text box + the node band edges + the label anchor
+  // side + the slot size — no magic x. { x, y } is the icon <g> translate;
+  // y is the slot top (slot = 14*k tall, vertically centered on the band
+  // center centerY). Rule (deterministic from the measured label width):
+  //   * anchor "end" (label LEFT of the band, right-aligned text run
+  //     "Name [last4] $amount"): the text->band gap is d.x0 - textRight
+  //     (= LABEL_GUTTER 8px < 18, so this always falls to the fallback):
+  //     the icon sits LEFT of the name text with a 4px clearance.
+  //   * if that gap is >= 18px (a wider gutter / future layout): the
+  //     preferred slot is BETWEEN the label text end and the band edge,
+  //     centered in the gap (equal clearance to text and band edge).
+  //   * anchor "start" (label RIGHT of the band) mirrors it: gap
+  //     textLeft - d.x1 >= 18 -> icon centered between band edge and text
+  //     start; else RIGHT of the label text end with the 4px clearance.
+  // Static + DOM-free so the unit test (test/javascript) exercises the same
+  // math the draw path (#writeLabelText) and the per-frame reposition
+  // (#setLabelGeoms) consume.
+  static LEFTOVER_ICON_PREFERRED_GAP = 18; // px: min text<->band gap for the preferred slot
+  static LEFTOVER_ICON_CLEARANCE = 4; // px: min icon<->text clearance (spec: >= 4px)
+  // Round 34c (owner): an optional MEASURED per-node `clearance` (the
+  // name<->dollar-amount gap of the single-line label run, measured by the
+  // draw path) BYPASSES the centered preferred slot: the icon hugs the label
+  // text end at exactly that gap — "the same amount of Gap that you have
+  // between the Text and the Dollar Amount" — i.e. the bank-label icon no
+  // longer floats centered in the text<->band gap. The hug slot is used only
+  // when the icon fits inside the gap (no band overlap); otherwise the
+  // round-34 fallback (left of the text, measured or 4px clearance) applies.
+  // null/absent = round-34b behavior unchanged.
+  static leftoverIconPlacement({ anchor, labelBox, bandX0, bandX1, boxSize, centerY, clearance = null }) {
+    const clr = clearance ?? this.LEFTOVER_ICON_CLEARANCE;
+    const y = centerY - boxSize / 2;
+    const textLeft = labelBox.x;
+    const textRight = labelBox.x + labelBox.width;
+    if (anchor === "end") {
+      const gapToBand = bandX0 - textRight;
+      const hugX = textRight + clr;
+      if (clearance != null && hugX + boxSize <= bandX0) {
+        return { x: hugX, y };
+      }
+      if (gapToBand >= this.LEFTOVER_ICON_PREFERRED_GAP) {
+        return { x: textRight + (gapToBand - boxSize) / 2, y };
+      }
+      return { x: textLeft - clr - boxSize, y };
+    }
+    const gapToBand = textLeft - bandX1;
+    const hugX = textLeft - clr - boxSize;
+    if (clearance != null && hugX >= bandX1) {
+      return { x: hugX, y };
+    }
+    if (gapToBand >= this.LEFTOVER_ICON_PREFERRED_GAP) {
+      return { x: textLeft - (gapToBand - boxSize) / 2, y };
+    }
+    return { x: textRight + clr, y };
+  }
+
   static KIND_ICONS = {
     savings:
       '<path d="M11 17h3v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-3a3.16 3.16 0 0 0 2-2h1a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1h-1a5 5 0 0 0-2-4V3a4 4 0 0 0-3.2 1.6l-.3.4H11a6 6 0 0 0-6 6v1a5 5 0 0 0 2 4v3a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1z"></path><path d="M16 10h.01"></path><path d="M2 8v1a2 2 0 0 0 2 2h1"></path>',
@@ -258,6 +354,28 @@ export default class PlanFlowSankeyController extends Controller {
       this.#modeToggled(segment.dataset.planFlowSankeyMode);
     };
     document.addEventListener("click", this._onModeClick);
+    // Round 33 (spec 3): the Per Paycheck <-> Per Month segments (plain
+    // buttons, like the mode segments — the house pattern).
+    this._onViewClick = (event) => {
+      const segment = event.target?.closest?.("[data-plan-flow-sankey-view]");
+      if (!segment) return;
+      this.#viewToggled(segment.dataset.planFlowSankeyView);
+    };
+    document.addEventListener("click", this._onViewClick);
+    // Round 33 (spec 2): the paycheck-unit kebab items are LINKS (the
+    // no-JS full-reload fallback is their href), so the interception runs
+    // in the CAPTURE phase — before Turbo's document click handler can
+    // start a navigation. preventDefault + stopPropagation keep the rest
+    // of the page (and the menu's own outside-click close, which would
+    // fire on the bubbled event) out of it; #unitToggled closes the menu.
+    this._onUnitClick = (event) => {
+      const item = event.target?.closest?.("[data-plan-flow-sankey-unit]");
+      if (!item) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.#unitToggled(item.dataset.planFlowSankeyUnit, item);
+    };
+    document.addEventListener("click", this._onUnitClick, true);
     // Round 20 (T2): the tooltip is anchored at a PAGE coordinate
     // (position:absolute in document.body, left = event.pageX + 10); a
     // scroll moves the pointer away from that point, so the floating
@@ -271,6 +389,9 @@ export default class PlanFlowSankeyController extends Controller {
     this.resizeObserver?.disconnect();
     this.element.removeEventListener("plan-flow:graph", this._onGraphUpdate);
     document.removeEventListener("click", this._onModeClick);
+    document.removeEventListener("click", this._onViewClick);
+    document.removeEventListener("click", this._onUnitClick, true);
+    window.clearTimeout(this.morphTimer);
     if (this._onScroll) document.removeEventListener("scroll", this._onScroll);
     this.#cancelAnimation();
     this.element.innerHTML = "";
@@ -513,16 +634,149 @@ export default class PlanFlowSankeyController extends Controller {
   // once the current draw commits (#draw hands off the live tween frame, so
   // a back-to-back re-render tweens cleanly).
   #flushModePending() {
-    if (!this.modePending) return;
+    // Round 33: a view or unit flip that landed while a draw was in flight
+    // applies here too (same mechanism as the mode pending above — one
+    // re-render honors all the pending state).
+    const modePending = this.modePending;
+    const viewOrUnitPending = this.viewPending || this.unitPending;
+    if (!modePending && !viewOrUnitPending) return;
     this.modePending = false;
+    this.viewPending = false;
+    this.unitPending = false;
+    if (viewOrUnitPending) this.#morphRerender();
+    else this.#rerenderForMode();
+  }
+
+  // Round 33 (spec 3): the Per Paycheck <-> Per Month toggle — IN PLACE.
+  // Same house mechanism as the mode toggle (re-build + re-layout + TWEEN,
+  // no reload, no re-fetch), PRESERVING the current Manage/View sizing mode
+  // (the old full-reload links reset it to Manage), morphing ONLY the
+  // dollar values (the value-label blur/fade below + the geometry tween).
+  // ?view= persists through #syncFlowUrl; the server-rendered segments
+  // honor ?view= on any full reload.
+  #viewToggled(view) {
+    const next = view === "monthly" ? "monthly" : "paycheck";
+    if (next === this.viewValue) return;
+    this.viewValue = next;
+    this.#hideTooltip();
+    this.#updateViewToggleUI(next);
+    this.#syncFlowUrl();
+    if (this.redrawInFlight) {
+      // A draw is in flight: the view is applied once it completes.
+      this.viewPending = true;
+      return;
+    }
+    this.#morphRerender();
+  }
+
+  // Round 33 (spec 2): the paycheck-unit kebab — IN PLACE (the capture-phase
+  // document delegation intercepted the item links before Turbo). The unit
+  // only matters in the paycheck view (the monthly view is identity), but
+  // the choice persists and the values morph when the view is paycheck.
+  #unitToggled(unit, item) {
+    const next = unit === "family" ? "family" : "income";
+    const previous = this.#unitName();
+    this.unitValue = next;
+    this.#hideTooltip();
+    this.#updateUnitToggleUI(next);
+    this.#closeUnitMenu(item);
+    this.#syncFlowUrl();
+    if (next === previous) return; // the check gutter already moved
+    if (this.viewValue !== "paycheck") return; // monthly view: nothing to morph
+    if (this.redrawInFlight) {
+      this.unitPending = true;
+      return;
+    }
+    this.#morphRerender();
+  }
+
+  // Mirror the DS::SegmentedControl contract client-side (plain buttons):
+  // flip the active segment class + aria-pressed, exactly like
+  // #updateModeToggleUI.
+  #updateViewToggleUI(view) {
+    document.querySelectorAll("[data-plan-flow-sankey-view]").forEach((segment) => {
+      const active = segment.dataset.planFlowSankeyView === view;
+      segment.classList.toggle("segmented-control__segment--active", active);
+      segment.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  // The kebab's selectable rows (DS::MenuItem `selected:` contract): flip
+  // aria-checked and move the check icon to the selected row's gutter (the
+  // gutter span is reserved fixed-width by the component; the icon node is
+  // MOVED, never re-rendered — no markup hardcoded here).
+  #updateUnitToggleUI(unit) {
+    const items = Array.from(document.querySelectorAll("[data-plan-flow-sankey-unit]"));
+    items.forEach((item) => {
+      item.setAttribute("aria-checked", String(item.dataset.planFlowSankeyUnit === unit));
+    });
+    const gutters = items.map((item) => item.querySelector('span[aria-hidden="true"]'));
+    const fromIndex = items.findIndex((item, i) => item.dataset.planFlowSankeyUnit !== unit && gutters[i] && gutters[i].querySelector("svg"));
+    const toIndex = items.findIndex((item) => item.dataset.planFlowSankeyUnit === unit);
+    if (fromIndex === -1 || toIndex === -1) return;
+    const svg = gutters[fromIndex]?.querySelector("svg");
+    if (svg && gutters[toIndex] && !gutters[toIndex].querySelector("svg")) {
+      // appendChild MOVES the node out of its current gutter — no separate
+      // removeChild (it would throw: the node is no longer a child there).
+      gutters[toIndex].appendChild(svg);
+    }
+  }
+
+  // The item click is INSIDE the DS--menu element, so its own outside-click
+  // close never fires for a selection — close it the way its controller's
+  // close() does (content hidden class + trigger aria-expanded).
+  #closeUnitMenu(item) {
+    const menuEl = item?.closest?.('[data-controller="DS--menu"]');
+    if (!menuEl) return;
+    const content = menuEl.querySelector('[data-DS--menu-target="content"]');
+    const button = menuEl.querySelector('[data-DS--menu-target="button"]');
+    if (content) content.classList.add("hidden");
+    if (button) button.setAttribute("aria-expanded", "false");
+  }
+
+  // Round 33 (spec 2/3): persist ?view= + ?paycheck_unit= IN PLACE (the
+  // house replaceUrl — no history entry, no request), keeping every other
+  // param (e.g. ?income=) the page arrived with.
+  #syncFlowUrl() {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", this.viewValue);
+      url.searchParams.set("paycheck_unit", this.#unitName());
+      if (url.toString() === window.location.href) return;
+      replaceUrl(url.toString());
+    } catch { /* non-browser harness: no URL to rewrite */ }
+  }
+
+  // The in-place value morph (spec 3): the house re-render mechanism
+  // (re-build from this.graph + re-layout + TWEEN — no reload, no fetch)
+  // plus the CSS value-label blur/fade (the wrapper class, removed after
+  // the animation window; a fresh toggle re-adds it, so the animation
+  // restarts on the next morph).
+  #morphRerender() {
+    this.element.classList.add("plan-flow-sankey--morphing");
     this.#rerenderForMode();
+    window.clearTimeout(this.morphTimer);
+    this.morphTimer = window.setTimeout(() => {
+      this.element.classList.remove("plan-flow-sankey--morphing");
+    }, 600);
   }
 
   // Monthly figures -> the view's scale (Per Paycheck divides by the
-  // month's actual paycheck count — the house divisor).
+  // month's actual paycheck count — the house divisor). ROUND 33: the
+  // FAMILY-unit closure — the income unit's per-source divisors live in
+  // utils/plan_flow_sankey_unit (paycheckUnitScales); this is the legacy
+  // composite every per-paycheck figure used before the unit existed, and
+  // the fallback for unassigned allocations (no source bank to prorate).
   #scale(graph) {
     const count = this.viewValue === "paycheck" ? (graph.paycheck_dates?.length || 1) : 1;
     return (value) => Number(value || 0) / count;
+  }
+
+  // Round 33 (spec 1): the active Per-Paycheck unit name — "income" is the
+  // DEFAULT (the server always renders the data attr; the normalization
+  // keeps a missing attr on the default too).
+  #unitName() {
+    return this.unitValue === "family" ? "family" : "income";
   }
 
   #buildGraph(graph) {
@@ -535,6 +789,14 @@ export default class PlanFlowSankeyController extends Controller {
     // ForTest aliases without ever setting this.graph.
     this.graph = graph;
     const scale = this.#scale(graph);
+    // Round 33 (spec 1): the Per-Paycheck unit. `unit` is the per-source
+    // scale closures for the active unit (income | family); when the income
+    // unit is NOT active (family unit, or the monthly view) every closure
+    // degrades to the EXACT legacy family scale, so pre-R33 values are
+    // reproduced byte for byte. `scale` (the family-total closure) stays
+    // for the unassigned allocations that have no source bank to prorate
+    // over.
+    const unit = paycheckUnitScales(graph, this.viewValue, this.#unitName());
     const { COLORS, VALUE_FLOOR } = this.constructor;
 
     const incomeNodes = (graph.incomes || [])
@@ -546,11 +808,14 @@ export default class PlanFlowSankeyController extends Controller {
         column: 0,
         name: income.name,
         color: COLORS.income,
-        value: scale(income.total_month),
+        // Round 33 (spec 1): the Per-Paycheck unit — the income's monthly
+        // share over THIS income's occurrence count (income unit) / the
+        // family composite (family unit) / identity (monthly view).
+        value: unit.income(income.id, income.total_month),
         // d3-sankey overwrites node.value with the (possibly fixedValue)
         // layout value; labels/tooltips need the currency figure, so keep it
         // on a side field the layout never touches.
-        displayValue: scale(income.total_month),
+        displayValue: unit.income(income.id, income.total_month),
         limit: income.limit_warning || null,
         label: true,
       }));
@@ -594,8 +859,10 @@ export default class PlanFlowSankeyController extends Controller {
           column: 1,
           name: this.labelsValue.unallocated || "Un-Allocated",
           color: COLORS.unallocated,
-          value: scale(amount),
-          displayValue: scale(amount),
+          // Round 33 (spec 1): this income's leftover in the Per Paycheck
+          // unit (its own occurrence count divides it, not the family's).
+          value: unit.income(incomeNode.sourceId, amount),
+          displayValue: unit.income(incomeNode.sourceId, amount),
           label: true,
           // Round 14: the sortKey is assigned in the ordering section below
           // (rendered income order) so the pillars stack Kurt-above-Sammi in
@@ -667,7 +934,10 @@ export default class PlanFlowSankeyController extends Controller {
       // paycheck scaling as banks) — its own-edge inflow still draws its own
       // income band; the #generateSankeyData floor pass grows the node to
       // cover both. Non-children keep the exact original expressions.
-      const fanoutValue = (fanoutBase.get(bank.id) || 0) / (this.viewValue === "paycheck" ? (graph.paycheck_dates?.length || 1) : 1);
+      // Round 33 (spec 1): the sub-account's fan-out reservation base in the
+      // Per Paycheck unit — prorated over the PARENT bank's funders (the
+      // parent's per-paycheck inflow ratio), family composite otherwise.
+      const fanoutValue = unit.fromBank(bank.parent_account_id, fanoutBase.get(bank.id) || 0);
       return {
         id: `bank:${bank.id}`,
         sourceId: bank.id,
@@ -699,11 +969,22 @@ export default class PlanFlowSankeyController extends Controller {
         // Round 16 (owner note 3a): the kind fill (nil-safe — the current
         // grey when the payload carries no kind/plan_role on the row).
         color: this.constructor.bankKindColor(this.constructor.bankKind(bank)),
+        // Round 33 (spec 1): the bank's Per Paycheck figure = each funding
+        // income's resolved monthly inflow share / that income's occurrence
+        // count (income unit) — the family composite (the old /total
+        // paychecks) otherwise. The surplus keeps the same per-paycheck
+        // share of the inflow (the source bank's ratio).
         value: isSubAccount
           ? fanoutValue
-          : Math.max(Number(bank.inflow_month), 0) * (1 / (this.viewValue === "paycheck" ? (graph.paycheck_dates?.length || 1) : 1)),
-        surplus: Math.max(Number(bank.surplus_month), 0) * (1 / (this.viewValue === "paycheck" ? (graph.paycheck_dates?.length || 1) : 1)),
+          : unit.bank(bank),
+        surplus: unit.surplus(bank.id, Math.max(Number(bank.surplus_month), 0)),
         fixedValue: 0,
+        // Round 34 (spec 4): the LEFTOVER flag — true when ANY inflow row on
+        // this bank is mode "leftover" (the per-paycheck remainder lands
+        // here). Drives the leftover icon in the bank node's label
+        // (#writeLabelText). The flag is DERIVED client-side from the
+        // payload's additive inflow.mode field (no new endpoint).
+        leftover: (bank.inflow || []).some((row) => row.mode === "leftover"),
         label: true,
       };
     });
@@ -758,10 +1039,14 @@ export default class PlanFlowSankeyController extends Controller {
                 : COLORS.bill), // bill = spending amber
         // NOTE: the graph JSON's value_cents/got_month are DISPLAY dollars
         // (the planner runs money() on the raw cents) — do NOT re-divide.
+        // Round 33 (spec 1): the settled figure in the Per Paycheck unit
+        // (the source bank's per-paycheck inflow ratio — a bank with no
+        // inflow rows, or an unassigned row with no source bank, keeps the
+        // family scale).
         value: unassigned
           ? scale(allocation.value_cents || 0)
-          : scale(allocation.got_month),
-        shortfall: scale(allocation.shortfall_month),
+          : unit.fromBank(allocation.account_id, allocation.got_month),
+        shortfall: unit.fromBank(allocation.account_id, allocation.shortfall_month),
         overPlanned: allocation.over_planned === true,
         unassigned,
         label: true,
@@ -805,7 +1090,11 @@ export default class PlanFlowSankeyController extends Controller {
     pairTotals.forEach((amount, key) => {
       if (amount <= 0) return;
       const [incomeId, bankId] = key.split("|");
-      links.push({ source: `income:${incomeId}`, target: `bank:${bankId}`, value: scale(amount) });
+      // Round 33 (spec 1): the band is this income's resolved monthly inflow
+      // over ITS occurrence count (income unit) — family composite
+      // otherwise. Conservation holds: the income node and its bands share
+      // the same per-income divisor.
+      links.push({ source: `income:${incomeId}`, target: `bank:${bankId}`, value: unit.income(incomeId, amount) });
     });
 
     // Bank -> allocation (the source bank is the allocation's account_id).
@@ -851,7 +1140,9 @@ export default class PlanFlowSankeyController extends Controller {
           const child = bankNodes.find((bank) => bank.subAccount && bank.sourceId === targetId);
           if (!child) return;
           fanoutTargetChildren.add(targetId);
-          links.push({ source: parent.id, target: child.id, value: (fanoutBase.get(targetId) || 0) / (this.viewValue === "paycheck" ? (graph.paycheck_dates?.length || 1) : 1), minBand: true });
+          // Round 33 (spec 1): same Per Paycheck unit as the child's node
+          // value (the parent's per-paycheck inflow ratio).
+          links.push({ source: parent.id, target: child.id, value: unit.fromBank(parent.id, fanoutBase.get(targetId) || 0), minBand: true });
         });
       });
     }
@@ -868,7 +1159,9 @@ export default class PlanFlowSankeyController extends Controller {
         const row = (graph.incomes || []).find((income) => income.id === incomeNode.sourceId);
         const amount = Number(row?.unallocated_month || 0);
         if (amount > 0) {
-          hatchedLinks.push({ source: incomeNode.id, target: `unallocated:${incomeNode.sourceId}`, value: scale(amount), hatched: true });
+          // Round 33 (spec 1): matches the pillar node's own value (the
+          // income's per-paycheck leftover).
+          hatchedLinks.push({ source: incomeNode.id, target: `unallocated:${incomeNode.sourceId}`, value: unit.income(incomeNode.sourceId, amount), hatched: true });
         }
       });
     }
@@ -1985,23 +2278,14 @@ export default class PlanFlowSankeyController extends Controller {
         .filter((n) => n.column === col && this.#visibleNode(n))
         .sort((a, b) => a.y0 - b.y0);
       if (rows.length === 0) return;
-      let top = HEADER_SPACE;
-      rows.forEach((n) => {
-        const h = n.y1 - n.y0; // layout height (preserved as-is)
-        const fy0 = n._fy0 ?? n.y0;
-        const fy1 = n._fy1 ?? n.y1;
-        const hDrawn = fy1 - fy0; // drawn height (READ ONLY - owner constraint)
-        // DRAWN-anchored: the drawn rect occupies [top, top+hDrawn) so the
-        // gap to the next drawn rect is exactly ROW_GAP; the layout rect
-        // (height h) is centered on the drawn center.
-        n._fy0 = top;
-        n._fy1 = top + hDrawn;
-        n.y0 = top + (hDrawn - h) / 2;
-        n.y1 = n.y0 + h;
-        top += hDrawn + ROW_GAP;
-      });
-      const last = rows[rows.length - 1];
-      spans.push(last._fy1 - HEADER_SPACE);
+      // R32: the restack math is the pure restackManageRows in
+      // utils/plan_flow_sankey_layout (unit-tested: expected label-center ==
+      // band-center, label pitch == band pitch). rows are the live d3
+      // bindings, mutated in place; the drawn rect occupies
+      // [top, top+hDrawn) with exactly ROW_GAP to the next drawn row, and the
+      // label + flow anchors derive from the SAME _fy0/_fy1 pair — the
+      // coupling the pre-R24 label tiling broke (owner's drift screenshot).
+      spans.push(restackManageRows(rows, { rowGap: ROW_GAP, headerSpace: HEADER_SPACE }));
     };
     bankCols.forEach((col) => restackCol(col));
     allocCols.forEach((col) => restackCol(col));
@@ -2258,21 +2542,31 @@ export default class PlanFlowSankeyController extends Controller {
   // covers only its fixedValue = fan-out base, so its incoming stack
   // overflows the node); the labels, by contrast, sit at the DRAWN
   // centers (the round-16.7 symmetric floors). This pass re-derives every
-  // anchor for labelled nodes at column >= 2 (banks, sub-accounts,
-  // allocations, surplus): incoming anchors (l.y1) are re-stacked inside
+  // anchor for every labelled node EXCEPT income and the Un-Allocated
+  // pillars (ROUND 32b: kind-based exclusion, not column >= 2 — the bank
+  // column is column 1 in the classic 3-slot layout, so the column guard
+  // skipped the bank column entirely there): incoming anchors (l.y1) are
+  // re-stacked inside
   // the drawn body (_fy0.._fy1) ordered by the SOURCE's drawn center-y,
   // outgoing anchors (l.y0) by the TARGET's drawn center-y — the d3
   // reorderNodeLinks rule, the same convention as #restackAnchors. Band
   // WIDTHS are the strictly-proportional drawn widths (l._fw; the ONLY
   // floor is the 3px Q3 visibility floor for zero-value minBand ribbons)
-  // and are untouched. Income/pillar/bridge (columns 0/1) are excluded so
+  // and are untouched. Income and the pillars are excluded by KIND
+  // (Round 32b), root/bridge/anchor via label === false, so
   // the pillar-tail contract (G) and the tail anchoring stay untouched.
   #realignManageBands(layout) {
     if (this.mode === "view") return;
     const centerOf = (n) => (n._fy0 != null ? (n._fy0 + n._fy1) / 2 : (n.y0 + n.y1) / 2);
     layout.nodes.forEach((n) => {
       if (n.label === false) return;
-      if ((n.column ?? 0) < 2) return;
+      // Round 32b: kind-based, not column-based (see the pass comment):
+      // the bank column is column 1 in the classic 3-slot layout, so the
+      // old `column < 2` guard skipped it and left its anchors at the
+      // pre-restack d3 positions after the row restack moved the bands.
+      // Income (col 0) and the Un-Allocated pillars stay excluded by kind
+      // (the pillar-tail contract G); root/bridge/anchor via label===false.
+      if (n.kind === "income" || n.kind === "unallocated") return;
       const top = n._fy0 ?? n.y0;
       const widthOf = (l) => l._fw ?? l.width;
       const bodyH = (n._fy1 ?? n.y1) - top;
@@ -2304,8 +2598,10 @@ export default class PlanFlowSankeyController extends Controller {
 
   // Round 20 (T4, owner round 20): the LINK-ANCHOR stacking contract,
   // enforced AFTER the final layout/floor/realign passes. Within every
-  // labelled node's edge (column >= 2; income/pillar/bridge excluded -
-  // the pillar-tail contract G owns columns 0/1 and the hatched-last
+  // labelled node's edge (Round 32b: every labelled node except income
+  // and the Un-Allocated pillars, excluded by KIND — the old column >= 2
+  // guard skipped the bank column in the classic 3-slot layout; income/
+  // pillar/bridge stay excluded; the pillar-tail contract G owns columns 0/1 and the hatched-last
   // income stacking is #placeUnallocatedNearTails' contract) the bands must
   // leave/enter in the order of their FAR ENDPOINT's drawn y position
   // (incoming: the source node's drawn center; outgoing: the target's).
@@ -2337,7 +2633,12 @@ export default class PlanFlowSankeyController extends Controller {
     };
     layout.nodes.forEach((n) => {
       if (n.label === false) return;
-      if ((n.column ?? 0) < 2) return;
+      // Round 32b: kind-based, not column-based (see #realignManageBands):
+      // the bank column is column 1 in the classic 3-slot layout, so the
+      // old `column < 2` guard never enforced the far-endpoint order on
+      // the bank edges. The separate col-0 income restack below is
+      // unchanged.
+      if (n.kind === "income" || n.kind === "unallocated") return;
       restack(n.targetLinks || [], "source", "y1");
       restack(n.sourceLinks || [], "target", "y0");
     });
@@ -2545,6 +2846,46 @@ export default class PlanFlowSankeyController extends Controller {
   // the FULL name always renders (no ellipsis, no clipping) — placement is
   // measured in #prepareDraw via #placeLabel, and d._labelScale is the
   // last-resort font shrink (1 = the house sizes below).
+  // Round 34c (owner): the icon<->name gap matches the name<->dollar-amount
+  // gap of the single-line (compact) label run — "the same amount of Gap
+  // that you have between the Text and the Dollar Amount". Measured from the
+  // DRAWN tspans (getExtentOfChar, user units at the current label scale k):
+  // name end -> first non-space char of the amount tspan (the compact run
+  // starts the amount with one space). Returns null when it cannot be
+  // measured (two-line variant: the amount resets x on its own line, so the
+  // measured gap is ~0; short DOM; probe context) and the caller falls back
+  // to LEFTOVER_ICON_CLEARANCE. DOM-only (the unit test covers the pure
+  // placement math with an explicit clearance instead).
+  #leftoverNameAmountGap(textNode) {
+    try {
+      const tspans = Array.from(textNode.querySelectorAll("tspan"));
+      if (tspans.length < 2) return null;
+      const nameT = tspans[0];
+      const amountT = tspans.find((t) => t.classList && t.classList.contains("text-secondary"));
+      if (!amountT) return null;
+      if (
+        typeof nameT.getExtentOfChar !== "function" ||
+        typeof amountT.getExtentOfChar !== "function"
+      ) {
+        return null;
+      }
+      const nChars = nameT.getNumberOfChars();
+      if (nChars === 0) return null;
+      const nameEnd = nameT.getExtentOfChar(nChars - 1);
+      const aText = amountT.textContent || "";
+      let i = 0;
+      while (i < aText.length && aText[i] === " ") i += 1;
+      if (i >= aText.length) return null;
+      const amountStart = amountT.getExtentOfChar(i);
+      const gap = amountStart.x - (nameEnd.x + nameEnd.width);
+      // Clamp to the 4px spec floor (the round-34b guardrail); the owner's
+      // "same as the name->amount gap" is the spacing, never under 4px.
+      return gap > 0.5 ? Math.max(gap, this.constructor.LEFTOVER_ICON_CLEARANCE) : null;
+    } catch {
+      return null;
+    }
+  }
+
   #writeLabelText(d, g, centerY, compactOverride = null) {
     const { x, anchor } = this.#labelPosition(d);
     // Round 16 (owner note A): compactOverride forces the label variant for
@@ -2584,7 +2925,7 @@ export default class PlanFlowSankeyController extends Controller {
     // <text> AND the chip (image or kind-icon g) before writing the fresh
     // ones, or every draw stacks another.
     d3.select(g).selectAll(
-      ":scope > text, :scope > image.planflow-logo, :scope > g.planflow-kind-icon, :scope > rect.planflow-ua-outline"
+      ":scope > text, :scope > image.planflow-logo, :scope > g.planflow-kind-icon, :scope > g.planflow-leftover-icon, :scope > rect.planflow-ua-outline"
     ).remove();
     // Round 20 (T3, owner round 20 drawing): the Un-Allocated label is a
     // DOTTED outline instead of the solid grey fill it had - a dashed
@@ -2628,7 +2969,10 @@ export default class PlanFlowSankeyController extends Controller {
       // privacy-mode.css: html.privacy-mode .privacy-sensitive) blurs every
       // sankey label (name + amount + shortfall/marker tspans share the
       // element) while the band paths stay visible — they carry no class.
-      .attr("class", "text-xs font-medium text-primary fill-current select-none privacy-sensitive")
+      // planflow-value-label: the round 33 value morph hook (the
+      // Per Paycheck <-> Per Month / unit toggle blur-fades the NEW
+      // numbers in — see application.css .plan-flow-sankey--morphing).
+      .attr("class", "planflow-value-label text-xs font-medium text-primary fill-current select-none privacy-sensitive")
       .attr("dy", compact ? "0.35em" : "-0.2em");
     if (k < 1) text.style("font-size", `${12 * k}px`); // text-xs = 0.75rem
     if (compact) {
@@ -2709,6 +3053,57 @@ export default class PlanFlowSankeyController extends Controller {
           .attr("stroke-linecap", "round")
           .attr("stroke-linejoin", "round")
           .html(this.constructor.KIND_ICONS[d.kindIcon] || this.constructor.KIND_ICONS.other);
+      }
+    }
+    // Round 34 (spec 4) + Round 34b (T1): the LEFTOVER icon on a bank node
+    // whose inflow is a leftover. Round 34b: the slot is OUTSIDE the label
+    // text run — #leftoverIconPlacement measures the WHOLE <text> box (the
+    // single-line "Name [last4] $amount" run) and picks the slot: between
+    // the label text end and the bank band edge when that gap is >= 18px,
+    // else LEFT of the name text with a 4px clearance; the slot is vertically
+    // centered on the band center. #setLabelGeoms re-applies the same math
+    // every frame (same box, only the center/anchor move). DRAW-path only
+    // (the measure probes must measure the text box only — the same
+    // compactOverride guard as the Un-Allocated outline above). The glyph
+    // inherits the dollar-amount text color: stroke = the amount tspan's
+    // computed fill (currentColor fallback).
+    if (compactOverride === null && d.kind === "bank" && d.leftover) {
+      const textNode = text.node();
+      if (textNode && typeof textNode.getBBox === "function") {
+        let labelBox = null;
+        try { labelBox = textNode.getBBox(); } catch { labelBox = null; }
+        if (labelBox && labelBox.width > 0) {
+          const boxSize = this.constructor.LEFTOVER_ICON_SIZE * k;
+          const { anchor } = this.#labelPosition(d);
+          // Round 34c: measure the name<->amount gap of the drawn run and
+          // cache it on d for the per-frame path (#setLabelGeoms); null ->
+          // the 4px default clearance.
+          const iconClearance = this.#leftoverNameAmountGap(textNode);
+          d._leftoverIconClearance = iconClearance;
+          const slot = this.constructor.leftoverIconPlacement({
+            anchor,
+            labelBox,
+            bandX0: d.x0,
+            bandX1: d.x1,
+            boxSize,
+            centerY,
+            clearance: iconClearance,
+          });
+          const amountTspan = text.select("tspan.text-secondary").node();
+          const amountColor =
+            amountTspan && typeof getComputedStyle === "function"
+              ? getComputedStyle(amountTspan).fill
+              : null;
+          d3.select(g)
+            .append("g")
+            .attr("class", "planflow-leftover-icon privacy-sensitive")
+            .attr("transform", `translate(${slot.x}, ${slot.y}) scale(${k})`)
+            .attr("fill", "none")
+            .attr("stroke", amountColor || "currentColor")
+            .attr("stroke-width", 1.4)
+            .attr("stroke-linecap", "round")
+            .html(this.constructor.LEFTOVER_ICON);
+        }
       }
     }
     // Round 11 issue 8: the sub-account tooltip names its parent.
@@ -2832,6 +3227,47 @@ export default class PlanFlowSankeyController extends Controller {
         outline.setAttribute("y", y - bh / 2 - pad);
         outline.setAttribute("width", bw + pad * 2);
         outline.setAttribute("height", bh + pad * 2);
+      }
+      // Round 34b (T1): the leftover icon re-applies the SAME slot math
+      // every frame (same #leftoverIconPlacement the draw path used — the
+      // label box only moves with the label during the entrance tween).
+      // Round 34c-fix: the label box is the LIVE text getBBox, not the
+      // cached d._labelBoxes probe width — the probe box is a different
+      // text variant and can be WIDER than the rendered run (measured
+      // 191.20 vs 168.53 on the live plan), which pushed the fallback
+      // slot ~23px left of the real text start. Only nodes that actually
+      // carry an icon measure here (at most 2 per plan), so the frame
+      // path stays allocation-light.
+      const icon = a.labelEl.querySelector("g.planflow-leftover-icon");
+      if (icon) {
+        const k = Math.min(d._labelScale ?? 1, d._manageScale ?? 1);
+        const boxSize = this.constructor.LEFTOVER_ICON_SIZE * k;
+        let labelBox = null;
+        const iconTextEl = a.labelEl.querySelector("text");
+        if (iconTextEl && typeof iconTextEl.getBBox === "function") {
+          try {
+            const liveBox = iconTextEl.getBBox();
+            if (liveBox.width > 0) labelBox = { x: liveBox.x, width: liveBox.width };
+          } catch { labelBox = null; }
+        }
+        if (!labelBox) {
+          const boxes = d._labelBoxes || (d._labelBoxes = this.#labelBoxHeights(d));
+          const compact = d.y1 - d.y0 < 24 && d.nodeType !== "income";
+          const labelW = (compact ? boxes.compact.w : boxes.full.w) * k;
+          labelBox = anchor === "end" ? { x: x - labelW, width: labelW } : { x, width: labelW };
+        }
+        const slot = this.constructor.leftoverIconPlacement({
+          anchor,
+          labelBox,
+          bandX0: d.x0,
+          bandX1: d.x1,
+          boxSize,
+          centerY: y,
+          // Round 34c: the name<->amount gap the draw path measured and
+          // cached (null -> the 4px default).
+          clearance: d._leftoverIconClearance ?? null,
+        });
+        icon.setAttribute("transform", `translate(${slot.x}, ${slot.y}) scale(${k})`);
       }
       const fade = a.dying ? 1 - e : a.spawn ? e : 1;
       a.labelEl.setAttribute("opacity", (fade * (a.labelFinalOpacity ?? 1)).toFixed(3));

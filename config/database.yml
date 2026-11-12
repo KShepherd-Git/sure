@@ -13,7 +13,25 @@ development:
 
 test:
   <<: *default
-  database: <%= ENV.fetch("POSTGRES_DB") { "sure_test" } %>
+  # Root-cause fix (Round 31B, after the 2026-11-09 owner-data purge): the
+  # test env must NEVER resolve to the development database. The dev
+  # container sets POSTGRES_DB=<dev db> (the owner's real, restored data),
+  # and the old `ENV.fetch("POSTGRES_DB")` meant a bare `bin/rails test`
+  # connected straight to that dev DB. Resolution order here:
+  #   1. POSTGRES_DB_TEST            (explicit test override)
+  #   2. POSTGRES_DB as-is           (when it already ends in _test — the
+  #                                    canonical `POSTGRES_DB=sure_test
+  #                                    bin/rails test` invocation)
+  #   3. POSTGRES_DB + "_test"       (the bare run: <dev db> -> <dev db>_test)
+  #   4. "sure_test"                 (no POSTGRES_DB at all)
+  # A bare `bin/rails test` can therefore no longer touch the dev DB.
+  database: <%=
+    begin
+      t = ENV["POSTGRES_DB_TEST"]
+      b = ENV["POSTGRES_DB"]
+      t || (b ? (b.end_with?("_test") ? b : "#{b}_test") : "sure_test")
+    end
+  %>
 
 production:
   <<: *default

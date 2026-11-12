@@ -431,6 +431,11 @@
           view unit. (The controller's flow_view only reads params[:view]
           on the graph/draft paths; the dialog save path uses it too.) %>
       <input type="hidden" name="view" value="<%= view %>">
+      <%# Round 33: the active Per-Paycheck unit (income | family). Posted
+          with every in-place bank save so the re-rendered dialog readouts
+          keep the selected divisor (the controller's paycheck_unit reads
+          it the same way flow_view reads params[:view]). %>
+      <input type="hidden" name="paycheck_unit" value="<%= paycheck_unit %>">
       <input type="hidden" name="account[bank_logo_slug]" value="<%= account.bank_logo_slug %>">
       <input type="hidden" name="account[parent_account_id]" value="<%= account.parent_account_id %>">
       <input type="hidden" name="account[auto_transfer_target_ids][]" value="0" class="sr-only">
@@ -669,12 +674,21 @@
               <div class="hidden absolute left-0 top-full z-30 mt-1 w-44 rounded-lg bg-container p-1 shadow-border-lg"
                    data-bank-pull-panel data-bank-pull-panel-group="row-<%= series.id %>">
                 <% %w[required specific percent leftover].each do |mode| %>
-                  <label class="flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer has-[:checked]:bg-surface-inset">
+                  <%# Round 34 (spec 3): one Leftover per member's paycheck.
+                      The "Leftover" option is disabled (greyed + tooltip)
+                      when this income series already has a leftover edge to a
+                      DIFFERENT account (the opened account is the one being
+                      edited, so the current leftover stays selectable). The
+                      server backstops it with a 422 in save_bank_links. %>
+                  <% leftover_disabled = (mode == "leftover") && leftover_accounts.key?(series.id) && leftover_accounts[series.id] != account.id %>
+                  <label class="flex items-center gap-2 rounded-md px-2 py-1.5 has-[:checked]:bg-surface-inset <%= leftover_disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer" %>"
+                         <%= leftover_disabled ? %(title="#{t('.leftover_single_hint')}") : nil %>>
                     <input type="radio" name="pull-row-mode-<%= series.id %>" value="<%= mode %>"
                            class="sr-only"
                            <%= "checked" if edge&.mode == mode %>
+                           <%= "disabled" if leftover_disabled %>
                            data-action="change->bank-config-dialog#setPullMode">
-                    <span class="text-xs text-primary"><%= t(".mode_#{mode}") %></span>
+                    <span class="text-xs <%= leftover_disabled ? "text-secondary" : "text-primary" %>"><%= t(".mode_#{mode}") %></span>
                   </label>
                 <% end %>
               </div>

@@ -1,0 +1,23 @@
+---
+# Round 31B (Direct Deposit): the paycheck-config model's 422 messages
+# (field-keyed, rendered inline in the paycheck config dialog by
+# error_messages).
+en:
+  activerecord:
+    attributes:
+      family_paycheck_config:
+        gross_per_paycheck_cents: Gross per paycheck
+        frequency: Frequency
+        anchor_date: Anchor date
+        recurring_transaction: Income series
+    errors:
+      models:
+        family_paycheck_config:
+          no_labeled_series: "This member has no income stream labeled to them yet — label one on the Bills paycheck page first."
+          attributes:
+            user:
+              wrong_family: "must be a member of this family"
+            recurring_transaction:
+              wrong_family: "must belong to this family"
+              not_income: "must be an income stream"
+              wrong_member: "must be labeled to this member"

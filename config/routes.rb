@@ -525,6 +525,12 @@ Rails.application.routes.draw do
                                    path: "flow/accounts/:account_id/bank-logo", params: [ :account_id ]
     patch :flow_income, to: "plan_flows#update_income", on: :collection, as: :flow_income,
                         path: "flow/incomes/:income_id", params: [ :income_id ]
+    # Round 31B (Direct Deposit): save one member's paycheck config
+    # (gross / frequency / anchor). Derived dates flow through the planner
+    # overlay; no occurrences are written.
+    patch :flow_paycheck_config, to: "plan_flows#update_paycheck_config", on: :collection,
+                                 as: :flow_paycheck_config, path: "flow/paycheck-config/:user_id",
+                                 params: [ :user_id ]
     # Planning diagram JSON (M2 PR#2b): saved state + draft preview.
     get :flow_graph, to: "plan_flows#graph", on: :collection, as: :flow_graph, path: "flow/graph"
     # Allocation dialog CRUD (M2 PR#2b).

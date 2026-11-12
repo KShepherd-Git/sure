@@ -939,6 +939,22 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_080000) do
     t.index ["merchant_id"], name: "index_family_merchant_associations_on_merchant_id"
   end
 
+  create_table "family_paycheck_configs", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "family_id", null: false
+    t.uuid "user_id", null: false
+    t.uuid "recurring_transaction_id"
+    t.integer "gross_per_paycheck_cents", null: false
+    t.string "frequency", default: "semi_monthly", null: false
+    t.date "anchor_date", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["family_id", "user_id"], name: "index_family_paycheck_configs_on_family_id_and_user_id", unique: true
+    t.index ["family_id"], name: "index_family_paycheck_configs_on_family_id"
+    t.index ["recurring_transaction_id"], name: "index_family_paycheck_configs_on_recurring_transaction_id"
+    t.index ["user_id"], name: "index_family_paycheck_configs_on_user_id"
+    t.check_constraint "frequency::text = 'semi_monthly'::text OR frequency::text = 'biweekly'::text", name: "chk_family_paycheck_configs_frequency"
+  end
+
   create_table "family_plan_settings", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.uuid "family_id", null: false
     t.string "leftover_distribution", default: "income_ratio", null: false
@@ -3233,6 +3249,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_11_080000) do
   add_foreign_key "family_exports", "families"
   add_foreign_key "family_merchant_associations", "families"
   add_foreign_key "family_merchant_associations", "merchants"
+  add_foreign_key "family_paycheck_configs", "families"
+  add_foreign_key "family_paycheck_configs", "recurring_transactions", on_delete: :nullify
+  add_foreign_key "family_paycheck_configs", "users"
   add_foreign_key "financekit_account_lineages", "accounts", on_delete: :nullify
   add_foreign_key "financekit_account_lineages", "families"
   add_foreign_key "financekit_accounts", "financekit_account_lineages"
