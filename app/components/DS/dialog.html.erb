@@ -20,7 +20,13 @@
               **merged_opts do %>
     <%= tag.div class: dialog_outer_classes do %>
       <%= tag.div class: dialog_inner_classes, data: { DS__dialog_target: "content" } do %>
-        <div class="grow py-4 space-y-4 flex flex-col <%= "overflow-auto" if scrollable %>">
+        <%# Round 21 T7: overscroll-behavior: contain stops wheel chaining —
+            at the inner scroll's bottom edge the page behind the dialog must
+            not scroll. The utility already exists in the prebuilt CSS build
+            (and is used for the same purpose in the settings layout, the
+            debug view and the cashflow preview); the inner div is the only
+            per-dialog scrollable surface, so the class rides on it. %>
+        <div class="grow py-4 space-y-4 flex flex-col <%= "overflow-auto overscroll-contain" if scrollable %>">
           <% if header? %>
             <%= header %>
           <% end %>

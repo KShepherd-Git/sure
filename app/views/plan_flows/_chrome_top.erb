@@ -1,0 +1,20 @@
+<%# Over-plan overlay lines (spec §6): server-rendered so BOTH the page
+    (show.html.erb) and the in-place JSON responses (owner review round 3,
+    R1/R7) can swap them without a full reload. Reads @graph +
+    @over_plan_lines. i18n keys are explicit (plan_flows.show.*) — a
+    partial's lazy scope is its own name. %>
+<div data-flow-chrome="top">
+  <% if @over_plan_lines.any? %>
+    <div class="space-y-1">
+      <% @over_plan_lines.each do |line| %>
+        <div class="flex items-center gap-2 text-sm text-destructive">
+          <span class="h-2 w-2 rounded-full bg-destructive shrink-0" aria-hidden="true"></span>
+          <%= t("plan_flows.show.over_plan",
+                amount: number_to_currency(line[:amount], currency: Current.family.currency),
+                income: line[:income],
+                item: line[:item]) %>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+</div>

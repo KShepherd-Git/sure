@@ -1,0 +1,71 @@
+# Round 16: bank-logo auto-match (owner note 3b).
+#
+# Rails 8.1 config_for only resolves env-keyed values, so both maps live
+# under the shared: key (applies to every environment).
+#
+# labels:   slug -> display name. A slug is USABLE only when BOTH a vendored
+#           file (app/assets/images/bank-logos/<slug>.svg) and a label exist;
+#           that intersection is the dialog picker list and the validation set.
+#
+# keywords: normalized account-name token -> slug. "Normalized" means
+#           lowercased with every non-alphanumeric stripped (so "NAVY Vari
+#           Bills" -> "navyvaribills"). Matching is longest-keyword-first
+#           substring search over the normalized account name; the first hit
+#           wins. A slug whose file is missing simply never resolves.
+#
+# One-time vendoring only (app/assets/images/bank-logos/ + COPYRIGHTS.md);
+# the app NEVER fetches logos at runtime (owner policy: 100% local).
+shared:
+  labels:
+    sofi: SoFi
+    navy-federal: Navy Federal Credit Union
+    jpmorgan-chase: JPMorgan Chase
+    bank-of-america: Bank of America
+    wells-fargo: Wells Fargo
+    citibank: Citibank
+    us-bank: US Bank
+    pnc: PNC Bank
+    ally: Ally Financial
+    fidelity: Fidelity Investments
+    td-bank: TD Bank
+    american-express: American Express
+    capital-one: Capital One
+    chime: Chime
+    varo: Varo
+    charles-schwab: Charles Schwab
+    flagstar: Flagstar Bank
+    truist: Truist
+    fifth-third: Fifth Third Bank
+    huntington: Huntington Bancshares
+    comerica: Comerica
+    synovus: Synovus
+
+  keywords:
+    sofi: sofi
+    navy: navy-federal
+    navyfederal: navy-federal
+    jpmorgan: jpmorgan-chase
+    chase: jpmorgan-chase
+    bankofamerica: bank-of-america
+    bofa: bank-of-america
+    wellsfargo: wells-fargo
+    citibank: citibank
+    citi: citibank
+    usbank: us-bank
+    pnc: pnc
+    ally: ally
+    fidelity: fidelity
+    tdbank: td-bank
+    americanexpress: american-express
+    amex: american-express
+    capitalone: capital-one
+    chime: chime
+    varo: varo
+    charlesschwab: charles-schwab
+    schwab: charles-schwab
+    flagstar: flagstar
+    truist: truist
+    fifththird: fifth-third
+    huntington: huntington
+    comerica: comerica
+    synovus: synovus

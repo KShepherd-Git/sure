@@ -1,0 +1,66 @@
+<%# The absolutely-positioned chrome inside the diagram container: the
+    banks empty state, the allocations empty state (Add Allocation) or
+    the floating Add Allocation button, and the no-incomes note.
+    Server-rendered for both show.html.erb and the in-place JSON responses
+    (owner review round 3, R1/R7) so the empty states track plan changes
+    without a reload. Reads @in_plan_accounts / @unplanned_count /
+    @plan_allocations / @graph / @income_series. i18n keys are explicit
+    (plan_flows.show.*) — a partial's lazy scope is its own name. %>
+<div data-flow-chrome="overlays">
+  <%# Banks column empty state (spec §2: EMPTY by default). %>
+  <% if @in_plan_accounts.empty? %>
+    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+      <div class="pointer-events-auto text-center space-y-3 rounded-xl border border-dashed border-subdued bg-container/95 shadow-border-xs px-6 py-5 max-w-xs">
+        <p class="text-sm text-secondary"><%= t("plan_flows.show.banks_not_planned", count: @unplanned_count) %></p>
+        <%= render DS::Link.new(
+              text: t("plan_flows.show.add_account"),
+              icon: "plus",
+              variant: "primary",
+              href: flow_add_accounts_modal_plan_path,
+              frame: :modal
+            ) %>
+      </div>
+    </div>
+  <% end %>
+
+  <%# Allocations column empty state (spec §2): Add Allocation. Round 21
+      (T2, owner): the Recommended list was removed — the Add Allocation
+      button is the only dialog access in the empty state (the allocation
+      dialog still prefills from the page-wide recommendations JSON
+      attribute in show.html.erb). When allocations exist, the nodes own
+      the column and a compact Add button floats bottom-right. %>
+  <% if @plan_allocations.empty? %>
+    <div class="absolute right-3 top-10 w-72 max-h-[420px] overflow-y-auto rounded-xl border border-dashed border-subdued bg-container/95 shadow-border-xs p-4 space-y-3">
+      <div class="flex items-center justify-between gap-2">
+        <p class="text-xs font-medium uppercase tracking-wide text-secondary"><%= t("plan_flows.show.column_allocations") %></p>
+        <%= button_tag(type: "button", class: "text-xs bg-primary text-on-primary rounded-lg px-2.5 py-1 hover:opacity-90",
+             data: { action: "plan-flow#openNewAllocation" }) do %>
+          <span class="flex items-center gap-1"><%= icon("plus", class: "h-3 w-3") %><%= t("plan_flows.show.add_allocation") %></span>
+        <% end %>
+      </div>
+    </div>
+  <% else %>
+    <%# Round 21 (owner decision 2026-11-03): the float stays at the
+        TOP-right corner, as before R21 (it was moved to bottom-3 during
+        T6 and the owner asked for the original position back). The first
+        allocation node keeps its own label + hit-rect click handlers
+        (R1 T6), so the allocation stays editable underneath. %>
+    <div class="absolute right-3 top-2">
+      <%= button_tag(type: "button", class: "text-xs bg-container border border-subdued text-secondary rounded-lg px-2.5 py-1 shadow-border-xs hover:text-primary",
+           data: { action: "plan-flow#openNewAllocation" }) do %>
+        <span class="flex items-center gap-1"><%= icon("plus", class: "h-3 w-3") %><%= t("plan_flows.show.add_allocation") %></span>
+      <% end %>
+    </div>
+  <% end %>
+
+  <%# No incomes at all: the left column note + the house add-income link. %>
+  <% if @income_series.empty? %>
+    <div class="absolute left-3 top-10 rounded-xl border border-dashed border-subdued bg-container/95 shadow-border-xs px-4 py-3 space-y-2 max-w-[220px]">
+      <p class="text-xs text-secondary"><%= t("plan_flows.show.no_incomes") %></p>
+      <%= link_to bills_path(view: "paycheck"),
+            class: "flex items-center gap-1 text-xs bg-primary text-on-primary rounded-lg px-2.5 py-1 hover:opacity-90" do %>
+        <%= icon("plus", class: "h-3 w-3") %><%= t("plan_flows.show.add_income") %>
+      <% end %>
+    </div>
+  <% end %>
+</div>

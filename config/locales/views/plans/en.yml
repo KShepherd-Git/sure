@@ -37,3 +37,7 @@ en:
       pending_marker: pending
       runway: "%{months} mo runway · %{pace}/mo"
       all_goals: All goals
+    flow_card:
+      title: Paycheck Flow
+      subtitle: Trace each paycheck from income to the accounts it pays — and what's left over for you two.
+      open: Open the flow

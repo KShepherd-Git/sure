@@ -504,13 +504,25 @@ Rails.application.routes.draw do
 
   # Hub page fronting budgets + goals under a single "Plan" nav entry.
   resource :plan, only: :show do
-    # Paycheck Flow (preview-gated): the flow-page route plus the graph,
-    # allocation, account, and income actions the Plan UI drives.
+    # Paycheck Flow (M2 PR#2b): the planning diagram (Sankey), preview-gated.
     get :flow, to: "plan_flows#show", on: :collection, as: :flow
+    get :flow_add_accounts_modal, to: "plan_flows#add_accounts_modal", on: :collection,
+                                  as: :flow_add_accounts_modal, path: "flow/add-accounts"
     post :flow_add_accounts, to: "plan_flows#add_accounts", on: :collection, as: :flow_add_accounts
-    post :flow_create_account, to: "plan_flows#create_account", on: :collection, as: :flow_create_account
+    # (flow_create_account removed in owner round 2, F2: no own manual
+    # account creation on this page — the modal links to the house page.)
     patch :flow_account, to: "plan_flows#update_account", on: :collection, as: :flow_account,
                          path: "flow/accounts/:account_id", params: [ :account_id ]
+    # Remove a bank from the plan (owner review round 3, R3): its allocations
+    # persist unassigned ("No Assignment"), edges + plan markers are dropped.
+    delete :flow_account_remove, to: "plan_flows#remove_account", on: :collection, as: :flow_account_remove,
+                                 path: "flow/accounts/:account_id", params: [ :account_id ]
+    # Round 20d: custom bank-logo upload + removal (the avatar popup in the
+    # bank config dialog). Image only, sane size; per-account ActiveStorage.
+    post :flow_bank_logo, to: "plan_flows#upload_bank_logo", on: :collection, as: :flow_bank_logo,
+                          path: "flow/accounts/:account_id/bank-logo", params: [ :account_id ]
+    delete :flow_bank_logo_remove, to: "plan_flows#remove_bank_logo", on: :collection, as: :flow_bank_logo_remove,
+                                   path: "flow/accounts/:account_id/bank-logo", params: [ :account_id ]
     patch :flow_income, to: "plan_flows#update_income", on: :collection, as: :flow_income,
                         path: "flow/incomes/:income_id", params: [ :income_id ]
     # Planning diagram JSON (M2 PR#2b): saved state + draft preview.
@@ -523,7 +535,6 @@ Rails.application.routes.draw do
     delete :flow_allocation_destroy, to: "plan_flows#destroy_allocation", on: :collection,
                                     as: :flow_allocation_destroy, path: "flow/allocations/:id", params: [ :id ]
   end
-
 
   # Family-wide investment hub, built on the Reports section framework.
   resource :portfolio, only: :show do

@@ -2,6 +2,10 @@
 # NOTE: partials lazy-lookup under "plan_flows.<partial_name>" (no .show
 # segment — house pattern, cf. plans.budget_card). show.html.erb itself is
 # "plan_flows.show"; controller flashes are "plan_flows.<action>".
+# M2 PR#2b: the old 3-column form scopes (income_column, account_column,
+# obligations_column, edge_editor, resolved_panel, save) were removed with
+# the Sankey redesign; the dialogs are bank_config / income_config /
+# allocation_dialog.
 en:
   plan_flows:
     show:
@@ -10,25 +14,217 @@ en:
       view_aria: Paycheck flow view
       view_paycheck: Per Paycheck
       view_monthly: Per Month
+      # Issue 10 (View/Manage): the diagram sizing-mode toggle (client-side
+      # only — the sankey controller re-renders in place; MANAGE is the
+      # default on load = the current behavior: floors keep every label
+      # showable; VIEW is strictly proportional with the small-label hide).
+      mode_aria: Diagram sizing mode
+      mode_manage: Manage
+      mode_view: View
+      legend_income: Incomes
+      legend_banks: Banks
+      legend_spending: Spending
+      legend_debt: Debt
+      legend_savings: Savings
+      legend_surplus: Surplus
+      over_plan: "Over-planned by %{amount} on %{income} — bills covered; reduce %{item}"
+      banks_not_planned:
+        one: "%{count} account not planned yet"
+        other: "%{count} accounts not planned yet"
+      add_account: Add Account
+      column_incomes: Incomes
+      column_banks: Banks
+      column_allocations: Allocations
+      surplus_node: Surplus
+      unallocated_node: Un-Allocated
+      # The "No Assignment" marker for an allocation whose source bank was
+      # removed from the plan (owner review round 3, R3).
+      unassigned_node: No Assignment
+      no_incomes: No income declared yet — add a paycheck income to start the map.
+      add_income: Add Income
+      add_allocation: Add Allocation
+      recommended: Recommended
+      recommended_empty: Nothing recommended yet.
+      chart_error: Couldn't draw the diagram — refresh the page.
+      chart_empty: Nothing to plan this month yet.
+    bank_config_dialog:
+      title: "Configure %{name}"
+      subtitle: Pull From Incomes, ownership, and role.
+      # Round 20a: "Linked incomes" is now "Pull From Incomes"; each row
+      # shows only checkbox + name until checked (the rule select + value
+      # reveal in the same row).
+      pull_from_incomes: Pull From Incomes
+      no_incomes: No income declared yet.
+      rule_aria: "Rule for %{name}"
+      mode_required: Pay this bank's bills first
+      mode_specific: Fixed amount per paycheck
+      mode_percent: Percent of this income
+      mode_leftover: Leftover after other banks
+      percent_placeholder: "0-100"
+      specific_placeholder: "0.00"
+      # Round 20f: ownership + role collapsed into one section, closed by
+      # default (least shown until needed).
+      details_heading: Details
+      ownership_label: Ownership
+      ownership_shared: Home / Shared
+      role_label: Role
+      # Round 20c: exactly the owner's five account kinds. A plain account
+      # (nil role) gets the disabled "Plain" placeholder so a plain save
+      # never silently promotes a role.
+      role_plain: Plain
+      role_savings_bucket: Savings
+      role_checking: Checking
+      role_credit_card_payoff: Credit Card
+      role_loan_payoff: Loan
+      role_investment: Investment
+      # Round 20b: the "Sub-account of" select moved into the kebab as
+      # "Make a Sub-Account" (same candidate set + the clear entry).
+      menu_make_sub_account: Make a Sub-Account
+      sub_account_hint: Pick the bank this account becomes a sub-account of. "Not a sub-account" removes the link.
+      sub_account_none: Not a sub-account
+      # Round 20e: the auto-transfer fan-out moved into the kebab.
+      menu_configure_auto_transfer: Configure Auto-Transfer
+      auto_transfer_targets: Auto-Transfer to (sub-accounts)
+      auto_transfer_targets_hint: A bucket must first be set as a sub-account of this bank.
+      # Round 20d: the old search + list section is gone; the avatar
+      # (top-left of the dialog) opens the logo popup instead. Picking a
+      # built-in while a custom upload is attached removes the custom.
+      logo_popup_title: Bank logo
+      logo_hint: Click the avatar to upload a logo or pick a built-in one.
+      logo_upload: Upload Custom
+      logo_remove_custom: Remove custom
+      logo_builtin_heading: Built-in logos
+      logo_none: None
+      logo_upload_error_missing: No image file attached.
+      logo_upload_error_type: Only PNG, JPEG, WebP, or GIF images can be used as a bank logo.
+      logo_upload_error_size: The image is too large. Maximum 1 MB.
+      more_aria: More options
+      popup_cancel: Cancel
+      save: Save
+      # Remove from plan (owner review round 3, R3): the bank leaves the map;
+      # its allocations persist unassigned ("No Assignment" marker).
+      remove: Remove
+      remove_confirm:
+        one: "Remove this bank from the plan? Its %{count} allocation keeps its data but loses its source bank (shown as unassigned)."
+        other: "Remove this bank from the plan? Its %{count} allocations keep their data but lose their source banks (shown as unassigned)."
+        zero: Remove this bank from the plan?
+    income_config_dialog:
+      title: "Configure %{name}"
+      subtitle: Who this income belongs to and how many banks it can feed.
+      owner_label: Owner / family member
+      owner_fallback: Account owner (fallback)
+      max_links_label: Max linked accounts
+      max_links_placeholder: Unlimited
+      max_links_hint: Blank = unlimited. A warning (not an error) shows when the limit is exceeded.
+      add_family_member: Add a Family Member
+      save: Save
+    allocation_dialog:
+      title_new: New Allocation
+      title_edit: "Edit %{name}"
+      subtitle: What gets pulled out of a source bank, and how much.
+      known_heading: Known Allocations
+      known_empty: No detected bills or subscriptions yet.
+      known_all_planned: Everything detected is already in the diagram.
+      new_hint: Start a bill from scratch, or pick one above.
+      new_cta: Add New Allocation
+      locked_tooltip: "Edit Details Grabbed from Tracked Accounts"
+      name_label: Name
+      kind_label: Kind
+      kind_bill: Bill
+      kind_debt: Debt
+      kind_savings: Savings
+      kind_fun_money: Fun money
+      # Round 20 two-stack rework (U): the dialog is two disclosure stacks.
+      # Stack 1 "Configure the allocation" shows only what is NOT pulled from
+      # the detected bill (name / amount / cadence / mode render read-only
+      # context when a bill is linked; the category picker is always
+      # editable). Stack 2 "Bank source" is the source-bank selector with
+      # the account's plan-flow logo. Kind "savings" / "fun_money" show only
+      # name + monthly amount; the bill-only fields (mode / cadence / RT
+      # link) render only for kind "bill" / "debt".
+      section_configure: Configure the allocation
+      section_bank_source: Bank source
+      linked_context_hint: Pulled from the detected bill, so these values are read-only here.
+      linked_bill_label: Linked bill
+      source_bank_label: Source bank
+      # Optional but recommended (owner review round 3, R3): an unassigned
+      # allocation ("No Assignment" marker) can pick a source bank again.
+      source_bank_unassigned: No bank (unassigned)
+      # Round 21 T8: empty-state hint for the in-place-swappable BANK
+      # SOURCE rows (plan_flows/_allocation_bank_rows.html.erb) when no
+      # account is on the plan yet.
+      empty_bank_rows: "Add accounts first: use Add Account."
+      source_bank_hint: Pick the bank this allocation pays from. Unassigned allocations wait outside the resolution.
+      # Owner round 10 (issue 4): the savings-bucket view of the same two
+      # fields. The associated account IS the existing source-bank field
+      # (account_id): the planner resolution and the Sankey band both key
+      # off it, so no second column exists. The monthly figure is the
+      # existing value field with mode "required" (monthly, prorated over
+      # the month's paychecks). The bill-only fields (mode / cadence /
+      # detected-bill link) are hidden for kind "savings" and "fun_money".
+      savings_account_label: Which Account is this Savings Bucket Associated to
+      savings_account_hint: Pick the account this savings bucket is associated to. The diagram draws the monthly band from it into the bucket.
+      savings_value_label: How much to save Per Month
+      savings_value_hint: The monthly amount, prorated over this month's paychecks.
+      # Round 20 (U): the fun-money view of the same two fields.
+      fun_account_hint: Pick the account this allocation is associated to. The diagram draws the monthly band from it.
+      fun_value_label: How much to set aside Per Month
+      fun_value_hint: The monthly amount, prorated over this month's paychecks.
+      mode_label: Mode
+      mode_required: Required
+      mode_specific: Hard number
+      mode_percent: Percent of leftover
+      mode_leftover: Leftover
+      value_label: Amount
+      amount_monthly_label: Amount (monthly)
+      required_hint: The required amount is a MONTHLY figure, prorated over this month's paychecks.
+      cadence_label: Cadence
+      cadence_weekly: Weekly
+      cadence_biweekly: Biweekly
+      cadence_monthly: Monthly
+      cadence_quarterly: Quarterly
+      cadence_yearly: Yearly
+      link_rt_label: Link a detected bill or debt
+      rt_none: None
+      rt_linked: Linked bill
+      # Round 16 (owner note 2) keys the ERB already used but that were
+      # missing from this file (the live dialog rendered the raw i18n
+      # fallback). Category picker: the app's existing categories with the
+      # same color + icon as the house category lists.
+      category_label: Category
+      category_hint: The category's color tints this allocation's band in the diagram.
+      category_none: No category
+      delete: Delete
+      save: Save
     # Full template (not a partial) — scope is "plan_flows.account_modal".
+    # Owner round 2 (F2): the modal lists Sure's existing accounts only; the
+    # manual creation form is gone (the page must not keep its own account
+    # list) — "Add Manual Account" links to the house add-account page.
+    common:
+      # The shared 422 in-place response message (owner review round 3,
+      # R1/R7): rendered inline in the dialog, no full-page flash.
+      save_failed: That didn't pass the model's checks — check the values and try again.
     account_modal:
-      title: Add bank account
-      subtitle: Attach an existing family account to the map, or add a manual bank.
+      title: Add Account
+      subtitle: Pick an account Sure already knows — it joins the map at $0.
       existing_heading: Existing accounts
       all_on_map: Every account is already on the map.
       add_selected: Add to map
-      manual_heading: Add non-synced bank
-      name_label: Name
-      institution_label: Institution (optional)
-      create_submit: Add bank
+      manual_heading: New account
+      manual_description: To add an account Sure doesn't have yet, use the usual add-account page.
+      manual_cta: Add Manual Account
       cancel: Cancel
     add_accounts:
       accounts_added: Account(s) added to the map.
-    create_account:
-      account_created: Bank account created and added to the map.
-      account_failed: Couldn't create that account.
     update_account:
       save_failed: The account update didn't pass the model's checks — check the values and try again.
+    # Round 20d: the avatar popup's custom-logo upload (plan_flows#upload_bank_logo).
+    upload_bank_logo:
+      bank_logo_missing_file: No image file attached.
+      bank_logo_not_an_image: Only PNG, JPEG, WebP, or GIF images can be used as a bank logo.
+      bank_logo_too_large: The image is too large. Maximum 1 MB.
+    remove_bank_logo:
+      removed: Custom logo removed.
     update_income:
       save_failed: The income update didn't pass the model's checks — check the values and try again.
     create_allocation:
@@ -39,3 +235,5 @@ en:
       save_failed: That allocation didn't pass the model's checks — check the amount and try again.
     destroy_allocation:
       saved: Allocation removed.
+    remove_account:
+      removed: Bank removed from the plan.
