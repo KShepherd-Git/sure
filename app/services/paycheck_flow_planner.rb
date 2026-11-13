@@ -1386,12 +1386,12 @@ class PaycheckFlowPlanner
             band += entry[:leftover] if leftover_edge && leftover_edge[:account_id] == bank_id
             inflow = (bank_inflow[date] || {})[bank_id] || BigDecimal(0)
             share = if inflow.positive? && band.positive?
-                      band / inflow
-                    elsif band.positive?
-                      BigDecimal(1)
-                    else
-                      BigDecimal(0)
-                    end
+              band / inflow
+            elsif band.positive?
+              BigDecimal(1)
+            else
+              BigDecimal(0)
+            end
             next if share.zero?
 
             rows = (allocation_results[date] || {})[bank_id]
