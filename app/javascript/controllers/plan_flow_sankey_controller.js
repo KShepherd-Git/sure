@@ -168,10 +168,12 @@ export default class PlanFlowSankeyController extends Controller {
     // class "default"). Reference the class by its declared name so the
     // receiver is exact no matter how the method is invoked.
     const C = PlanFlowSankeyController;
+    // biome-ignore lint/complexity/noThisInStatic: deliberate — `this` is the caller's receiver; `C !== this` is the warn-once receiver check (a class-name substitution would make it a tautology).
     if (C !== this && !C._warnedKindReceiver) {
       C._warnedKindReceiver = true;
       console.warn(
         `plan-flow: bankKindColor receiver is not the declaring class: ${
+          // biome-ignore lint/complexity/noThisInStatic: deliberate — same receiver check; reports the caller's actual receiver.
           (this && this.name) || String(this)
         }`
       );
@@ -187,12 +189,11 @@ export default class PlanFlowSankeyController extends Controller {
   // Deterministic desaturation of hexA toward hexB (t = weight on hexB,
   // 0 = hexA unchanged) — a pure function of the palette tokens above.
   static #blendHex(hexA, hexB, t) {
-    const parse = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const parse = (h) => [1, 3, 5].map((i) => Number.parseInt(h.slice(i, i + 2), 16));
     const a = parse(hexA);
     const b = parse(hexB);
     return (
-      "#" +
-      [0, 1, 2].map((i) => Math.round(a[i] * (1 - t) + b[i] * t).toString(16).padStart(2, "0")).join("").toUpperCase()
+      `#${[0, 1, 2].map((i) => Math.round(a[i] * (1 - t) + b[i] * t).toString(16).padStart(2, "0")).join("").toUpperCase()}`
     );
   }
 
@@ -462,7 +463,7 @@ export default class PlanFlowSankeyController extends Controller {
   #designHeight() {
     try {
       const css = typeof getComputedStyle === "function" ? getComputedStyle(this.element) : null;
-      const min = css ? parseFloat(css.minHeight) : NaN;
+      const min = css ? Number.parseFloat(css.minHeight) : Number.NaN;
       if (Number.isFinite(min) && min >= 100) return min;
     } catch { /* no layout engine (headless harness) */ }
     return this.element.clientHeight;
@@ -1731,6 +1732,7 @@ export default class PlanFlowSankeyController extends Controller {
   // own measure probe.
   #labelFloorHeight(d) {
     const isCompact = d.y1 - d.y0 < 24 && d.nodeType !== "income";
+    // biome-ignore lint/suspicious/noAssignInExpressions: deliberate check-or-init cache idiom — read the cached value, or compute and store it, in one expression.
     const boxes = d._labelBoxes || (d._labelBoxes = this.#labelBoxHeights(d));
     return (isCompact ? boxes.compact : boxes.full).h;
   }
@@ -2310,6 +2312,7 @@ export default class PlanFlowSankeyController extends Controller {
     // never carries _labelBoxes, an unbounded recursion that froze the tab
     // (owner report: the Paycheck Flow tab dies on open).
     if (d.kind === "unallocated" && compactOverride === null) {
+      // biome-ignore lint/suspicious/noAssignInExpressions: deliberate check-or-init cache idiom — read the cached value, or compute and store it, in one expression.
       const boxes = d._labelBoxes || (d._labelBoxes = this.#labelBoxHeights(d));
       const bw = (compact ? boxes.compact.w : boxes.full.w) * k;
       const bh = (compact ? boxes.compact.h : boxes.full.h) * k;
@@ -2526,6 +2529,7 @@ export default class PlanFlowSankeyController extends Controller {
       const outline = a.labelEl.querySelector("rect.planflow-ua-outline");
       if (outline) {
         const k = Math.min(d._labelScale ?? 1, d._manageScale ?? 1);
+        // biome-ignore lint/suspicious/noAssignInExpressions: deliberate check-or-init cache idiom — read the cached value, or compute and store it, in one expression.
         const boxes = d._labelBoxes || (d._labelBoxes = this.#labelBoxHeights(d));
         const compact = d.y1 - d.y0 < 24 && d.nodeType !== "income";
         const bw = (compact ? boxes.compact.w : boxes.full.w) * k;
@@ -2594,8 +2598,8 @@ export default class PlanFlowSankeyController extends Controller {
   // ---- The tween (R7) ------------------------------------------------------
 
   #animateTo(anims, layout) {
-    const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-    const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+    const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+    const easeOut = (t) => 1 - (1 - t) ** 3;
     const token = ++this.animationToken;
 
     const { nodeAnims, linkAnims, badgeAnims } = anims;

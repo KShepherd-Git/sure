@@ -200,7 +200,7 @@ class PlanFlowsController < ApplicationController
       false
     end
 
-    return render_flow_json(accounts: [account], ok: result, error_object: account) if json_request?
+    return render_flow_json(accounts: [ account ], ok: result, error_object: account) if json_request?
 
     if result
       redirect_back_to_flow
@@ -461,12 +461,12 @@ class PlanFlowsController < ApplicationController
         # BUCKET (a bank row, not an allocation) — nothing hidden about
         # which sub-account came up short.
         item = if over[:target] == "bucket" && over[:target_id]
-                 @graph[:banks].find { |row| row[:id] == over[:target_id] }&.dig(:name) || "a sub-account"
-               elsif over[:target_id]
-                 @graph[:allocations].find { |row| row[:id] == over[:target_id] }&.dig(:name) || "fun money"
-               else
-                 "the surplus line"
-               end
+          @graph[:banks].find { |row| row[:id] == over[:target_id] }&.dig(:name) || "a sub-account"
+        elsif over[:target_id]
+          @graph[:allocations].find { |row| row[:id] == over[:target_id] }&.dig(:name) || "fun money"
+        else
+          "the surplus line"
+        end
         { income: income&.dig(:name) || "an income", item: item, amount: over[:shortfall_month] }
       end
     end

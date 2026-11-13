@@ -67,7 +67,7 @@ export default class extends Controller {
 
   closePopups() {
     for (const target of ["kebabMenu", "subAccountPopup", "autoTransferPopup", "logoPopup"]) {
-      this[target + "Target"].classList.add("hidden");
+      this[`${target}Target`].classList.add("hidden");
     }
     this.kebabTarget.setAttribute("aria-expanded", "false");
   }
@@ -83,7 +83,7 @@ export default class extends Controller {
     const root = this.el;
     if (root.contains(event.target)) return;
     const open = ["kebabMenu", "subAccountPopup", "autoTransferPopup", "logoPopup"]
-      .some((target) => !this[target + "Target"].classList.contains("hidden"));
+      .some((target) => !this[`${target}Target`].classList.contains("hidden"));
     if (open) this.closePopups();
   }
 

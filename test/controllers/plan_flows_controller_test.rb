@@ -1237,7 +1237,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       # the hidden sentinel (the disabled rule controls send no values).
       patch "/plan/flow/accounts/#{@account.id}", headers: { "Accept" => "application/json" }, params: {
         account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
-                   parent_account_id: "", auto_transfer_target_ids: ["0"] },
+                   parent_account_id: "", auto_transfer_target_ids: [ "0" ] },
         links: { series.id.to_s => { "enabled" => "" } }
       }
       assert_response :success
@@ -1248,7 +1248,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
       # Re-checking persists a new edge (round trip in the other direction).
       patch "/plan/flow/accounts/#{@account.id}", headers: { "Accept" => "application/json" }, params: {
         account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
-                   parent_account_id: "", auto_transfer_target_ids: ["0"] },
+                   parent_account_id: "", auto_transfer_target_ids: [ "0" ] },
         links: { series.id.to_s => { "enabled" => "1", "mode" => "leftover" } }
       }
       assert_response :success
