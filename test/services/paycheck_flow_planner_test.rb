@@ -383,7 +383,7 @@ class PaycheckFlowPlannerTest < ActiveSupport::TestCase
       expected_day_of_month: 6, last_occurrence_date: Date.new(2026, 9, 20),
       next_expected_date: Date.new(2026, 12, 20), status: "active",
       bill_type: "income", manual: true)
-    [ [series_a, 2700], [series_b, 900] ].each do |series, amount|
+    [ [ series_a, 2700 ], [ series_b, 900 ] ].each do |series, amount|
       # The series create-callback backfills occurrences up to
       # next_expected_date — clear them (the house pattern) before the
       # exact two are created below.

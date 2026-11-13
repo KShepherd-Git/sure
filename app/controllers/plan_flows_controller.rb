@@ -212,7 +212,7 @@ class PlanFlowsController < ApplicationController
               .select { |parent_id, targets| Array(targets).include?(account.id) }
               .each do |parent_id, targets|
         parent = Current.family.accounts.find(parent_id)
-        parent.auto_transfer_target_ids = Array(targets) - [account.id]
+        parent.auto_transfer_target_ids = Array(targets) - [ account.id ]
         parent.save!
       end
   end
@@ -324,7 +324,7 @@ class PlanFlowsController < ApplicationController
       false
     end
 
-    affected = [account]
+    affected = [ account ]
     if result
       new_parent_id = account.parent_account_id
       if new_parent_id != old_parent_id
@@ -1216,7 +1216,7 @@ class PlanFlowsController < ApplicationController
       end
       has_children = Current.family.accounts.where(parent_account_id: account.id).exists?
       if has_children
-        return reject_parent_change(account, "cannot become a sub-account while it has sub-accounts of its own")
+        reject_parent_change(account, "cannot become a sub-account while it has sub-accounts of its own")
       end
     end
 
@@ -1240,7 +1240,7 @@ class PlanFlowsController < ApplicationController
         old_parent = Current.family.accounts.find_by(id: old_parent_id)
         if old_parent
           old_parent.auto_transfer_target_ids =
-            Array(old_parent.auto_transfer_target_ids) - [account.id]
+            Array(old_parent.auto_transfer_target_ids) - [ account.id ]
           old_parent.save!
         end
       end
@@ -1249,7 +1249,7 @@ class PlanFlowsController < ApplicationController
       if new_parent_id.present? && new_parent_id != old_parent_id
         parent = Current.family.accounts.find_by(id: new_parent_id)
         parent.auto_transfer_target_ids =
-          (Array(parent.auto_transfer_target_ids) + [account.id]).uniq
+          (Array(parent.auto_transfer_target_ids) + [ account.id ]).uniq
         parent.save!
       end
     end
@@ -1283,20 +1283,20 @@ class PlanFlowsController < ApplicationController
             next unless IncomeAccountAllocation.modes.include?(mode)
 
             value = case mode
-                    when "specific"
-                      row["value"].to_s.strip.presence
-                    when "percent"
-                      percent = row["value"].to_s.strip.to_d / 100
-                      (percent.positive? && percent <= 1) ? percent : 0
-                    when "required"
-                      # Round 30: the stored percent of the bank's required
-                      # amount this income funds (2 dp major units, blank =
-                      # nil = the equal split). The model validates the
-                      # 0 < value <= 100 range (the 422 {errors} path).
-                      row["value"].to_s.strip.presence
-                    else
-                      nil
-                    end
+            when "specific"
+              row["value"].to_s.strip.presence
+            when "percent"
+              percent = row["value"].to_s.strip.to_d / 100
+              (percent.positive? && percent <= 1) ? percent : 0
+            when "required"
+              # Round 30: the stored percent of the bank's required
+              # amount this income funds (2 dp major units, blank =
+              # nil = the equal split). The model validates the
+              # 0 < value <= 100 range (the 422 {errors} path).
+              row["value"].to_s.strip.presence
+            else
+              nil
+            end
 
             edge = existing.delete(series.id)
             if edge

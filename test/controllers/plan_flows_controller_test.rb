@@ -64,7 +64,7 @@ class PlanFlowsControllerTest < ActionDispatch::IntegrationTest
   def patch_bank_links(links:, account: @account)
     patch "/plan/flow/accounts/#{account.id}", headers: { "Accept" => "application/json" }, params: {
       account: { plan_ownership: "shared", plan_role: "", bank_logo_slug: "",
-                 parent_account_id: "", auto_transfer_target_ids: ["0"] },
+                 parent_account_id: "", auto_transfer_target_ids: [ "0" ] },
       links: links
     }
   end
