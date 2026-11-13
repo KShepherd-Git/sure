@@ -260,15 +260,19 @@ class PlanFlowsController < ApplicationController
     return redirect_to flow_plan_path unless income
 
     result = begin
-      user_id = params.dig(:series, :plan_owner_user_id).presence
-      if user_id.present? && family_user_ids.include?(user_id)
-        income.update!(plan_owner_user_id: user_id)
-      else
-        income.update!(plan_owner_user_id: nil)
-      end
+      ActiveRecord::Base.transaction do
+        user_id = params.dig(:series, :plan_owner_user_id).presence
+        if user_id.present? && family_user_ids.include?(user_id)
+          income.update!(plan_owner_user_id: user_id)
+        else
+          income.update!(plan_owner_user_id: nil)
+        end
 
-      max_links = params.dig(:series, :plan_max_account_links)
-      income.update!(plan_max_account_links: max_links.presence&.to_i)
+        series_params = params.dig(:series)
+        if series_params.respond_to?(:key?) && series_params.key?("plan_max_account_links")
+          income.update!(plan_max_account_links: series_params["plan_max_account_links"].presence&.to_i)
+        end
+      end
       true
     rescue ActiveRecord::RecordInvalid
       false
