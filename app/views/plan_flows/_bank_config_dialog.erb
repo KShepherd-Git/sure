@@ -1,0 +1,409 @@
+<%# Bank node -> config dialog (M2 PR#2b, round 20 progressive rework).
+    Default-open state shows the LEAST: the account identity (top-left
+    avatar with logo picker, title, subtitle), "Pull From Incomes" and the
+    kebab. Everything else is progressive:
+      - Pull From Incomes row: checkbox + income name only; the mode select
+        and its numeric value are hidden until the row is checked
+        (round 20a). Each checkbox is preceded by a hidden enabled=""
+        sentinel so an UNCHECK submit reaches the server and removes the
+        link (the unchecked-checkbox-sends-nothing Rails gotcha that made
+        unchecking "not save").
+      - "Details" disclosure (collapsed): ownership + role. Role offers
+        exactly Savings / Checking / Credit Card / Loan / Investment
+        (round 20c); a plain account shows a disabled "Plain" placeholder
+        so the browser never silently selects a real role.
+      - Kebab (round 20b/e): "Make a Sub-Account" popup (select over the
+        same candidate set as the old inline select; a "Not a sub-account"
+        entry clears it) and "Configure Auto-Transfer" popup (the same
+        checkbox list as the old inline section). Both popups live in the
+        header, OUTSIDE the form: they sync their state into the form's
+        hidden inputs (account[parent_account_id], the "0" sentinel +
+        target-id hidden inputs) and their Save buttons submit the form via
+        the HTML form= attribute. Data shapes are unchanged
+        (parent_account_id, auto_transfer_target_ids fan-out with the "0"
+        sentinel stripped server-side).
+      - Bank logo (round 20d): the old search + list section is gone. The
+        top-left avatar shows the custom upload or the built-in pick
+        (neutral circle when empty); clicking it opens a popup with
+        "Upload Custom" (POST flow_bank_logo) and a scrollable built-in
+        list (data-driven from the available_bank_logos local; the built-in
+        set is swapped for favicons in a later round, so nothing hard-
+        codes names).
+    Submits the PATCH flow_account endpoint: checked rows upsert the edge
+    per income, unchecked rows (enabled="") remove the link. In-place
+    submit: the diagram tweens to the new graph instead of reloading.
+    locals: (account, edges, available_bank_logos: {}) —
+    edges: income_series_id -> IncomeAccountAllocation;
+    available_bank_logos: slug -> label (BankLogoSlugs.available). %>
+<%
+  # Round 11 issue 8: fan-out candidate set = the bank rows the planner
+  # renders (graph[:banks]) = in-plan accounts + accounts that ARE
+  # sub-accounts (parent_account_id set), which the planner includes even
+  # without a plan_order (sub_account_links). The auto-transfer popup rows
+  # below iterate this set, so a target the diagram draws is always
+  # addressable in the dialog. The name-collision guard counts over the
+  # same set: when a name occurs 2+ times in it (the dev data has two
+  # "SoFi Savings" + two "SoFi Checking"), the row labels for that name get
+  # "(<id first 4>)" appended. Label-only.
+  in_plan_ids = @in_plan_accounts.map(&:id)
+  fanout_rows = @in_plan_accounts.to_a + @flow_accounts.select { |other| other.parent_account_id.present? && !in_plan_ids.include?(other.id) }
+  sub_account_name_counts = fanout_rows.group_by(&:name).transform_values(&:size)
+  disambiguated_name = lambda do |candidate|
+    sub_account_name_counts[candidate.name].to_i > 1 ? "#{candidate.name} (#{candidate.id[0, 4]})" : candidate.name
+  end
+  # Round 20b: sub-account popup candidate set = the old inline select's
+  # options (in-plan accounts that are not themselves sub-accounts).
+  sub_account_options = [[ t(".sub_account_none"), "" ]] +
+    @in_plan_accounts.reject { |other| other.id == account.id || other.parent_account_id.present? }
+                       .map { |other| [ disambiguated_name.call(other), other.id ] }
+  # Round 20d: the avatar + logo popup are data-driven off these values.
+  avatar_url = account.plan_flow_avatar_url
+  logo_custom_url = account.logo.attached? ? Rails.application.routes.url_helpers.rails_blob_path(account.logo, only_path: true) : ""
+  logo_list = (available_bank_logos || {}).sort_by { |_slug, label| label.to_s.downcase }.map { |slug, label| { slug: slug, label: label, url: asset_path("bank-logos/#{slug}.svg") } }
+  role_options = %w[savings_bucket checking credit_card_payoff loan_payoff investment].map { |role| [ t(".role_#{role}"), role ] }
+  # A plain account (nil role) gets a DISABLED placeholder as its selected
+  # option: the browser shows it but the user cannot pick it, and the form
+  # submits "" which the controller normalizes back to nil. Without this,
+  # the first selectable option would render as "selected" and silently
+  # promote a plain bank to Savings on the next save.
+  role_options.unshift([ t(".role_plain"), "", { disabled: true } ]) if account.plan_role.blank?
+%>
+<%= render DS::Dialog.new(auto_open: false, disable_frame: true, width: "lg",
+      data: {
+        node_id: "bank:#{account.id}",
+        controller: "bank-config-dialog",
+        bank_config_dialog_logos_value: logo_list.to_json,
+        bank_config_dialog_slug_value: account.bank_logo_slug.to_s,
+        bank_config_dialog_custom_url_value: logo_custom_url,
+        bank_config_dialog_avatar_url_value: avatar_url.to_s,
+        bank_config_dialog_upload_url_value: flow_bank_logo_plan_path(account.id),
+        bank_config_dialog_remove_url_value: flow_bank_logo_remove_plan_path(account.id)
+      }) do |dialog| %>
+  <% dialog.with_header(custom_header: true) do %>
+    <div class="flex items-center gap-3">
+      <%# Round 20d: the account avatar, top-left. Shows the custom upload
+          or the built-in pick; neutral circle when empty. Hover reveals
+          the pencil; click opens the logo popup (upload + built-ins). %>
+      <div class="relative shrink-0" data-bank-config-dialog-target="avatarWrap">
+        <button type="button"
+                data-bank-config-dialog-target="avatar"
+                data-action="bank-config-dialog#openLogo"
+                class="group relative h-10 w-10 rounded-full overflow-hidden bg-subdued focus-ring"
+                aria-label="<%= t(".logo_popup_title") %>"
+                title="<%= t(".logo_hint") %>">
+          <%# Both are always rendered (toggled with the hidden class) so
+              the Stimulus controller can swap them after an upload /
+              removal / pick without rebuilding the node. %>
+          <img src="<%= avatar_url %>" alt=""
+               class="h-full w-full object-cover <%= "hidden" if avatar_url.blank? %>"
+               data-bank-config-dialog-target="avatarImg">
+          <span class="flex h-full w-full items-center justify-center text-secondary <%= avatar_url.present? ? "hidden" : "" %>"
+                data-bank-config-dialog-target="neutral">
+            <%= icon("landmark", size: "sm", color: :secondary) %>
+          </span>
+          <span class="absolute inset-0 flex items-center justify-center bg-inverse/40 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"
+                data-bank-config-dialog-target="avatarPencil">
+            <%= icon("pencil", size: "xs", color: :white) %>
+          </span>
+        </button>
+        <%# Logo popup: anchored under the avatar. "Upload Custom" (the
+            custom logo wins in the avatar when attached), "Remove custom"
+            (only when attached), then the scrollable built-in list —
+            data-driven (the built-in set is swapped for favicons later). %>
+        <div class="hidden absolute left-0 top-full z-30 mt-2 w-72 max-w-[calc(100vw-3rem)] rounded-lg bg-container shadow-border-lg"
+             data-bank-config-dialog-target="logoPopup">
+          <div class="flex items-center justify-between border-b border-subdued px-3 py-2">
+            <p class="text-sm font-medium text-primary"><%= t(".logo_popup_title") %></p>
+            <button type="button" class="text-secondary hover:text-primary"
+                    data-action="bank-config-dialog#closePopups"
+                    aria-label="<%= t(".logo_popup_title") %>">
+              <%= icon("x", size: "xs") %>
+            </button>
+          </div>
+          <div class="space-y-2 p-3">
+            <div class="flex items-center gap-2">
+              <label class="cursor-pointer rounded-lg border border-primary bg-container px-2 py-1.5 text-xs text-primary hover:bg-subdued/40">
+                <%= t(".logo_upload") %>
+                <input type="file" accept="image/*" class="sr-only"
+                       data-bank-config-dialog-target="fileInput"
+                       data-action="bank-config-dialog#uploadLogo">
+              </label>
+              <button type="button"
+                      class="text-xs text-secondary hover:text-destructive underline <%= "hidden" unless account.logo.attached? %>"
+                      data-bank-config-dialog-target="removeCustom"
+                      data-action="bank-config-dialog#removeCustom">
+                <%= t(".logo_remove_custom") %>
+              </button>
+            </div>
+            <p class="hidden text-xs text-destructive" data-bank-config-dialog-target="uploadError"></p>
+            <p class="text-xs font-medium text-secondary"><%= t(".logo_builtin_heading") %></p>
+            <div class="max-h-48 divide-y divide-subdued overflow-y-auto rounded-lg border border-subdued">
+              <button type="button"
+                      data-slug=""
+                      data-action="bank-config-dialog#pickLogo"
+                      class="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-subdued/40">
+                <span class="flex h-5 w-8 items-center justify-center rounded bg-subdued/60 text-secondary"><%= icon("x", size: "xs") %></span>
+                <span class="text-xs text-primary truncate"><%= t(".logo_none") %></span>
+              </button>
+              <% logo_list.each do |entry| %>
+                <button type="button"
+                        data-slug="<%= entry[:slug] %>"
+                        data-action="bank-config-dialog#pickLogo"
+                        class="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-subdued/40">
+                  <img src="<%= entry[:url] %>" alt="<%= entry[:label] %>"
+                       class="h-5 w-8 shrink-0 object-contain">
+                  <span class="text-xs text-primary truncate"><%= entry[:label] %></span>
+                </button>
+              <% end %>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="min-w-0">
+        <h2 id="<%= dialog.title_id %>" class="font-medium text-primary"><%= t(".title", name: account.name) %></h2>
+        <p class="text-sm text-secondary"><%= t(".subtitle") %></p>
+      </div>
+      <%# Round 20b/e: the kebab. Sub-account + auto-transfer moved out of
+          the body into popups; the main form carries the hidden inputs
+          they sync into, and the popups' Save buttons submit it via form=. %>
+      <div class="relative ml-auto shrink-0" data-bank-config-dialog-target="kebabWrap">
+        <button type="button"
+                data-bank-config-dialog-target="kebab"
+                data-action="bank-config-dialog#toggleKebab"
+                class="rounded-lg p-1.5 text-secondary hover:bg-subdued/40 hover:text-primary focus-ring"
+                aria-haspopup="true" aria-expanded="false"
+                aria-label="<%= t(".more_aria") %>">
+          <%= icon("more-vertical", size: "sm") %>
+        </button>
+        <div class="hidden absolute right-0 top-full z-30 mt-1 w-56 py-1 rounded-lg bg-container shadow-border-lg"
+             data-bank-config-dialog-target="kebabMenu">
+          <button type="button"
+                  class="block w-full px-3 py-2 text-left text-sm text-primary hover:bg-subdued/40"
+                  data-action="bank-config-dialog#openSubAccount">
+            <%= t(".menu_make_sub_account") %>
+          </button>
+          <button type="button"
+                  class="block w-full px-3 py-2 text-left text-sm text-primary hover:bg-subdued/40"
+                  data-action="bank-config-dialog#openAutoTransfer">
+            <%= t(".menu_configure_auto_transfer") %>
+          </button>
+        </div>
+        <%# Sub-account popup (round 20b): same candidate set + "Not a
+            sub-account" clear as the removed inline select; live-syncs
+            account[parent_account_id] in the form. %>
+        <div class="hidden absolute right-0 top-full z-40 mt-1 w-72 space-y-2 rounded-lg bg-container p-3 shadow-border-lg"
+             data-bank-config-dialog-target="subAccountPopup">
+          <p class="text-sm font-medium text-primary"><%= t(".menu_make_sub_account") %></p>
+          <p class="text-xs text-secondary"><%= t(".sub_account_hint") %></p>
+          <select data-bank-config-dialog-target="subAccountSelect"
+                  data-action="bank-config-dialog#syncSubAccount"
+                  class="w-full rounded-lg border border-primary bg-container px-2 py-1.5 text-sm text-primary">
+            <% sub_account_options.each do |label, value| %>
+              <option value="<%= value %>" <%= "selected" if value.to_s == account.parent_account_id.to_s %>><%= label %></option>
+            <% end %>
+          </select>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button"
+                    class="rounded-lg px-2.5 py-1.5 text-sm text-secondary hover:text-primary"
+                    data-action="bank-config-dialog#closePopups">
+              <%= t(".popup_cancel") %>
+            </button>
+            <button type="submit" form="bank_config_form_<%= account.id %>"
+                    class="rounded-lg bg-primary px-3 py-1.5 text-sm text-on-primary hover:opacity-90">
+              <%= t(".save") %>
+            </button>
+          </div>
+        </div>
+        <%# Auto-transfer popup (round 20e): the same checkbox list the
+            old inline section had (disabled unless a sub-account of this
+            account); live-rebuilds the form's hidden target-id inputs
+            (the "0" sentinel stays, so an all-unchecked save clears). %>
+        <div class="hidden absolute right-0 top-full z-40 mt-1 max-h-80 w-72 space-y-2 overflow-y-auto rounded-lg bg-container p-3 shadow-border-lg"
+             data-bank-config-dialog-target="autoTransferPopup">
+          <p class="text-sm font-medium text-primary"><%= t(".auto_transfer_targets") %></p>
+          <p class="text-xs text-secondary"><%= t(".auto_transfer_targets_hint") %></p>
+          <div class="space-y-1" data-bank-config-dialog-target="autoTransferBox">
+            <% fanout_rows.each do |other| %>
+              <% is_sub_account = other.parent_account_id == account.id %>
+              <div class="flex items-center gap-2">
+                <input type="checkbox"
+                       data-other-id="<%= other.id %>"
+                       <%= "checked" if Array(account.auto_transfer_target_ids).include?(other.id) %>
+                       <%= "disabled" unless is_sub_account %>
+                       data-action="bank-config-dialog#syncAutoTransfer"
+                       class="checkbox checkbox--light h-4 w-4 rounded shrink-0">
+                <span class="min-w-0 flex-1 truncate text-sm text-primary" title="<%= disambiguated_name.call(other) %>">
+                  <%= disambiguated_name.call(other) %>
+                </span>
+              </div>
+            <% end %>
+          </div>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button"
+                    class="rounded-lg px-2.5 py-1.5 text-sm text-secondary hover:text-primary"
+                    data-action="bank-config-dialog#closePopups">
+              <%= t(".popup_cancel") %>
+            </button>
+            <button type="submit" form="bank_config_form_<%= account.id %>"
+                    class="rounded-lg bg-primary px-3 py-1.5 text-sm text-on-primary hover:opacity-90">
+              <%= t(".save") %>
+            </button>
+          </div>
+        </div>
+      </div>
+      <%= render DS::Button.new(variant: "icon", size: :sm, icon: "x", type: "button",
+                                 title: I18n.t("ds.dialog.close"),
+                                 aria: { label: I18n.t("ds.dialog.close") },
+                                 data: { action: "DS--dialog#close" }) %>
+    </div>
+  <% end %>
+  <% dialog.with_body do %>
+    <%# In-place validation errors (owner round 3, R1/R7): the 422 response
+        renders them here — no full-reload flash for in-place submits. %>
+    <div data-in-place-errors class="hidden space-y-1"></div>
+    <%# In-place submit (owner round 3, R1/R7): data-turbo off + the
+        in-place submit handler — the diagram tweens to the new graph
+        instead of a full reload destroying it. The id backs the popup
+        Save buttons' form= attribute (the popups live in the header,
+        outside this form). %>
+    <%= form_with url: flow_account_plan_path(account.id), method: :patch, scope: :account,
+                  class: "space-y-5",
+                  html: { id: "bank_config_form_#{account.id}" },
+                  data: { turbo: "false", plan_flow_inplace: "true" } do |form| %>
+      <%# Hidden state the header popups sync (the popups are outside the
+          form): the logo slug (the logo popup writes it), the sub-account
+          parent (the sub-account popup writes it), and the auto-transfer
+          fan-out — the "0" sentinel makes an all-unchecked submit clear
+          the array (the server strips it); the checked target ids are the
+          data-marked hidden inputs the auto-transfer popup rebuilds in
+          row order. %>
+      <input type="hidden" name="account[bank_logo_slug]" value="<%= account.bank_logo_slug %>">
+      <input type="hidden" name="account[parent_account_id]" value="<%= account.parent_account_id %>">
+      <input type="hidden" name="account[auto_transfer_target_ids][]" value="0" class="sr-only">
+      <% Array(account.auto_transfer_target_ids).each do |target_id| %>
+        <input type="hidden" name="account[auto_transfer_target_ids][]" value="<%= target_id %>"
+               data-auto-transfer-tid="1">
+      <% end %>
+
+      <%# Round 20a: "Pull From Incomes" — the default-visible income
+          section. Least shown: checkbox + income name. The mode select +
+          its numeric value are hidden until the row is checked (the
+          wrapper div toggles in syncBankRow). The hidden enabled=""
+          sentinel before each checkbox is the round-20 save fix: an
+          unchecked Rails checkbox sends nothing, so the sentinel is what
+          reaches the controller with an empty value and destroys the
+          link; when checked, the checkbox's own "1" follows the sentinel
+          and wins. %>
+      <section class="space-y-2" data-bank-config-dialog-target="pullFrom">
+        <p class="text-sm font-medium text-primary"><%= t(".pull_from_incomes") %></p>
+        <% if @income_series.empty? %>
+          <p class="text-xs text-secondary"><%= t(".no_incomes") %></p>
+        <% end %>
+        <% @income_series.each do |series| %>
+          <% edge = edges[series.id] %>
+          <div class="flex items-center gap-2 flex-wrap" data-bank-row>
+            <input type="hidden" name="links[<%= series.id %>][enabled]" value="">
+            <input type="checkbox"
+                   name="links[<%= series.id %>][enabled]" value="1"
+                   <%= "checked" if edge %>
+                   class="checkbox checkbox--light h-4 w-4 rounded shrink-0"
+                   data-action="plan-flow#syncBankRow">
+            <span class="min-w-0 flex-1 basis-32 truncate text-sm text-primary" title="<%= series.name %>"><%= series.name %></span>
+            <div class="<%= "hidden" unless edge %>" data-bank-row-details>
+              <select name="links[<%= series.id %>][mode]"
+                      <%= "disabled" unless edge %>
+                      class="text-xs border border-primary rounded-lg px-2 py-1 bg-container text-primary w-44 shrink-0"
+                      data-action="plan-flow#syncBankRow"
+                      aria-label="<%= t(".rule_aria", name: series.name) %>">
+                <% %w[required specific percent leftover].each do |mode| %>
+                  <option value="<%= mode %>" <%= "selected" if edge&.mode == mode %>>
+                    <%= t(".mode_#{mode}") %>
+                  </option>
+                <% end %>
+              </select>
+              <%# specific -> major units per paycheck; percent -> 0-100.
+                  required/leftover carry no value (the planner derives
+                  them). %>
+              <input type="text"
+                     name="links[<%= series.id %>][value]"
+                     value="<%= edge ? (edge.mode == "specific" ? format("%.2f", edge.value) : (edge.mode == "percent" ? format("%.2f", edge.value * 100) : "")) : "" %>"
+                     placeholder="<%= edge&.mode == "percent" ? t(".percent_placeholder") : t(".specific_placeholder") %>"
+                     <%= "disabled" unless edge && %w[specific percent].include?(edge.mode) %>
+                     class="text-xs border border-primary rounded-lg px-2 py-1 bg-container text-primary w-20 shrink-0 tabular-nums">
+            </div>
+          </div>
+        <% end %>
+      </section>
+    <%# Round 20f: the rest of the config is collapsed by default — least
+        shown until needed. Ownership + role. Rendered inside the form
+        (plain inputs with explicit name= — the DS::Disclosure component
+        block runs in the component's own view context, where the
+        form_with `form` local and the partial's i18n scope are out of
+        reach, so the strings are pre-resolved locals). %>
+    <% ownership_label_text = t(".ownership_label") %>
+    <% role_label_text = t(".role_label") %>
+    <% ownership_shared_text = t(".ownership_shared") %>
+    <%= render DS::Disclosure.new(title: t(".details_heading"), open: false) do %>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="space-y-1">
+          <label for="account_plan_ownership_<%= account.id %>" class="block text-xs text-secondary">
+            <%= ownership_label_text %>
+          </label>
+          <select id="account_plan_ownership_<%= account.id %>" name="account[plan_ownership]"
+                  class="text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full">
+            <%= options_for_select(
+                  [[ ownership_shared_text, "shared" ]] + @family_users.map { |user| [ user.display_name, "user:#{user.id}" ] },
+                  account.plan_ownership == "user" ? "user:#{account.plan_owner_user_id}" : "shared"
+              ) %>
+          </select>
+        </div>
+        <div class="space-y-1">
+          <label for="account_plan_role_<%= account.id %>" class="block text-xs text-secondary">
+            <%= role_label_text %>
+          </label>
+          <%# Round 20c: exactly Savings / Checking / Credit Card / Loan /
+              Investment. The disabled "Plain" placeholder (plain
+              accounts only) keeps a nil role honest across saves. %>
+          <select id="account_plan_role_<%= account.id %>" name="account[plan_role]"
+                  class="text-sm border border-primary rounded-lg px-2 py-1.5 bg-container text-primary w-full">
+            <%= options_for_select(role_options, account.plan_role.presence || "") %>
+          </select>
+        </div>
+      </div>
+    <% end %>
+    <div class="flex items-center justify-between gap-2 pt-1 border-t border-subdued">
+      <%# Remove from plan (owner round 3, R3): the form is the SIBLING
+          below the main form (nested <form> is invalid HTML and the
+          parser would swallow it). Assigned allocations persist
+          unassigned with the "No Assignment" marker (never deleted).
+          The in-place submit handler confirm()s when allocations
+          are attached (data-remove-confirm + data-allocated-count). %>
+      <button type="submit"
+              form="bank_remove_<%= account.id %>"
+              class="text-sm text-destructive hover:underline">
+        <%= t(".remove") %>
+      </button>
+      <button type="submit"
+              class="text-sm bg-primary text-on-primary rounded-lg px-3 py-1.5 hover:opacity-90">
+        <%= t(".save") %>
+      </button>
+    </div>
+  <% end %>
+  <%# The remove-from-plan sibling form (nested <form> is invalid HTML):
+      it must stay INSIDE the dialog — the in-place handler re-renders
+      this whole dialog from the response on every save, and the sibling
+      must come back fresh (its allocated_count is stale after a save). %>
+  <%= form_with url: flow_account_remove_plan_path(account.id),
+                method: :delete,
+                id: "bank_remove_#{account.id}",
+                class: "sr-only",
+                data: {
+                  turbo: "false",
+                  plan_flow_inplace: "true",
+                  remove_confirm: "true",
+                  allocated_count: Current.family.plan_allocations.where(account_id: account.id).count,
+                  remove_message: t(".remove_confirm", count: Current.family.plan_allocations.where(account_id: account.id).count)
+                } do %>
+  <% end %>
+<% end %>
+<% end %>

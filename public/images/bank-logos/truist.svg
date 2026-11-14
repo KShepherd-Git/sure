@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+<!-- icon-only mark extracted from lockup (P3-f 2026-11-02); original at git HEAD 1ef7aac -->
+<style>
+		tspan { white-space:pre }
+		.shp0 { fill: #2d1a47 } 
+	</style>
+<g transform="translate(9.396 -7.4647) scale(1.085)">
+<path fill-rule="evenodd" class="shp0" d="M0 12.41L26.92 12.41L26.92 17.9L16.59 17.9L16.47 45.47L10.58 45.59L10.58 17.9L0 17.9L0 12.41Z" />
+</g>
+</svg>

@@ -1,0 +1,17 @@
+<%# Paycheck Flow entry on the Plan hub: the 3-column money map, preview-gated
+    like the rest of the hub. Full width — the flow page carries its own
+    three-column layout. %>
+<div class="rounded-xl bg-container shadow-border-xs p-4 @3xl:col-span-2">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="min-w-0">
+      <h3 class="text-sm font-semibold text-primary"><%= t(".title") %></h3>
+      <p class="text-xs text-secondary mt-0.5"><%= t(".subtitle") %></p>
+    </div>
+    <%= render DS::Link.new(
+          text: t(".open"),
+          icon: "arrow-right",
+          variant: "primary",
+          href: flow_plan_path
+        ) %>
+  </div>
+</div>

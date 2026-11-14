@@ -1620,6 +1620,27 @@ class AccountTest < ActiveSupport::TestCase
     parent.errors[:auto_transfer_target_ids].any? { |m| m.include?("sub-accounts of this account") }
   end
 
+  # Round 16 (owner note 3b): the explicit per-account logo slug is optional
+  # and must name a VENDORED file (no runtime fetching, no fabricated slug).
+  test "bank_logo_slug is optional and must be a vendored slug" do
+    depository = accounts(:depository)
+    assert depository.valid? # nil = no explicit logo
+    assert_includes BankLogoSlugs.available.keys, "sofi", "sofi must be a vendored logo"
+
+    depository.bank_logo_slug = "sofi"
+    assert depository.valid?
+
+    depository.bank_logo_slug = "definitely-not-vendored"
+    assert_not depository.valid?
+    assert depository.errors[:bank_logo_slug].any?
+  end
+
+  test "bank_logo_slug keyword auto-match (no explicit slug) uses the account name" do
+    # "SoFi Savings" -> sofi via the config keyword; an unknown name -> nil.
+    assert_equal "sofi", BankLogoSlugs.keyword_match("SoFi Savings")
+    assert_nil BankLogoSlugs.keyword_match("Mystery Bank")
+  end
+
   private
     def create_loan_with_start_date(start_date, opening_balance_date)
       Account.create_and_sync(

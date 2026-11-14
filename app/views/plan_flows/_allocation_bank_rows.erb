@@ -1,0 +1,50 @@
+<%# locals: (bank_rows: [], checked_account_id: :unspecified) %>
+<%# Allocation dialog BANK SOURCE rows (round 21 T8): the "No bank
+    (unassigned)" radio + one row per on-plan account, extracted from
+    _allocation_dialog.html.erb so the list can refresh IN PLACE. The
+    dialog body renders once at page load; render_flow_json ships this
+    fragment (chrome.allocation_bank_rows) after an in-place account
+    add/remove/update and #inPlaceSubmit swaps it into every allocation
+    dialog (allocation:new and allocation:<id>).
+    The radio NAME (plan_allocation[account_id]) is unchanged, so the
+    save contract (field names/order) and the #checkAccountRadio checked
+    rules in _allocation_dialog.html.erb stay intact across a swap.
+    Three-state checked semantics:
+      - :unspecified (the render_flow_json fragment, which serves ALL
+        allocation dialogs at once and cannot encode per-allocation
+        state): NO radio is checked; #inPlaceSubmit re-checks the radio
+        each dialog's form held before the swap (a closed dialog keeps
+        its form in the DOM, so the live checked state is readable).
+      - nil (the dialog's page-load render for an unassigned allocation):
+        the "No bank (unassigned)" row is checked.
+      - an account id (the dialog's page-load render for an assigned
+        allocation): that account's row is checked.
+    i18n keys are the dialog's explicit keys (a partial's lazy scope is
+    its own name, so t(".source_bank_unassigned") would miss here). %>
+<% assigning = checked_account_id != :unspecified %>
+<div data-flow-chrome="allocation-bank-rows">
+  <label class="flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer has-[:checked]:bg-surface-inset">
+    <input type="radio" name="plan_allocation[account_id]" value="" class="sr-only" <%= "checked" if assigning && checked_account_id.nil? %>>
+    <span class="h-8 w-8 flex-shrink-0 rounded-full bg-subdued flex items-center justify-center text-xs font-medium text-secondary">?</span>
+    <span class="text-sm text-secondary"><%= t("plan_flows.allocation_dialog.source_bank_unassigned") %></span>
+  </label>
+  <% bank_rows.each do |account| %>
+    <label class="flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer has-[:checked]:bg-surface-inset">
+      <input type="radio" name="plan_allocation[account_id]" value="<%= account.id %>" class="sr-only"
+             <%= "checked" if assigning && checked_account_id.to_s == account.id.to_s %>>
+      <%# Same avatar the bank config dialog uses (round 20d): the
+          plan-flow logo when present, else the neutral letter chip. %>
+      <span class="h-8 w-8 flex-shrink-0 rounded-full overflow-hidden bg-subdued flex items-center justify-center">
+        <% if account.plan_flow_avatar_url.present? %>
+          <img src="<%= account.plan_flow_avatar_url %>" alt="" class="h-full w-full object-cover">
+        <% else %>
+          <span class="text-sm font-medium text-secondary"><%= (account.name.to_s.strip.first || "?").upcase %></span>
+        <% end %>
+      </span>
+      <span class="text-sm text-primary truncate"><%= account.name %></span>
+    </label>
+  <% end %>
+  <% if bank_rows.empty? %>
+    <p class="text-xs text-secondary"><%= t("plan_flows.allocation_dialog.empty_bank_rows") %></p>
+  <% end %>
+</div>
