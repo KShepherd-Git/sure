@@ -738,7 +738,10 @@ class PlanFlowsController < ApplicationController
           existing.delete(series.id)&.destroy!
         end
       end
-      existing.each_value(&:destroy!)
+      # Remove only the edges of incomes the user can edit; edges on
+      # non-editable incomes survive the dialog.
+      editable_ids = income_series.map(&:id).to_set
+      existing.each_value { |allocation| allocation.destroy! if editable_ids.include?(allocation.income_series_id) }
     end
 
     def redirect_back_to_flow
